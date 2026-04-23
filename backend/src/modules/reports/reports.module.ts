@@ -6,6 +6,7 @@ import {
 } from '../appointments/schemas/appointment.schema';
 import { Bill, BillSchema } from '../billing/schemas/bill.schema';
 import { Payment, PaymentSchema } from '../billing/schemas/payment.schema';
+import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
 
@@ -15,6 +16,7 @@ import { ReportsService } from './reports.service';
       { name: Appointment.name, schema: AppointmentSchema },
       { name: Bill.name, schema: BillSchema },
       { name: Payment.name, schema: PaymentSchema },
+      { name: Clinic.name, schema: ClinicSchema },
     ]),
   ],
   controllers: [ReportsController],
