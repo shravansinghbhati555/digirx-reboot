@@ -3,4 +3,3 @@ export function renderTemplate(body: string, vars: Record<string, string>) {
     return vars[key] ?? '';
   });
 }
-

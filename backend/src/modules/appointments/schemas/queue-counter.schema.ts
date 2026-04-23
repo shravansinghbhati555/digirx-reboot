@@ -27,4 +27,3 @@ QueueCounterSchema.index(
   { clinicId: 1, branchId: 1, doctorId: 1, queueDate: 1 },
   { unique: true, name: 'queue_counter_unique' },
 );
-

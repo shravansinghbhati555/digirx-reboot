@@ -3,15 +3,24 @@ import { InjectModel } from '@nestjs/mongoose';
 import { getQueueToken } from '@nestjs/bullmq';
 import type { Queue } from 'bullmq';
 import { Model, Types } from 'mongoose';
-import { NotificationLog, NotificationStatus } from './schemas/notification-log.schema';
+import {
+  NotificationLog,
+  NotificationStatus,
+} from './schemas/notification-log.schema';
 import { NotificationChannel } from './schemas/notification-template.schema';
-import { NOTIFICATIONS_JOB_SEND, NOTIFICATIONS_QUEUE } from './notifications.queue';
+import {
+  NOTIFICATIONS_JOB_SEND,
+  NOTIFICATIONS_QUEUE,
+} from './notifications.queue';
 
 @Injectable()
 export class NotificationsService {
   constructor(
-    @InjectModel(NotificationLog.name) private readonly logModel: Model<NotificationLog>,
-    @Optional() @Inject(getQueueToken(NOTIFICATIONS_QUEUE)) private readonly queue?: Queue,
+    @InjectModel(NotificationLog.name)
+    private readonly logModel: Model<NotificationLog>,
+    @Optional()
+    @Inject(getQueueToken(NOTIFICATIONS_QUEUE))
+    private readonly queue?: Queue,
   ) {}
 
   async enqueueSend(input: {
@@ -38,11 +47,15 @@ export class NotificationsService {
       await this.queue.add(
         NOTIFICATIONS_JOB_SEND,
         { notificationLogId: log._id.toHexString() },
-        { attempts: 5, backoff: { type: 'exponential', delay: 2000 }, removeOnComplete: 1000, removeOnFail: 1000 },
+        {
+          attempts: 5,
+          backoff: { type: 'exponential', delay: 2000 },
+          removeOnComplete: 1000,
+          removeOnFail: 1000,
+        },
       );
     }
 
     return log;
   }
 }
-

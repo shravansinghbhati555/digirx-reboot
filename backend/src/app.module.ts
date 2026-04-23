@@ -1,4 +1,9 @@
-import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+  RequestMethod,
+} from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { APP_INTERCEPTOR } from '@nestjs/core';
@@ -7,6 +12,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { HealthController } from './health/health.controller';
 import { ClinicContextMiddleware } from './common/clinic-context.middleware';
+import { AppThrottlerModule } from './common/throttler.config';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuditInterceptor } from './modules/audit/audit.interceptor';
 import { AuthModule } from './modules/auth/auth.module';
@@ -27,10 +33,13 @@ import { StorageModule } from './modules/storage/storage.module';
 
 @Module({
   imports: [
+    AppThrottlerModule,
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-    MongooseModule.forRoot(process.env.MONGODB_URI ?? 'mongodb://localhost:27017/digirx'),
+    MongooseModule.forRoot(
+      process.env.MONGODB_URI ?? 'mongodb://localhost:27017/digirx',
+    ),
     AuditModule,
     AuthModule,
     AuthzModule,
@@ -68,6 +77,7 @@ export class AppModule implements NestModule {
         'health',
         { path: 'auth/(.*)', method: RequestMethod.ALL },
         { path: 'auth', method: RequestMethod.ALL },
+        { path: 'share/(.*)', method: RequestMethod.ALL },
       )
       .forRoutes('*');
   }

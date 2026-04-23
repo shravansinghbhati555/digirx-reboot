@@ -3,4 +3,3 @@ export type JwtClaims = {
   clinicId: string;
   branchId?: string;
 };
-

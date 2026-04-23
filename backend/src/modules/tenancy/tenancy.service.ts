@@ -2,12 +2,17 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Clinic } from './schemas/clinic.schema';
-import { mergeClinicSettings, type ClinicSettingsV1 } from './clinic-settings.types';
+import {
+  mergeClinicSettings,
+  type ClinicSettingsV1,
+} from './clinic-settings.types';
 import { PatchClinicSettingsDto } from './dto/patch-clinic-settings.dto';
 
 @Injectable()
 export class TenancyService {
-  constructor(@InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>) {}
+  constructor(
+    @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
+  ) {}
 
   async getClinic(clinicId: Types.ObjectId) {
     const clinic = await this.clinicModel.findById(clinicId);
@@ -38,11 +43,15 @@ export class TenancyService {
     const next: ClinicSettingsV1 = {
       appointments: {
         mode: patch.appointments?.mode ?? current.appointments.mode,
-        slotMinutesDefault: patch.appointments?.slotMinutesDefault ?? current.appointments.slotMinutesDefault,
+        slotMinutesDefault:
+          patch.appointments?.slotMinutesDefault ??
+          current.appointments.slotMinutesDefault,
       },
       modules: {
         inventory: {
-          enabled: patch.modules?.inventory?.enabled ?? current.modules.inventory.enabled,
+          enabled:
+            patch.modules?.inventory?.enabled ??
+            current.modules.inventory.enabled,
         },
       },
     };
@@ -52,4 +61,3 @@ export class TenancyService {
     return await this.getSettings(clinicId);
   }
 }
-

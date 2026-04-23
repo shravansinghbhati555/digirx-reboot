@@ -5,10 +5,13 @@ import { EncountersService } from './encounters.service';
 import { Encounter, EncounterSchema } from './schemas/encounter.schema';
 
 @Module({
-  imports: [MongooseModule.forFeature([{ name: Encounter.name, schema: EncounterSchema }])],
+  imports: [
+    MongooseModule.forFeature([
+      { name: Encounter.name, schema: EncounterSchema },
+    ]),
+  ],
   controllers: [EncountersController],
   providers: [EncountersService],
   exports: [EncountersService],
 })
 export class EncountersModule {}
-

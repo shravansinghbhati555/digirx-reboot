@@ -1,4 +1,13 @@
-import { IsArray, IsIn, IsInt, IsOptional, IsString, Max, Min, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
+  Max,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 import type { OverrideType } from '../schemas/doctor-availability-override.schema';
 
@@ -28,4 +37,3 @@ export class UpsertDoctorOverrideDto {
   @IsString()
   note?: string;
 }
-

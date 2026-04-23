@@ -23,10 +23,10 @@ export class PatientIdentifier {
   value!: string;
 }
 
-export const PatientIdentifierSchema = SchemaFactory.createForClass(PatientIdentifier);
+export const PatientIdentifierSchema =
+  SchemaFactory.createForClass(PatientIdentifier);
 
 PatientIdentifierSchema.index(
   { clinicId: 1, type: 1, value: 1 },
   { unique: true, name: 'patient_identifier_unique_per_clinic' },
 );
-

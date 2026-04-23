@@ -10,4 +10,3 @@ export type CreatePrescriptionItemDto = {
 export class CreatePrescriptionDto {
   items!: CreatePrescriptionItemDto[];
 }
-

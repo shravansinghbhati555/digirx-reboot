@@ -39,7 +39,11 @@ export class Document {
   @Prop({ required: true, trim: true })
   storageKey!: string;
 
-  @Prop({ required: true, enum: DocumentAccess, default: DocumentAccess.InternalOnly })
+  @Prop({
+    required: true,
+    enum: DocumentAccess,
+    default: DocumentAccess.InternalOnly,
+  })
   access!: DocumentAccess;
 
   @Prop({ type: Types.ObjectId })
@@ -48,5 +52,7 @@ export class Document {
 
 export const DocumentSchema = SchemaFactory.createForClass(Document);
 
-DocumentSchema.index({ clinicId: 1, ownerType: 1, ownerId: 1, createdAt: -1 }, { name: 'doc_owner_idx' });
-
+DocumentSchema.index(
+  { clinicId: 1, ownerType: 1, ownerId: 1, createdAt: -1 },
+  { name: 'doc_owner_idx' },
+);

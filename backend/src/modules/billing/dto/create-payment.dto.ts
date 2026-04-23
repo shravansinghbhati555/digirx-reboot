@@ -6,4 +6,3 @@ export class CreatePaymentDto {
   providerRef?: string;
   paidAt?: string; // ISO (defaults now)
 }
-

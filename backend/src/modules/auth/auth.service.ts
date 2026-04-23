@@ -24,11 +24,16 @@ export class AuthService {
     });
   }
 
-  private async issueRefreshSession(input: { clinicId: Types.ObjectId; userId: Types.ObjectId }) {
+  private async issueRefreshSession(input: {
+    clinicId: Types.ObjectId;
+    userId: Types.ObjectId;
+  }) {
     const raw = crypto.randomBytes(32).toString('base64url');
     const hash = await bcrypt.hash(raw, 10);
     const days = Number(process.env.JWT_REFRESH_DAYS ?? '30');
-    const expiresAt = new Date(Date.now() + (Number.isFinite(days) ? days : 30) * 24 * 60 * 60_000);
+    const expiresAt = new Date(
+      Date.now() + (Number.isFinite(days) ? days : 30) * 24 * 60 * 60_000,
+    );
 
     const session = await this.sessionModel.create({
       clinicId: input.clinicId,
@@ -37,15 +42,25 @@ export class AuthService {
       expiresAt,
     });
 
-    return { sessionId: session._id.toHexString(), refreshToken: raw, expiresAt };
+    return {
+      sessionId: session._id.toHexString(),
+      refreshToken: raw,
+      expiresAt,
+    };
   }
 
-  async login(input: { clinicId: string; email: string; password: string; branchId?: string }) {
+  async login(input: {
+    clinicId: string;
+    email: string;
+    password: string;
+    branchId?: string;
+  }) {
     const clinicId = new Types.ObjectId(input.clinicId);
     const email = input.email.trim().toLowerCase();
     const user = await this.userModel.findOne({ clinicId, email });
     if (!user) throw new UnauthorizedException('Invalid credentials');
-    if (user.status !== UserStatus.Active) throw new UnauthorizedException('User disabled');
+    if (user.status !== UserStatus.Active)
+      throw new UnauthorizedException('User disabled');
     if (!user.passwordHash) throw new UnauthorizedException('Password not set');
 
     const ok = await bcrypt.compare(input.password, user.passwordHash);
@@ -58,11 +73,18 @@ export class AuthService {
     };
 
     const accessToken = await this.accessToken(claims);
-    const refresh = await this.issueRefreshSession({ clinicId, userId: user._id });
+    const refresh = await this.issueRefreshSession({
+      clinicId,
+      userId: user._id,
+    });
 
     return {
       accessToken,
-      refresh: { sessionId: refresh.sessionId, refreshToken: refresh.refreshToken, expiresAt: refresh.expiresAt },
+      refresh: {
+        sessionId: refresh.sessionId,
+        refreshToken: refresh.refreshToken,
+        expiresAt: refresh.expiresAt,
+      },
       userId: claims.sub,
       clinicId: claims.clinicId,
       branchId: claims.branchId ?? null,
@@ -73,9 +95,13 @@ export class AuthService {
     const session = await this.sessionModel.findById(input.sessionId);
     if (!session) throw new UnauthorizedException('Invalid session');
     if (session.revokedAt) throw new UnauthorizedException('Session revoked');
-    if (session.expiresAt.getTime() <= Date.now()) throw new UnauthorizedException('Session expired');
+    if (session.expiresAt.getTime() <= Date.now())
+      throw new UnauthorizedException('Session expired');
 
-    const ok = await bcrypt.compare(input.refreshToken, session.refreshTokenHash);
+    const ok = await bcrypt.compare(
+      input.refreshToken,
+      session.refreshTokenHash,
+    );
     if (!ok) throw new UnauthorizedException('Invalid session');
 
     // rotate refresh token
@@ -89,12 +115,21 @@ export class AuthService {
     };
     const accessToken = await this.accessToken(claims);
 
-    return { accessToken, refresh: { sessionId: session._id.toHexString(), refreshToken: newRaw, expiresAt: session.expiresAt } };
+    return {
+      accessToken,
+      refresh: {
+        sessionId: session._id.toHexString(),
+        refreshToken: newRaw,
+        expiresAt: session.expiresAt,
+      },
+    };
   }
 
   async logout(input: { sessionId: string }) {
-    await this.sessionModel.updateOne({ _id: new Types.ObjectId(input.sessionId) }, { $set: { revokedAt: new Date() } });
+    await this.sessionModel.updateOne(
+      { _id: new Types.ObjectId(input.sessionId) },
+      { $set: { revokedAt: new Date() } },
+    );
     return { ok: true };
   }
 }
-

@@ -1,4 +1,12 @@
-import { Body, Controller, Get, Patch, Req, UsePipes, ValidationPipe } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Patch,
+  Req,
+  UsePipes,
+  ValidationPipe,
+} from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
@@ -24,8 +32,10 @@ export class TenancyController {
 
   @Patch('settings')
   @RequirePermissions(Permission.ClinicWrite)
-  async patchSettings(@Req() req: AppRequest, @Body() body: PatchClinicSettingsDto) {
+  async patchSettings(
+    @Req() req: AppRequest,
+    @Body() body: PatchClinicSettingsDto,
+  ) {
     return await this.tenancy.patchSettings(req.context!.clinicId, body);
   }
 }
-

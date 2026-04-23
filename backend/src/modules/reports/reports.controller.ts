@@ -16,7 +16,12 @@ export class ReportsController {
     @Query('to') to?: string,
     @Query('branchId') branchId?: string,
   ) {
-    return await this.reports.revenueSummary(req.context!.clinicId, from, to, branchId);
+    return await this.reports.revenueSummary(
+      req.context!.clinicId,
+      from,
+      to,
+      branchId,
+    );
   }
 
   @Get('schedule/daily')
@@ -26,7 +31,11 @@ export class ReportsController {
     @Query('date') date: string,
     @Query('branchId') branchId: string,
   ) {
-    return await this.reports.dailySchedule(req.context!.clinicId, date, branchId);
+    return await this.reports.dailySchedule(
+      req.context!.clinicId,
+      date,
+      branchId,
+    );
   }
 
   @Get('pending-payments')
@@ -37,7 +46,10 @@ export class ReportsController {
     @Query('limit') limitRaw?: string,
   ) {
     const limit = Number(limitRaw ?? 50) || 50;
-    return await this.reports.pendingPayments(req.context!.clinicId, branchId, limit);
+    return await this.reports.pendingPayments(
+      req.context!.clinicId,
+      branchId,
+      limit,
+    );
   }
 }
-

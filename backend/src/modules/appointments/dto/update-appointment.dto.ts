@@ -9,4 +9,3 @@ export class UpdateAppointmentDto {
   status?: AppointmentStatus;
   notes?: string;
 }
-

@@ -1,4 +1,7 @@
-import { AppointmentSource, AppointmentType } from '../schemas/appointment.schema';
+import {
+  AppointmentSource,
+  AppointmentType,
+} from '../schemas/appointment.schema';
 
 export class CreateAppointmentDto {
   type!: AppointmentType;
@@ -16,4 +19,3 @@ export class CreateAppointmentDto {
   source?: AppointmentSource;
   notes?: string;
 }
-

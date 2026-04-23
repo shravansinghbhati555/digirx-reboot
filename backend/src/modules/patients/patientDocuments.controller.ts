@@ -1,4 +1,11 @@
-import { Controller, Param, Post, Req, UploadedFile, UseInterceptors } from '@nestjs/common';
+import {
+  Controller,
+  Param,
+  Post,
+  Req,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { randomUUID } from 'crypto';
 import { Types } from 'mongoose';
@@ -19,7 +26,11 @@ export class PatientDocumentsController {
   @Post()
   @RequirePermissions(Permission.DocumentWrite)
   @UseInterceptors(FileInterceptor('file'))
-  async upload(@Req() req: AppRequest, @Param('id') id: string, @UploadedFile() file?: Express.Multer.File) {
+  async upload(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @UploadedFile() file?: Express.Multer.File,
+  ) {
     const clinicId = req.context!.clinicId;
     await this.patients.getById(clinicId, id);
 
@@ -43,4 +54,3 @@ export class PatientDocumentsController {
     });
   }
 }
-

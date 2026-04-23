@@ -51,7 +51,7 @@ There is no root-level `package.json` — always `cd` into `backend/` or `fronte
 
 Every non-auth route runs through `ClinicContextMiddleware` (`backend/src/common/clinic-context.middleware.ts`), which populates `req.context = { clinicId, branchId?, actorUserId? }` from **either**:
 1. `Authorization: Bearer <jwt>` — claims are verified with `JWT_ACCESS_SECRET`; `clinicId`/`branchId`/`sub` come from the token.
-2. Dev fallback headers: `x-clinic-id` (required), `x-branch-id`, `x-user-id`.
+2. Dev fallback headers: `x-clinic-id` (required), `x-branch-id`, `x-user-id` — **only** when `NODE_ENV !== 'production'` AND `ALLOW_DEV_AUTH_HEADERS=true`.
 
 `/auth/**` and `/health` are excluded. Every service method takes `clinicId: Types.ObjectId` and filters on it — **never** query a collection without a `clinicId` match; cross-tenant leakage is the primary security concern.
 
@@ -60,7 +60,7 @@ Every non-auth route runs through `ClinicContextMiddleware` (`backend/src/common
 ### AuthZ
 
 - `Permission` enum in `backend/src/modules/authz/permissions.ts` is the complete permission set. Roles are stored per-clinic with a `permissions: Permission[]` array.
-- `PermissionsGuard` is registered as a global `APP_GUARD`. It reads `@RequirePermissions(...)` metadata from the handler/class. **If a handler has no decorator, it is allowed** (guard returns true). Always add `@RequirePermissions(...)` to any new endpoint that touches tenant data.
+- `PermissionsGuard` is registered as a global `APP_GUARD`. It reads `@RequirePermissions(...)` metadata from the handler/class. Guard is **default-deny**: a handler without `@RequirePermissions(...)` or `@Public()` returns 403. Use `@RequirePermissions()` (empty args) for routes that need a tenant context but no specific capability (`/me`). Use `@Public()` only for truly unauthenticated routes (`/auth/*`, `/health`, `/share/*`).
 - `AuthzService.getActor(...)` loads the user + roles and flattens permissions. It throws 401 if `actorUserId` is missing — so permissioned routes require either a JWT or `x-user-id`.
 
 ### Auditing & access logs

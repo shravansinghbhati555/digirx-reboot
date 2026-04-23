@@ -6,10 +6,12 @@ export type RequestContext = {
   actorUserId?: Types.ObjectId;
 };
 
-export function parseObjectId(value: string, fieldName: string): Types.ObjectId {
+export function parseObjectId(
+  value: string,
+  fieldName: string,
+): Types.ObjectId {
   if (!Types.ObjectId.isValid(value)) {
     throw new Error(`Invalid ${fieldName}`);
   }
   return new Types.ObjectId(value);
 }
-

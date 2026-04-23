@@ -6,7 +6,11 @@ import { AccessLogsService } from './access-logs.service';
 import { AccessLog, AccessLogSchema } from './schemas/access-log.schema';
 
 @Module({
-  imports: [MongooseModule.forFeature([{ name: AccessLog.name, schema: AccessLogSchema }])],
+  imports: [
+    MongooseModule.forFeature([
+      { name: AccessLog.name, schema: AccessLogSchema },
+    ]),
+  ],
   controllers: [AccessLogsController],
   providers: [AccessLogsService],
   exports: [AccessLogsService],
@@ -16,4 +20,3 @@ export class AccessLogsModule implements NestModule {
     consumer.apply(AccessLogMiddleware).exclude('health').forRoutes('*');
   }
 }
-

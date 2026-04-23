@@ -14,4 +14,3 @@ export type SendNotificationResult = {
 export interface NotificationProvider {
   send(input: SendNotificationInput): Promise<SendNotificationResult>;
 }
-

@@ -6,11 +6,16 @@ import { PdfModule } from '../pdf/pdf.module';
 import { StorageModule } from '../storage/storage.module';
 import { PrescriptionsController } from './prescriptions.controller';
 import { PrescriptionsService } from './prescriptions.service';
-import { Prescription, PrescriptionSchema } from './schemas/prescription.schema';
+import {
+  Prescription,
+  PrescriptionSchema,
+} from './schemas/prescription.schema';
 
 @Module({
   imports: [
-    MongooseModule.forFeature([{ name: Prescription.name, schema: PrescriptionSchema }]),
+    MongooseModule.forFeature([
+      { name: Prescription.name, schema: PrescriptionSchema },
+    ]),
     EncountersModule,
     PdfModule,
     StorageModule,
@@ -20,4 +25,3 @@ import { Prescription, PrescriptionSchema } from './schemas/prescription.schema'
   providers: [PrescriptionsService],
 })
 export class PrescriptionsModule {}
-

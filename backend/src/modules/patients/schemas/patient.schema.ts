@@ -51,7 +51,12 @@ export class Patient {
 
 export const PatientSchema = SchemaFactory.createForClass(Patient);
 
-PatientSchema.index({ clinicId: 1, normalizedName: 1 }, { name: 'patient_name_idx' });
+PatientSchema.index(
+  { clinicId: 1, normalizedName: 1 },
+  { name: 'patient_name_idx' },
+);
 PatientSchema.index({ clinicId: 1, phones: 1 }, { name: 'patient_phone_idx' });
-PatientSchema.index({ clinicId: 1, normalizedPhones: 1 }, { name: 'patient_normalized_phone_idx' });
-
+PatientSchema.index(
+  { clinicId: 1, normalizedPhones: 1 },
+  { name: 'patient_normalized_phone_idx' },
+);

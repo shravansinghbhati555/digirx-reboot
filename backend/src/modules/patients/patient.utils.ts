@@ -1,8 +1,5 @@
 export function normalizeName(name: string): string {
-  return name
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, ' ');
+  return name.trim().toLowerCase().replace(/\s+/g, ' ');
 }
 
 export function normalizePhone(phone: string): string {
@@ -10,4 +7,3 @@ export function normalizePhone(phone: string): string {
   const digits = phone.replace(/[^\d]/g, '');
   return digits.length > 10 ? digits.slice(-10) : digits;
 }
-

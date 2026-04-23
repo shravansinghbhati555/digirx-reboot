@@ -27,10 +27,11 @@ export class DoctorAvailabilityRule {
   active!: boolean;
 }
 
-export const DoctorAvailabilityRuleSchema = SchemaFactory.createForClass(DoctorAvailabilityRule);
+export const DoctorAvailabilityRuleSchema = SchemaFactory.createForClass(
+  DoctorAvailabilityRule,
+);
 
 DoctorAvailabilityRuleSchema.index(
   { clinicId: 1, branchId: 1, doctorUserId: 1, weekday: 1 },
   { unique: true, name: 'uniq_rule_per_day' },
 );
-

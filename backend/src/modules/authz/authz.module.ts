@@ -17,4 +17,3 @@ import { MeController } from './me.controller';
   exports: [AuthzService],
 })
 export class AuthzModule {}
-

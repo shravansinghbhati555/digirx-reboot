@@ -110,7 +110,6 @@ async function main() {
     });
   }
 
-  // eslint-disable-next-line no-console
   console.log('Seeded:', {
     clinicId: clinicId.toHexString(),
     branchId: branchId.toHexString(),
@@ -122,7 +121,12 @@ async function main() {
     },
     loginHint: {
       endpoint: '/auth/login',
-      body: { clinicId: clinicId.toHexString(), email: adminEmail, password: adminPassword, branchId: branchId.toHexString() },
+      body: {
+        clinicId: clinicId.toHexString(),
+        email: adminEmail,
+        password: adminPassword,
+        branchId: branchId.toHexString(),
+      },
     },
   });
 
@@ -130,8 +134,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  // eslint-disable-next-line no-console
   console.error(err);
   process.exitCode = 1;
 });
-

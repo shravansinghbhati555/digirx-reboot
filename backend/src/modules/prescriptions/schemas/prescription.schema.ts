@@ -41,6 +41,11 @@ export class Prescription {
 
 export const PrescriptionSchema = SchemaFactory.createForClass(Prescription);
 
-PrescriptionSchema.index({ clinicId: 1, patientId: 1, createdAt: -1 }, { name: 'rx_patient_idx' });
-PrescriptionSchema.index({ shareToken: 1 }, { sparse: true, name: 'rx_share_token_idx' });
-
+PrescriptionSchema.index(
+  { clinicId: 1, patientId: 1, createdAt: -1 },
+  { name: 'rx_patient_idx' },
+);
+PrescriptionSchema.index(
+  { shareToken: 1 },
+  { sparse: true, name: 'rx_share_token_idx' },
+);

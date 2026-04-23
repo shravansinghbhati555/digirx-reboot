@@ -4,4 +4,3 @@ export type BillItemDto = {
   quantity: number;
   unitPrice: number;
 };
-

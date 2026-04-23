@@ -5,4 +5,3 @@ export class UpdateEncounterDto {
   vitals?: Record<string, unknown>;
   followUpAt?: string; // ISO
 }
-

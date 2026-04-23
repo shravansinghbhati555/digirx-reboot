@@ -23,5 +23,7 @@ export class Branch {
 
 export const BranchSchema = SchemaFactory.createForClass(Branch);
 
-BranchSchema.index({ clinicId: 1, name: 1 }, { unique: true, name: 'branch_unique_name_per_clinic' });
-
+BranchSchema.index(
+  { clinicId: 1, name: 1 },
+  { unique: true, name: 'branch_unique_name_per_clinic' },
+);

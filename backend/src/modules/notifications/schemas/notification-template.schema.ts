@@ -1,7 +1,8 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { HydratedDocument, Types } from 'mongoose';
 
-export type NotificationTemplateDocument = HydratedDocument<NotificationTemplate>;
+export type NotificationTemplateDocument =
+  HydratedDocument<NotificationTemplate>;
 
 export enum NotificationChannel {
   Sms = 'SMS',
@@ -26,10 +27,10 @@ export class NotificationTemplate {
   active!: boolean;
 }
 
-export const NotificationTemplateSchema = SchemaFactory.createForClass(NotificationTemplate);
+export const NotificationTemplateSchema =
+  SchemaFactory.createForClass(NotificationTemplate);
 
 NotificationTemplateSchema.index(
   { clinicId: 1, channel: 1, key: 1 },
   { unique: true, name: 'notification_template_unique' },
 );
-

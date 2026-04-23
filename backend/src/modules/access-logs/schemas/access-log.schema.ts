@@ -38,6 +38,11 @@ export class AccessLog {
 
 export const AccessLogSchema = SchemaFactory.createForClass(AccessLog);
 
-AccessLogSchema.index({ clinicId: 1, createdAt: -1 }, { name: 'accesslog_clinic_created_idx' });
-AccessLogSchema.index({ clinicId: 1, path: 1, createdAt: -1 }, { name: 'accesslog_path_created_idx' });
-
+AccessLogSchema.index(
+  { clinicId: 1, createdAt: -1 },
+  { name: 'accesslog_clinic_created_idx' },
+);
+AccessLogSchema.index(
+  { clinicId: 1, path: 1, createdAt: -1 },
+  { name: 'accesslog_path_created_idx' },
+);

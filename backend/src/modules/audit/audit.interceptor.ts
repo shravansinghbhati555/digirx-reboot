@@ -20,7 +20,13 @@ export class AuditInterceptor implements NestInterceptor {
 
     const method = (req.method || '').toUpperCase();
     const action =
-      method === 'POST' ? AuditAction.Create : method === 'PATCH' || method === 'PUT' ? AuditAction.Update : method === 'DELETE' ? AuditAction.Delete : null;
+      method === 'POST'
+        ? AuditAction.Create
+        : method === 'PATCH' || method === 'PUT'
+          ? AuditAction.Update
+          : method === 'DELETE'
+            ? AuditAction.Delete
+            : null;
 
     if (!action || !req.context) {
       return next.handle();
@@ -28,7 +34,9 @@ export class AuditInterceptor implements NestInterceptor {
 
     const entityType = req.route?.path ? String(req.route.path) : req.path;
     const entityId =
-      typeof req.params?.id === 'string' && req.params.id.length > 0 ? req.params.id : 'n/a';
+      typeof req.params?.id === 'string' && req.params.id.length > 0
+        ? req.params.id
+        : 'n/a';
 
     return next.handle().pipe(
       tap({
@@ -51,4 +59,3 @@ export class AuditInterceptor implements NestInterceptor {
     );
   }
 }
-

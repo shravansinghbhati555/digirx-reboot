@@ -6,4 +6,3 @@ import { PdfService } from './pdf.service';
   exports: [PdfService],
 })
 export class PdfModule {}
-

@@ -5,10 +5,11 @@ import { TenancyController } from './tenancy.controller';
 import { TenancyService } from './tenancy.service';
 
 @Module({
-  imports: [MongooseModule.forFeature([{ name: Clinic.name, schema: ClinicSchema }])],
+  imports: [
+    MongooseModule.forFeature([{ name: Clinic.name, schema: ClinicSchema }]),
+  ],
   controllers: [TenancyController],
   providers: [TenancyService],
   exports: [TenancyService],
 })
 export class TenancyModule {}
-
