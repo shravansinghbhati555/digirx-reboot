@@ -1,12 +1,14 @@
 import { Controller, Get, Req } from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { AuthzService } from './authz.service';
+import { RequirePermissions } from './require-permissions.decorator';
 
 @Controller()
 export class MeController {
   constructor(private readonly authz: AuthzService) {}
 
   @Get('me')
+  @RequirePermissions()
   async me(@Req() req: AppRequest) {
     const actor = await this.authz.getActor({
       clinicId: req.context!.clinicId,
@@ -22,4 +24,3 @@ export class MeController {
     };
   }
 }
-

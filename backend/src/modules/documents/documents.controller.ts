@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
+import { Public } from '../../common/public.decorator';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
 import { StorageService } from '../storage/storage.service';
@@ -76,6 +77,7 @@ export class DocumentsController {
   }
 
   @Get('share/:token')
+  @Public()
   async shareDownload(@Param('token') token: string, @Query('inline') inline?: string) {
     const share = await this.shareModel.findOne({ token, revokedAt: { $exists: false } });
     if (!share) return { message: 'Invalid token' };

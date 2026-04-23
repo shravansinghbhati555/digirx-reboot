@@ -1,12 +1,15 @@
 import { Controller, Get, Query, Req } from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { AccessLogsService } from './access-logs.service';
+import { RequirePermissions } from '../authz/require-permissions.decorator';
+import { Permission } from '../authz/permissions';
 
 @Controller('access-logs')
 export class AccessLogsController {
   constructor(private readonly logs: AccessLogsService) {}
 
   @Get()
+  @RequirePermissions(Permission.ClinicRead)
   async list(
     @Req() req: AppRequest,
     @Query('limit') limitRaw?: string,
@@ -21,6 +24,7 @@ export class AccessLogsController {
   }
 
   @Get('export')
+  @RequirePermissions(Permission.ClinicRead)
   async export(
     @Req() req: AppRequest,
     @Query('limit') limitRaw?: string,

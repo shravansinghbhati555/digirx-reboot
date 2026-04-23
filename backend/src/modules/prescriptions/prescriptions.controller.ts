@@ -1,5 +1,6 @@
 import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
+import { Public } from '../../common/public.decorator';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
@@ -37,6 +38,7 @@ export class PrescriptionsController {
   }
 
   @Get('share/prescriptions/:token')
+  @Public()
   async getShared(@Param('token') token: string) {
     // Public read endpoint (token-based). Rate limiting + expiry comes next.
     return await this.prescriptions.getByShareToken(token);

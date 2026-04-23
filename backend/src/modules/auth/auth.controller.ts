@@ -1,5 +1,6 @@
 import { Body, Controller, Post, Req, Res, UnauthorizedException } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { Public } from '../../common/public.decorator';
 import { AuthService } from './auth.service';
 
 const REFRESH_COOKIE = 'digirx_refresh';
@@ -9,6 +10,7 @@ export class AuthController {
   constructor(private readonly auth: AuthService) {}
 
   @Post('login')
+  @Public()
   async login(
     @Body() body: { clinicId: string; email: string; password: string; branchId?: string },
     @Res({ passthrough: true }) res: Response,
@@ -25,6 +27,7 @@ export class AuthController {
   }
 
   @Post('refresh')
+  @Public()
   async refresh(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const raw = req.cookies?.[REFRESH_COOKIE] as string | undefined;
     if (!raw) throw new UnauthorizedException('Missing refresh cookie');
@@ -43,6 +46,7 @@ export class AuthController {
   }
 
   @Post('logout')
+  @Public()
   async logout(@Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const raw = req.cookies?.[REFRESH_COOKIE] as string | undefined;
     if (raw) {
