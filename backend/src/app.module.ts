@@ -7,6 +7,7 @@ import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { HealthController } from './health/health.controller';
 import { ClinicContextMiddleware } from './common/clinic-context.middleware';
+import { AppThrottlerModule } from './common/throttler.config';
 import { AuditModule } from './modules/audit/audit.module';
 import { AuditInterceptor } from './modules/audit/audit.interceptor';
 import { AuthModule } from './modules/auth/auth.module';
@@ -27,6 +28,7 @@ import { StorageModule } from './modules/storage/storage.module';
 
 @Module({
   imports: [
+    AppThrottlerModule,
     ConfigModule.forRoot({
       isGlobal: true,
     }),

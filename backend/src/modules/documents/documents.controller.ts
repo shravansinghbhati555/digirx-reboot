@@ -1,6 +1,8 @@
 import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { AppRequest } from '../../common/types';
 import { Public } from '../../common/public.decorator';
+import { THROTTLE_SHARE } from '../../common/throttler.config';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
 import { StorageService } from '../storage/storage.service';
@@ -78,6 +80,7 @@ export class DocumentsController {
 
   @Get('share/:token')
   @Public()
+  @Throttle({ [THROTTLE_SHARE]: { limit: 10, ttl: 60_000 } })
   async shareDownload(@Param('token') token: string, @Query('inline') inline?: string) {
     const share = await this.shareModel.findOne({ token, revokedAt: { $exists: false } });
     if (!share) return { message: 'Invalid token' };

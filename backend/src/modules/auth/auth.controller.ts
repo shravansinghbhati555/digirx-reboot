@@ -1,6 +1,8 @@
 import { Body, Controller, Post, Req, Res, UnauthorizedException } from '@nestjs/common';
 import type { Request, Response } from 'express';
+import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/public.decorator';
+import { THROTTLE_AUTH } from '../../common/throttler.config';
 import { AuthService } from './auth.service';
 
 const REFRESH_COOKIE = 'digirx_refresh';
@@ -11,6 +13,7 @@ export class AuthController {
 
   @Post('login')
   @Public()
+  @Throttle({ [THROTTLE_AUTH]: { limit: 10, ttl: 60_000 } })
   async login(
     @Body() body: { clinicId: string; email: string; password: string; branchId?: string },
     @Res({ passthrough: true }) res: Response,
