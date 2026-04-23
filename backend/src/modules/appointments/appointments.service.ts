@@ -18,6 +18,7 @@ import { QueueCounter } from './schemas/queue-counter.schema';
 import { AvailabilityService } from '../availability/availability.service';
 import { DateTime } from 'luxon';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
+import { computeClinicDayRange } from '../../common/clinic-time';
 
 const ACTIVE_TIME_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.Booked,
@@ -71,89 +72,86 @@ export class AppointmentsService {
       });
 
       // Conflict prevention for MongoDB: transactional overlap check.
-      try {
-        // Transactions require MongoDB replica set. If unavailable, fallback to non-transactional check.
-        const session = await this.connection
-          .startSession()
-          .catch(() => null as any);
-        if (session) {
-          try {
-            let created: Appointment | null = null;
-            await session.withTransaction(async () => {
-              const overlap = await this.apptModel
-                .findOne({
-                  clinicId,
-                  branchId,
-                  doctorId,
-                  type: AppointmentType.Time,
-                  status: { $in: ACTIVE_TIME_STATUSES },
-                  startAt: { $lt: endAt },
-                  endAt: { $gt: startAt },
-                })
-                .session(session);
+      // Transactions require MongoDB replica set. If unavailable, fallback to non-transactional check.
+      const session = await this.connection
+        .startSession()
+        .catch(() => null as any);
+      if (session) {
+        try {
+          let created: Appointment | null = null;
+          await session.withTransaction(async () => {
+            const overlap = await this.apptModel
+              .findOne({
+                clinicId,
+                branchId,
+                doctorId,
+                type: AppointmentType.Time,
+                status: { $in: ACTIVE_TIME_STATUSES },
+                startAt: { $lt: endAt },
+                endAt: { $gt: startAt },
+              })
+              .session(session);
 
-              if (overlap) {
-                throw new ConflictException('Time slot is already booked');
-              }
+            if (overlap) {
+              throw new ConflictException('Time slot is already booked');
+            }
 
-              created = await this.apptModel
-                .create(
-                  [
-                    {
-                      clinicId,
-                      branchId,
-                      doctorId,
-                      patientId,
-                      type: AppointmentType.Time,
-                      startAt,
-                      endAt,
-                      status: AppointmentStatus.Booked,
-                      source,
-                      notes: dto.notes,
-                      createdBy: actorUserId,
-                    },
-                  ],
-                  { session },
-                )
-                .then((docs) => docs[0]);
-            });
-            if (!created) throw new Error('Appointment not created');
-            return created;
-          } catch (e: any) {
-            // fall back when transactions are not supported
-            const msg = String(e?.message ?? '');
-            if (!msg.includes('Transaction numbers are only allowed')) throw e;
-          } finally {
-            await session.endSession();
-          }
+            created = await this.apptModel
+              .create(
+                [
+                  {
+                    clinicId,
+                    branchId,
+                    doctorId,
+                    patientId,
+                    type: AppointmentType.Time,
+                    startAt,
+                    endAt,
+                    status: AppointmentStatus.Booked,
+                    source,
+                    notes: dto.notes,
+                    createdBy: actorUserId,
+                  },
+                ],
+                { session },
+              )
+              .then((docs) => docs[0]);
+          });
+          if (!created) throw new Error('Appointment not created');
+          return created;
+        } catch (e: any) {
+          // fall back when transactions are not supported
+          const msg = String(e?.message ?? '');
+          if (!msg.includes('Transaction numbers are only allowed')) throw e;
+        } finally {
+          await session.endSession();
         }
-
-        const overlap = await this.apptModel.findOne({
-          clinicId,
-          branchId,
-          doctorId,
-          type: AppointmentType.Time,
-          status: { $in: ACTIVE_TIME_STATUSES },
-          startAt: { $lt: endAt },
-          endAt: { $gt: startAt },
-        });
-        if (overlap) throw new ConflictException('Time slot is already booked');
-
-        return await this.apptModel.create({
-          clinicId,
-          branchId,
-          doctorId,
-          patientId,
-          type: AppointmentType.Time,
-          startAt,
-          endAt,
-          status: AppointmentStatus.Booked,
-          source,
-          notes: dto.notes,
-          createdBy: actorUserId,
-        });
-      } finally {
       }
+
+      const overlap = await this.apptModel.findOne({
+        clinicId,
+        branchId,
+        doctorId,
+        type: AppointmentType.Time,
+        status: { $in: ACTIVE_TIME_STATUSES },
+        startAt: { $lt: endAt },
+        endAt: { $gt: startAt },
+      });
+      if (overlap) throw new ConflictException('Time slot is already booked');
+
+      return await this.apptModel.create({
+        clinicId,
+        branchId,
+        doctorId,
+        patientId,
+        type: AppointmentType.Time,
+        startAt,
+        endAt,
+        status: AppointmentStatus.Booked,
+        source,
+        notes: dto.notes,
+        createdBy: actorUserId,
+      });
     }
 
     if (dto.type === AppointmentType.Queue) {
@@ -161,73 +159,70 @@ export class AppointmentsService {
       if (!queueDate)
         throw new BadRequestException('queueDate is required for QUEUE');
 
-      try {
-        const session = await this.connection
-          .startSession()
-          .catch(() => null as any);
-        if (session) {
-          try {
-            let created: Appointment | null = null;
-            await session.withTransaction(async () => {
-              const counter = await this.counterModel.findOneAndUpdate(
-                { clinicId, branchId, doctorId, queueDate },
-                { $inc: { lastNumber: 1 } },
-                { upsert: true, new: true, session },
-              );
+      const session = await this.connection
+        .startSession()
+        .catch(() => null as any);
+      if (session) {
+        try {
+          let created: Appointment | null = null;
+          await session.withTransaction(async () => {
+            const counter = await this.counterModel.findOneAndUpdate(
+              { clinicId, branchId, doctorId, queueDate },
+              { $inc: { lastNumber: 1 } },
+              { upsert: true, new: true, session },
+            );
 
-              const queueNumber = counter.lastNumber;
-              created = await this.apptModel
-                .create(
-                  [
-                    {
-                      clinicId,
-                      branchId,
-                      doctorId,
-                      patientId,
-                      type: AppointmentType.Queue,
-                      queueDate,
-                      queueNumber,
-                      status: AppointmentStatus.Booked,
-                      source,
-                      notes: dto.notes,
-                      createdBy: actorUserId,
-                    },
-                  ],
-                  { session },
-                )
-                .then((docs) => docs[0]);
-            });
-            if (!created) throw new Error('Appointment not created');
-            return created;
-          } catch (e: any) {
-            const msg = String(e?.message ?? '');
-            if (!msg.includes('Transaction numbers are only allowed')) throw e;
-          } finally {
-            await session.endSession();
-          }
+            const queueNumber = counter.lastNumber;
+            created = await this.apptModel
+              .create(
+                [
+                  {
+                    clinicId,
+                    branchId,
+                    doctorId,
+                    patientId,
+                    type: AppointmentType.Queue,
+                    queueDate,
+                    queueNumber,
+                    status: AppointmentStatus.Booked,
+                    source,
+                    notes: dto.notes,
+                    createdBy: actorUserId,
+                  },
+                ],
+                { session },
+              )
+              .then((docs) => docs[0]);
+          });
+          if (!created) throw new Error('Appointment not created');
+          return created;
+        } catch (e: any) {
+          const msg = String(e?.message ?? '');
+          if (!msg.includes('Transaction numbers are only allowed')) throw e;
+        } finally {
+          await session.endSession();
         }
-
-        const counter = await this.counterModel.findOneAndUpdate(
-          { clinicId, branchId, doctorId, queueDate },
-          { $inc: { lastNumber: 1 } },
-          { upsert: true, new: true },
-        );
-        const queueNumber = counter.lastNumber;
-        return await this.apptModel.create({
-          clinicId,
-          branchId,
-          doctorId,
-          patientId,
-          type: AppointmentType.Queue,
-          queueDate,
-          queueNumber,
-          status: AppointmentStatus.Booked,
-          source,
-          notes: dto.notes,
-          createdBy: actorUserId,
-        });
-      } finally {
       }
+
+      const counter = await this.counterModel.findOneAndUpdate(
+        { clinicId, branchId, doctorId, queueDate },
+        { $inc: { lastNumber: 1 } },
+        { upsert: true, new: true },
+      );
+      const queueNumber = counter.lastNumber;
+      return await this.apptModel.create({
+        clinicId,
+        branchId,
+        doctorId,
+        patientId,
+        type: AppointmentType.Queue,
+        queueDate,
+        queueNumber,
+        status: AppointmentStatus.Booked,
+        source,
+        notes: dto.notes,
+        createdBy: actorUserId,
+      });
     }
 
     throw new BadRequestException('Unsupported appointment type');
@@ -242,9 +237,9 @@ export class AppointmentsService {
     const bId = new Types.ObjectId(branchId);
     const dId = doctorId ? new Types.ObjectId(doctorId) : undefined;
 
-    // TIME: match by startAt date range UTC day (placeholder); later: clinic timezone range.
-    const dayStart = new Date(`${date}T00:00:00.000Z`);
-    const dayEnd = new Date(`${date}T23:59:59.999Z`);
+    const clinic = await this.clinicModel.findById(clinicId);
+    const tz = clinic?.timezone || 'UTC';
+    const { startUtc, endUtc } = computeClinicDayRange(date, tz);
 
     return await this.apptModel
       .find({
@@ -254,7 +249,7 @@ export class AppointmentsService {
         $or: [
           {
             type: AppointmentType.Time,
-            startAt: { $gte: dayStart, $lte: dayEnd },
+            startAt: { $gte: startUtc, $lte: endUtc },
           },
           { type: AppointmentType.Queue, queueDate: date },
         ],
