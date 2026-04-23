@@ -1,12 +1,4 @@
-import {
-  Body,
-  Controller,
-  Get,
-  Patch,
-  Req,
-  UsePipes,
-  ValidationPipe,
-} from '@nestjs/common';
+import { Body, Controller, Get, Patch, Req } from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
@@ -14,13 +6,6 @@ import { PatchClinicSettingsDto } from './dto/patch-clinic-settings.dto';
 import { TenancyService } from './tenancy.service';
 
 @Controller('clinic')
-@UsePipes(
-  new ValidationPipe({
-    whitelist: true,
-    forbidNonWhitelisted: true,
-    transform: true,
-  }),
-)
 export class TenancyController {
   constructor(private readonly tenancy: TenancyService) {}
 

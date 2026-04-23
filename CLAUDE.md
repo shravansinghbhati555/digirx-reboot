@@ -118,6 +118,6 @@ CORS in `main.ts` uses a callback allowlist — to add an origin, prefer `CORS_O
 ## Conventions
 
 - Use `@nestjs/mongoose` decorators + `@Schema({ timestamps: true })` on all collections. Always index `clinicId` (and `branchId` where applicable).
-- DTOs live under `modules/<x>/dto/` and use `class-validator` decorators; they are not yet wired to a global `ValidationPipe` — services still validate defensively.
+- DTOs live under `modules/<x>/dto/` and use `class-validator` decorators. A global `ValidationPipe` in `main.ts` enforces them with `whitelist: true, forbidNonWhitelisted: true, transform: true`; bad bodies are rejected with 400 before the handler runs. Per-DTO specs under `*.dto.spec.ts` assert both the happy path and at least one rejection case; use the `expectInvalid` / `expectValid` helpers in `backend/src/common/test/dto-validator.ts`. `reflect-metadata` is loaded for every Jest test via `setupFiles` in `backend/package.json`.
 - Controllers should stay thin: tenant extraction (`req.context!.clinicId`) + delegation to services. Never reach into Mongoose models from a controller.
 - Timezone-sensitive logic goes through Luxon (`DateTime`), using the clinic's stored `timezone`. `queueDate` is a local-date string; timestamps (`startAt`, `endAt`, `visitedAt`, …) are UTC `Date`s.

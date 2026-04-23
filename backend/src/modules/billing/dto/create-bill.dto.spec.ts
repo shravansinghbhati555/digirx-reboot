@@ -1,4 +1,3 @@
-import 'reflect-metadata';
 import { expectInvalid, expectValid } from '../../../common/test/dto-validator';
 import { CreateBillDto } from './create-bill.dto';
 

@@ -1,4 +1,3 @@
-import 'reflect-metadata';
 import { expectInvalid, expectValid } from '../../../common/test/dto-validator';
 import { CreatePrescriptionDto } from './create-prescription.dto';
 

@@ -7,8 +7,6 @@ import {
   Put,
   Query,
   Req,
-  UsePipes,
-  ValidationPipe,
 } from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
@@ -19,13 +17,6 @@ import { UpsertDoctorRulesDto } from './dto/upsert-rules.dto';
 import { UpsertDoctorOverrideDto } from './dto/upsert-override.dto';
 
 @Controller('availability')
-@UsePipes(
-  new ValidationPipe({
-    whitelist: true,
-    forbidNonWhitelisted: true,
-    transform: true,
-  }),
-)
 export class AvailabilityController {
   constructor(private readonly availability: AvailabilityService) {}
 
