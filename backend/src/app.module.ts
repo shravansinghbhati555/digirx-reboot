@@ -68,6 +68,7 @@ export class AppModule implements NestModule {
         'health',
         { path: 'auth/(.*)', method: RequestMethod.ALL },
         { path: 'auth', method: RequestMethod.ALL },
+        { path: 'share/(.*)', method: RequestMethod.ALL },
       )
       .forRoutes('*');
   }

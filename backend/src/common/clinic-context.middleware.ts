@@ -6,12 +6,11 @@ import { parseObjectId } from './request-context';
 import type { JwtClaims } from '../modules/auth/auth.types';
 
 /**
- * Temporary tenant context loader.
+ * Populates req.context from a Bearer JWT.
  *
- * Until auth is implemented, we take clinic/branch/user from headers:
- * - x-clinic-id (required)
- * - x-branch-id (optional)
- * - x-user-id (optional)
+ * In non-production environments, if ALLOW_DEV_AUTH_HEADERS=true, it also
+ * accepts x-clinic-id / x-branch-id / x-user-id headers as an auth fallback.
+ * In production this fallback is unconditionally disabled.
  */
 @Injectable()
 export class ClinicContextMiddleware implements NestMiddleware {
@@ -36,6 +35,15 @@ export class ClinicContextMiddleware implements NestMiddleware {
         return;
       }
 
+      const allowDevHeaders =
+        process.env.NODE_ENV !== 'production' &&
+        process.env.ALLOW_DEV_AUTH_HEADERS === 'true';
+
+      if (!allowDevHeaders) {
+        res.status(401).json({ message: 'Missing Bearer token' });
+        return;
+      }
+
       const clinicIdHeader = req.header('x-clinic-id');
       if (!clinicIdHeader) {
         res.status(401).json({ message: 'Missing auth context (Bearer token or x-clinic-id)' });
@@ -57,4 +65,3 @@ export class ClinicContextMiddleware implements NestMiddleware {
     }
   }
 }
-
