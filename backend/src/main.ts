@@ -2,9 +2,12 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import * as dotenv from 'dotenv';
 import cookieParser from 'cookie-parser';
+import { validateEnv } from './common/config';
 
 async function bootstrap() {
   dotenv.config();
+  validateEnv();
+
   const app = await NestFactory.create(AppModule);
   app.use(cookieParser());
 
@@ -23,7 +26,6 @@ async function bootstrap() {
 
   app.enableCors({
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
-      // allow server-to-server, curl, same-origin
       if (!origin) return callback(null, true);
       if (allowedOrigins.has(origin)) return callback(null, true);
       return callback(new Error(`CORS blocked for origin: ${origin}`), false);
