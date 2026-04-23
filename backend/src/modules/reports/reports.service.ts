@@ -4,25 +4,8 @@ import { Model, Types } from 'mongoose';
 import { Appointment } from '../appointments/schemas/appointment.schema';
 import { Bill, BillStatus } from '../billing/schemas/bill.schema';
 import { Payment } from '../billing/schemas/payment.schema';
-
-function parseDateOnly(date: string): { dayStart: Date; dayEnd: Date } {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
-    throw new BadRequestException('date must be YYYY-MM-DD');
-  const dayStart = new Date(`${date}T00:00:00.000Z`);
-  const dayEnd = new Date(`${date}T23:59:59.999Z`);
-  return { dayStart, dayEnd };
-}
-
-function parseRange(from?: string, to?: string) {
-  if (!from || !to)
-    throw new BadRequestException('from and to are required (YYYY-MM-DD)');
-  const start = new Date(`${from}T00:00:00.000Z`);
-  const end = new Date(`${to}T23:59:59.999Z`);
-  if (isNaN(start.getTime()) || isNaN(end.getTime()))
-    throw new BadRequestException('Invalid date range');
-  if (end < start) throw new BadRequestException('to must be >= from');
-  return { start, end };
-}
+import { Clinic } from '../tenancy/schemas/clinic.schema';
+import { computeClinicDayRange } from '../../common/clinic-time';
 
 @Injectable()
 export class ReportsService {
@@ -31,7 +14,53 @@ export class ReportsService {
     private readonly apptModel: Model<Appointment>,
     @InjectModel(Bill.name) private readonly billModel: Model<Bill>,
     @InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
+    @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
   ) {}
+
+  private async resolveTimezone(clinicId: Types.ObjectId): Promise<string> {
+    const clinic = await this.clinicModel.findById(clinicId);
+    return clinic?.timezone || 'UTC';
+  }
+
+  private async resolveDay(
+    clinicId: Types.ObjectId,
+    date: string,
+  ): Promise<{ dayStart: Date; dayEnd: Date; tz: string }> {
+    const tz = await this.resolveTimezone(clinicId);
+    try {
+      const { startUtc, endUtc } = computeClinicDayRange(date, tz);
+      return { dayStart: startUtc, dayEnd: endUtc, tz };
+    } catch (e) {
+      throw new BadRequestException(
+        e instanceof Error ? e.message : 'Invalid date',
+      );
+    }
+  }
+
+  private async resolveRange(
+    clinicId: Types.ObjectId,
+    from?: string,
+    to?: string,
+  ): Promise<{ start: Date; end: Date; tz: string }> {
+    if (!from || !to) {
+      throw new BadRequestException('from and to are required (YYYY-MM-DD)');
+    }
+    const tz = await this.resolveTimezone(clinicId);
+    let startRange: { startUtc: Date };
+    let endRange: { endUtc: Date };
+    try {
+      startRange = computeClinicDayRange(from, tz);
+      endRange = computeClinicDayRange(to, tz);
+    } catch (e) {
+      throw new BadRequestException(
+        e instanceof Error ? e.message : 'Invalid date range',
+      );
+    }
+    if (endRange.endUtc < startRange.startUtc) {
+      throw new BadRequestException('to must be >= from');
+    }
+    return { start: startRange.startUtc, end: endRange.endUtc, tz };
+  }
 
   async revenueSummary(
     clinicId: Types.ObjectId,
@@ -39,7 +68,7 @@ export class ReportsService {
     to?: string,
     branchId?: string,
   ) {
-    const { start, end } = parseRange(from, to);
+    const { start, end, tz } = await this.resolveRange(clinicId, from, to);
     const branchFilter = branchId
       ? { branchId: new Types.ObjectId(branchId) }
       : {};
@@ -85,13 +114,13 @@ export class ReportsService {
     return {
       from,
       to,
+      timezone: tz,
       branchId: branchId ?? null,
       issuedBills: {
         count: billed.count,
         totalBilled: billed.totalBilled ?? 0,
       },
       payments: { count: paid.count, totalPaid: paid.totalPaid ?? 0 },
-      // Note: outstanding is computed in pending-payments report (per bill).
     };
   }
 
@@ -100,7 +129,7 @@ export class ReportsService {
     date: string,
     branchId: string,
   ) {
-    const { dayStart, dayEnd } = parseDateOnly(date);
+    const { dayStart, dayEnd, tz } = await this.resolveDay(clinicId, date);
     const bId = new Types.ObjectId(branchId);
 
     const items = await this.apptModel
@@ -132,7 +161,14 @@ export class ReportsService {
       byDoctor[d].byType[a.type] = (byDoctor[d].byType[a.type] ?? 0) + 1;
     }
 
-    return { date, branchId, total: items.length, byDoctor, items };
+    return {
+      date,
+      timezone: tz,
+      branchId,
+      total: items.length,
+      byDoctor,
+      items,
+    };
   }
 
   async pendingPayments(
@@ -142,7 +178,6 @@ export class ReportsService {
   ) {
     const bFilter = branchId ? { branchId: new Types.ObjectId(branchId) } : {};
 
-    // Outstanding = bill.total - sum(payments.amount)
     const rows = await this.billModel.aggregate([
       {
         $match: {
