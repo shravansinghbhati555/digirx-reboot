@@ -1,11 +1,21 @@
+import { IsEnum, IsISO8601, IsOptional, IsString, MaxLength } from 'class-validator';
 import { AppointmentStatus } from '../schemas/appointment.schema';
 
 export class UpdateAppointmentDto {
-  // reschedule TIME
-  startAt?: string; // ISO
-  endAt?: string; // ISO
+  @IsOptional()
+  @IsISO8601()
+  startAt?: string;
 
-  // cancel / status update
+  @IsOptional()
+  @IsISO8601()
+  endAt?: string;
+
+  @IsOptional()
+  @IsEnum(AppointmentStatus)
   status?: AppointmentStatus;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(1000)
   notes?: string;
 }
