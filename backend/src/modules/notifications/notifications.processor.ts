@@ -2,14 +2,21 @@ import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { NotificationLog, NotificationStatus } from './schemas/notification-log.schema';
-import { NOTIFICATIONS_JOB_SEND, NOTIFICATIONS_QUEUE } from './notifications.queue';
+import {
+  NotificationLog,
+  NotificationStatus,
+} from './schemas/notification-log.schema';
+import {
+  NOTIFICATIONS_JOB_SEND,
+  NOTIFICATIONS_QUEUE,
+} from './notifications.queue';
 import { ConsoleNotificationProvider } from './providers/console.provider';
 
 @Processor(NOTIFICATIONS_QUEUE)
 export class NotificationsProcessor extends WorkerHost {
   constructor(
-    @InjectModel(NotificationLog.name) private readonly logModel: Model<NotificationLog>,
+    @InjectModel(NotificationLog.name)
+    private readonly logModel: Model<NotificationLog>,
     private readonly provider: ConsoleNotificationProvider,
   ) {
     super();
@@ -24,7 +31,11 @@ export class NotificationsProcessor extends WorkerHost {
 
     try {
       log.attempts = (log.attempts ?? 0) + 1;
-      const res = await this.provider.send({ channel: log.channel, to: log.to, body: log.body });
+      const res = await this.provider.send({
+        channel: log.channel,
+        to: log.to,
+        body: log.body,
+      });
       log.status = NotificationStatus.Sent;
       log.providerMessageId = res.providerMessageId;
       log.providerResponse = res.providerResponse;
@@ -38,4 +49,3 @@ export class NotificationsProcessor extends WorkerHost {
     }
   }
 }
-

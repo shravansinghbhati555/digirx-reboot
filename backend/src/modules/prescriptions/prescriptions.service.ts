@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { EncountersService } from '../encounters/encounters.service';
@@ -9,11 +13,16 @@ import { randomBytes } from 'crypto';
 @Injectable()
 export class PrescriptionsService {
   constructor(
-    @InjectModel(Prescription.name) private readonly rxModel: Model<Prescription>,
+    @InjectModel(Prescription.name)
+    private readonly rxModel: Model<Prescription>,
     private readonly encounters: EncountersService,
   ) {}
 
-  async createForEncounter(clinicId: Types.ObjectId, encounterId: string, dto: CreatePrescriptionDto) {
+  async createForEncounter(
+    clinicId: Types.ObjectId,
+    encounterId: string,
+    dto: CreatePrescriptionDto,
+  ) {
     const enc = await this.encounters.getById(clinicId, encounterId);
 
     if (!Array.isArray(dto.items) || dto.items.length === 0) {
@@ -21,14 +30,21 @@ export class PrescriptionsService {
     }
 
     const items = dto.items.map((it) => {
-      const hasCatalog = typeof it.medicineCatalogItemId === 'string' && it.medicineCatalogItemId.length > 0;
-      const hasCustom = typeof it.customName === 'string' && it.customName.trim().length > 0;
+      const hasCatalog =
+        typeof it.medicineCatalogItemId === 'string' &&
+        it.medicineCatalogItemId.length > 0;
+      const hasCustom =
+        typeof it.customName === 'string' && it.customName.trim().length > 0;
       if (!hasCatalog && !hasCustom) {
-        throw new BadRequestException('Each item must have medicineCatalogItemId or customName');
+        throw new BadRequestException(
+          'Each item must have medicineCatalogItemId or customName',
+        );
       }
 
       return {
-        medicineCatalogItemId: hasCatalog ? new Types.ObjectId(it.medicineCatalogItemId) : undefined,
+        medicineCatalogItemId: hasCatalog
+          ? new Types.ObjectId(it.medicineCatalogItemId)
+          : undefined,
         customName: hasCustom ? it.customName!.trim() : undefined,
         dosage: it.dosage?.trim(),
         frequency: it.frequency?.trim(),
@@ -68,4 +84,3 @@ export class PrescriptionsService {
     return rx;
   }
 }
-

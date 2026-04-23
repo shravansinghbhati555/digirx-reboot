@@ -22,12 +22,15 @@ export class ClinicContextMiddleware implements NestMiddleware {
       if (auth && auth.toLowerCase().startsWith('bearer ')) {
         const token = auth.slice(7).trim();
         const claims = this.jwt.verify<JwtClaims>(token, {
-          secret: process.env.JWT_ACCESS_SECRET ?? 'dev_access_secret_change_me',
+          secret:
+            process.env.JWT_ACCESS_SECRET ?? 'dev_access_secret_change_me',
         });
 
         req.context = {
           clinicId: parseObjectId(claims.clinicId, 'clinicId'),
-          branchId: claims.branchId ? parseObjectId(claims.branchId, 'branchId') : undefined,
+          branchId: claims.branchId
+            ? parseObjectId(claims.branchId, 'branchId')
+            : undefined,
           actorUserId: parseObjectId(claims.sub, 'sub'),
         };
 
@@ -46,7 +49,9 @@ export class ClinicContextMiddleware implements NestMiddleware {
 
       const clinicIdHeader = req.header('x-clinic-id');
       if (!clinicIdHeader) {
-        res.status(401).json({ message: 'Missing auth context (Bearer token or x-clinic-id)' });
+        res.status(401).json({
+          message: 'Missing auth context (Bearer token or x-clinic-id)',
+        });
         return;
       }
 
@@ -55,13 +60,19 @@ export class ClinicContextMiddleware implements NestMiddleware {
 
       req.context = {
         clinicId: parseObjectId(clinicIdHeader, 'x-clinic-id'),
-        branchId: branchIdHeader ? parseObjectId(branchIdHeader, 'x-branch-id') : undefined,
-        actorUserId: userIdHeader ? parseObjectId(userIdHeader, 'x-user-id') : undefined,
+        branchId: branchIdHeader
+          ? parseObjectId(branchIdHeader, 'x-branch-id')
+          : undefined,
+        actorUserId: userIdHeader
+          ? parseObjectId(userIdHeader, 'x-user-id')
+          : undefined,
       };
 
       next();
     } catch (e) {
-      res.status(400).json({ message: e instanceof Error ? e.message : 'Invalid tenant context' });
+      res.status(400).json({
+        message: e instanceof Error ? e.message : 'Invalid tenant context',
+      });
     }
   }
 }

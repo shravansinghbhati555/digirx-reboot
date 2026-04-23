@@ -22,11 +22,22 @@ export class PdfService {
     const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
 
     let y = 800;
-    page.drawText(input.clinicName, { x: 40, y, size: 16, font: bold, color: rgb(0.1, 0.1, 0.1) });
+    page.drawText(input.clinicName, {
+      x: 40,
+      y,
+      size: 16,
+      font: bold,
+      color: rgb(0.1, 0.1, 0.1),
+    });
     y -= 24;
     page.drawText('Prescription', { x: 40, y, size: 12, font: bold });
     y -= 18;
-    page.drawText(`Patient: ${input.patientName}`, { x: 40, y, size: 10, font });
+    page.drawText(`Patient: ${input.patientName}`, {
+      x: 40,
+      y,
+      size: 10,
+      font,
+    });
     y -= 14;
     page.drawText(`Doctor: ${input.doctorName}`, { x: 40, y, size: 10, font });
     y -= 14;
@@ -43,7 +54,9 @@ export class PdfService {
 
     input.items.forEach((it, idx) => {
       line(`${idx + 1}. ${it.name}`);
-      const details = [it.dosage, it.frequency, it.duration].filter(Boolean).join(' • ');
+      const details = [it.dosage, it.frequency, it.duration]
+        .filter(Boolean)
+        .join(' • ');
       if (details) line(`   ${details}`);
       if (it.instructions) line(`   Notes: ${it.instructions}`);
       y -= 4;
@@ -58,7 +71,12 @@ export class PdfService {
     patientName: string;
     issuedAtIso?: string;
     currency: string;
-    items: Array<{ name: string; quantity: number; unitPrice: number; amount: number }>;
+    items: Array<{
+      name: string;
+      quantity: number;
+      unitPrice: number;
+      amount: number;
+    }>;
     subtotal: number;
     discount: number;
     tax: number;
@@ -70,15 +88,36 @@ export class PdfService {
     const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
 
     let y = 800;
-    page.drawText(input.clinicName, { x: 40, y, size: 16, font: bold, color: rgb(0.1, 0.1, 0.1) });
+    page.drawText(input.clinicName, {
+      x: 40,
+      y,
+      size: 16,
+      font: bold,
+      color: rgb(0.1, 0.1, 0.1),
+    });
     y -= 24;
     page.drawText('Bill / Invoice', { x: 40, y, size: 12, font: bold });
     y -= 18;
-    page.drawText(`Bill No: ${input.billNo ?? '—'}`, { x: 40, y, size: 10, font });
+    page.drawText(`Bill No: ${input.billNo ?? '—'}`, {
+      x: 40,
+      y,
+      size: 10,
+      font,
+    });
     y -= 14;
-    page.drawText(`Patient: ${input.patientName}`, { x: 40, y, size: 10, font });
+    page.drawText(`Patient: ${input.patientName}`, {
+      x: 40,
+      y,
+      size: 10,
+      font,
+    });
     y -= 14;
-    page.drawText(`Date: ${input.issuedAtIso ?? ''}`, { x: 40, y, size: 10, font });
+    page.drawText(`Date: ${input.issuedAtIso ?? ''}`, {
+      x: 40,
+      y,
+      size: 10,
+      font,
+    });
     y -= 22;
 
     page.drawText('Items', { x: 40, y, size: 11, font: bold });
@@ -94,8 +133,18 @@ export class PdfService {
     for (const it of input.items) {
       page.drawText(it.name.slice(0, 45), { x: 40, y, size: 9, font });
       page.drawText(String(it.quantity), { x: 340, y, size: 9, font });
-      page.drawText(`${input.currency} ${it.unitPrice}`, { x: 390, y, size: 9, font });
-      page.drawText(`${input.currency} ${it.amount}`, { x: 470, y, size: 9, font });
+      page.drawText(`${input.currency} ${it.unitPrice}`, {
+        x: 390,
+        y,
+        size: 9,
+        font,
+      });
+      page.drawText(`${input.currency} ${it.amount}`, {
+        x: 470,
+        y,
+        size: 9,
+        font,
+      });
       y -= 12;
       if (y < 140) break;
     }
@@ -115,4 +164,3 @@ export class PdfService {
     return await pdf.save();
   }
 }
-

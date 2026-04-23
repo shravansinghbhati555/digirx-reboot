@@ -23,8 +23,16 @@ export class PrescriptionsController {
 
   @Post('encounters/:id/prescriptions')
   @RequirePermissions(Permission.PatientWrite)
-  async createForEncounter(@Req() req: AppRequest, @Param('id') encounterId: string, @Body() dto: CreatePrescriptionDto) {
-    return await this.prescriptions.createForEncounter(req.context!.clinicId, encounterId, dto);
+  async createForEncounter(
+    @Req() req: AppRequest,
+    @Param('id') encounterId: string,
+    @Body() dto: CreatePrescriptionDto,
+  ) {
+    return await this.prescriptions.createForEncounter(
+      req.context!.clinicId,
+      encounterId,
+      dto,
+    );
   }
 
   @Get('prescriptions/:id')
@@ -56,9 +64,13 @@ export class PrescriptionsController {
         clinicName: 'DigiRx Clinic',
         patientName: rx.patientId.toHexString(),
         doctorName: rx.doctorId.toHexString(),
-        createdAtIso: (rx as any).createdAt?.toISOString?.() ?? new Date().toISOString(),
+        createdAtIso:
+          (rx as any).createdAt?.toISOString?.() ?? new Date().toISOString(),
         items: (rx.items ?? []).map((it: any) => ({
-          name: it.customName ?? it.medicineCatalogItemId?.toHexString?.() ?? 'Medicine',
+          name:
+            it.customName ??
+            it.medicineCatalogItemId?.toHexString?.() ??
+            'Medicine',
           dosage: it.dosage,
           frequency: it.frequency,
           duration: it.duration,
@@ -67,7 +79,11 @@ export class PrescriptionsController {
       });
 
       const key = `clinic/${req.context!.clinicId.toHexString()}/prescription/${rx._id.toHexString()}/prescription.pdf`;
-      await this.storage.putObject({ key, body: bytes, contentType: 'application/pdf' });
+      await this.storage.putObject({
+        key,
+        body: bytes,
+        contentType: 'application/pdf',
+      });
       const doc = await this.documents.createForOwner({
         clinicId: req.context!.clinicId,
         ownerType: DocumentOwnerType.Prescription,
@@ -84,9 +100,11 @@ export class PrescriptionsController {
 
     const pdfDocumentId = rx.pdfDocumentId;
     if (!pdfDocumentId) throw new Error('pdfDocumentId missing');
-    const doc = await this.documents.getById(req.context!.clinicId, pdfDocumentId.toHexString());
+    const doc = await this.documents.getById(
+      req.context!.clinicId,
+      pdfDocumentId.toHexString(),
+    );
     const url = await this.storage.presignGet({ key: doc.storageKey });
     return { url, expiresInSeconds: 300, documentId: doc._id };
   }
 }
-

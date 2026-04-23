@@ -1,4 +1,12 @@
-import { IsArray, IsBoolean, IsInt, IsOptional, Max, Min, ValidateNested } from 'class-validator';
+import {
+  IsArray,
+  IsBoolean,
+  IsInt,
+  IsOptional,
+  Max,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 class AvailabilityWindowDto {
@@ -41,4 +49,3 @@ export class UpsertDoctorRulesDto {
   @Type(() => RuleDto)
   rules!: RuleDto[];
 }
-

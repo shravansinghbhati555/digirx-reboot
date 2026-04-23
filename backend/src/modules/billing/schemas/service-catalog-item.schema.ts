@@ -21,10 +21,10 @@ export class ServiceCatalogItem {
   active!: boolean;
 }
 
-export const ServiceCatalogItemSchema = SchemaFactory.createForClass(ServiceCatalogItem);
+export const ServiceCatalogItemSchema =
+  SchemaFactory.createForClass(ServiceCatalogItem);
 
 ServiceCatalogItemSchema.index(
   { clinicId: 1, name: 1 },
   { unique: true, name: 'service_catalog_unique_name_per_clinic' },
 );
-

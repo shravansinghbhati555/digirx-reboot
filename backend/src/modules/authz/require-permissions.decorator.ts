@@ -6,4 +6,3 @@ export const PERMISSIONS_KEY = 'permissions_required';
 export function RequirePermissions(...permissions: Permission[]) {
   return SetMetadata(PERMISSIONS_KEY, permissions);
 }
-

@@ -28,10 +28,11 @@ export class DoctorAvailabilityOverride {
   note?: string;
 }
 
-export const DoctorAvailabilityOverrideSchema = SchemaFactory.createForClass(DoctorAvailabilityOverride);
+export const DoctorAvailabilityOverrideSchema = SchemaFactory.createForClass(
+  DoctorAvailabilityOverride,
+);
 
 DoctorAvailabilityOverrideSchema.index(
   { clinicId: 1, branchId: 1, doctorUserId: 1, date: 1 },
   { unique: true, name: 'uniq_override_per_date' },
 );
-

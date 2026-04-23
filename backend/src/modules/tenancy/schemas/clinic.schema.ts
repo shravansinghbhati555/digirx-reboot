@@ -27,4 +27,3 @@ export class Clinic {
 export const ClinicSchema = SchemaFactory.createForClass(Clinic);
 
 ClinicSchema.index({ name: 1 }, { name: 'clinic_name_idx' });
-

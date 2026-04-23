@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
@@ -13,13 +22,27 @@ export class AppointmentsController {
   @Post()
   @RequirePermissions(Permission.AppointmentWrite)
   async create(@Req() req: AppRequest, @Body() dto: CreateAppointmentDto) {
-    return await this.appts.create(req.context!.clinicId, req.context!.actorUserId, dto);
+    return await this.appts.create(
+      req.context!.clinicId,
+      req.context!.actorUserId,
+      dto,
+    );
   }
 
   @Get()
   @RequirePermissions(Permission.AppointmentRead)
-  async list(@Req() req: AppRequest, @Query('branchId') branchId: string, @Query('date') date: string, @Query('doctorId') doctorId?: string) {
-    return await this.appts.listByDate(req.context!.clinicId, branchId, date, doctorId);
+  async list(
+    @Req() req: AppRequest,
+    @Query('branchId') branchId: string,
+    @Query('date') date: string,
+    @Query('doctorId') doctorId?: string,
+  ) {
+    return await this.appts.listByDate(
+      req.context!.clinicId,
+      branchId,
+      date,
+      doctorId,
+    );
   }
 
   @Get('slots')
@@ -30,12 +53,21 @@ export class AppointmentsController {
     @Query('doctorId') doctorId: string,
     @Query('date') date: string,
   ) {
-    return await this.appts.availableSlots({ clinicId: req.context!.clinicId, branchId, doctorId, date });
+    return await this.appts.availableSlots({
+      clinicId: req.context!.clinicId,
+      branchId,
+      doctorId,
+      date,
+    });
   }
 
   @Patch(':id')
   @RequirePermissions(Permission.AppointmentWrite)
-  async update(@Req() req: AppRequest, @Param('id') id: string, @Body() dto: UpdateAppointmentDto) {
+  async update(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdateAppointmentDto,
+  ) {
     return await this.appts.update(req.context!.clinicId, id, dto);
   }
 
@@ -45,4 +77,3 @@ export class AppointmentsController {
     return await this.appts.checkin(req.context!.clinicId, id);
   }
 }
-

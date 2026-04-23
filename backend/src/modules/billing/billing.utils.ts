@@ -1,11 +1,17 @@
 import { BadRequestException } from '@nestjs/common';
 import { BillLineItem } from './schemas/bill.schema';
 
-export function computeTotals(input: { items: BillLineItem[]; discount?: number; tax?: number }) {
+export function computeTotals(input: {
+  items: BillLineItem[];
+  discount?: number;
+  tax?: number;
+}) {
   const subtotal = round2(
     (input.items ?? []).reduce((sum, it) => {
-      if (!Number.isFinite(it.quantity) || it.quantity <= 0) throw new BadRequestException('Invalid quantity');
-      if (!Number.isFinite(it.unitPrice) || it.unitPrice < 0) throw new BadRequestException('Invalid unitPrice');
+      if (!Number.isFinite(it.quantity) || it.quantity <= 0)
+        throw new BadRequestException('Invalid quantity');
+      if (!Number.isFinite(it.unitPrice) || it.unitPrice < 0)
+        throw new BadRequestException('Invalid unitPrice');
       const amount = round2(it.quantity * it.unitPrice);
       it.amount = amount;
       return sum + amount;
@@ -22,4 +28,3 @@ export function computeTotals(input: { items: BillLineItem[]; discount?: number;
 function round2(n: number) {
   return Math.round(n * 100) / 100;
 }
-

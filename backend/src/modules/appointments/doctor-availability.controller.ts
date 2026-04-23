@@ -7,7 +7,13 @@ import { Permission } from '../authz/permissions';
 export class DoctorAvailabilityController {
   @Get('availability')
   @RequirePermissions(Permission.AppointmentRead)
-  async availability(@Req() req: AppRequest, @Query('doctorId') doctorId: string, @Query('from') from: string, @Query('to') to: string, @Query('branchId') branchId: string) {
+  async availability(
+    @Req() req: AppRequest,
+    @Query('doctorId') doctorId: string,
+    @Query('from') from: string,
+    @Query('to') to: string,
+    @Query('branchId') branchId: string,
+  ) {
     // Placeholder endpoint. Next iteration will enforce availability rules from config.
     // For now, we simply echo request and report "available".
     return {
@@ -21,4 +27,3 @@ export class DoctorAvailabilityController {
     };
   }
 }
-

@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
@@ -23,12 +32,20 @@ export class BillingController {
   @Post('bills')
   @RequirePermissions(Permission.BillingWrite)
   async createBill(@Req() req: AppRequest, @Body() dto: CreateBillDto) {
-    return await this.billing.createBill(req.context!.clinicId, req.context!.actorUserId, dto);
+    return await this.billing.createBill(
+      req.context!.clinicId,
+      req.context!.actorUserId,
+      dto,
+    );
   }
 
   @Patch('bills/:id')
   @RequirePermissions(Permission.BillingWrite)
-  async updateBill(@Req() req: AppRequest, @Param('id') id: string, @Body() dto: UpdateBillDto) {
+  async updateBill(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdateBillDto,
+  ) {
     return await this.billing.updateBill(req.context!.clinicId, id, dto);
   }
 
@@ -46,8 +63,17 @@ export class BillingController {
 
   @Post('bills/:id/payments')
   @RequirePermissions(Permission.BillingWrite)
-  async addPayment(@Req() req: AppRequest, @Param('id') billId: string, @Body() dto: CreatePaymentDto) {
-    return await this.billing.addPayment(req.context!.clinicId, req.context!.actorUserId, billId, dto);
+  async addPayment(
+    @Req() req: AppRequest,
+    @Param('id') billId: string,
+    @Body() dto: CreatePaymentDto,
+  ) {
+    return await this.billing.addPayment(
+      req.context!.clinicId,
+      req.context!.actorUserId,
+      billId,
+      dto,
+    );
   }
 
   @Get('bills/:id/payments')
@@ -68,7 +94,10 @@ export class BillingController {
         issuedAtIso: bill.issuedAt?.toISOString?.() ?? '',
         currency: bill.currency,
         items: (bill.items ?? []).map((it: any) => ({
-          name: it.customName ?? it.serviceCatalogItemId?.toHexString?.() ?? 'Service',
+          name:
+            it.customName ??
+            it.serviceCatalogItemId?.toHexString?.() ??
+            'Service',
           quantity: it.quantity,
           unitPrice: it.unitPrice,
           amount: it.amount,
@@ -80,7 +109,11 @@ export class BillingController {
       });
 
       const key = `clinic/${req.context!.clinicId.toHexString()}/bill/${bill._id.toHexString()}/bill.pdf`;
-      await this.storage.putObject({ key, body: bytes, contentType: 'application/pdf' });
+      await this.storage.putObject({
+        key,
+        body: bytes,
+        contentType: 'application/pdf',
+      });
       const doc = await this.documents.createForOwner({
         clinicId: req.context!.clinicId,
         ownerType: DocumentOwnerType.Bill,
@@ -95,7 +128,10 @@ export class BillingController {
       bill.pdfDocumentId = doc._id;
     }
 
-    const doc = await this.documents.getById(req.context!.clinicId, bill.pdfDocumentId.toHexString());
+    const doc = await this.documents.getById(
+      req.context!.clinicId,
+      bill.pdfDocumentId.toHexString(),
+    );
     const url = await this.storage.presignGet({ key: doc.storageKey });
     return { url, expiresInSeconds: 300, documentId: doc._id };
   }
@@ -108,8 +144,15 @@ export class BillingController {
 
   @Post('catalog/services')
   @RequirePermissions(Permission.BillingWrite)
-  async createService(@Req() req: AppRequest, @Body() body: { name: string; defaultPrice: number }) {
-    return await this.billing.createService(req.context!.clinicId, body.name, body.defaultPrice);
+  async createService(
+    @Req() req: AppRequest,
+    @Body() body: { name: string; defaultPrice: number },
+  ) {
+    return await this.billing.createService(
+      req.context!.clinicId,
+      body.name,
+      body.defaultPrice,
+    );
   }
 
   @Get('reports/revenue')
@@ -117,4 +160,3 @@ export class BillingController {
     return { status: 'NOT_IMPLEMENTED', from, to };
   }
 }
-

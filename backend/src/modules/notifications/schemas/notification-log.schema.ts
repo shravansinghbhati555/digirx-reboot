@@ -30,7 +30,12 @@ export class NotificationLog {
   @Prop({ trim: true, index: true })
   dedupeKey?: string;
 
-  @Prop({ required: true, enum: NotificationStatus, default: NotificationStatus.Queued, index: true })
+  @Prop({
+    required: true,
+    enum: NotificationStatus,
+    default: NotificationStatus.Queued,
+    index: true,
+  })
   status!: NotificationStatus;
 
   @Prop({ default: 0 })
@@ -46,8 +51,14 @@ export class NotificationLog {
   lastError?: string;
 }
 
-export const NotificationLogSchema = SchemaFactory.createForClass(NotificationLog);
+export const NotificationLogSchema =
+  SchemaFactory.createForClass(NotificationLog);
 
-NotificationLogSchema.index({ clinicId: 1, createdAt: -1 }, { name: 'notification_log_clinic_created_idx' });
-NotificationLogSchema.index({ clinicId: 1, dedupeKey: 1 }, { unique: true, sparse: true, name: 'notification_log_dedupe_unique' });
-
+NotificationLogSchema.index(
+  { clinicId: 1, createdAt: -1 },
+  { name: 'notification_log_clinic_created_idx' },
+);
+NotificationLogSchema.index(
+  { clinicId: 1, dedupeKey: 1 },
+  { unique: true, sparse: true, name: 'notification_log_dedupe_unique' },
+);

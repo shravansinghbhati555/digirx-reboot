@@ -4,7 +4,10 @@ import { BillingController } from './billing.controller';
 import { BillingService } from './billing.service';
 import { Bill, BillSchema } from './schemas/bill.schema';
 import { Payment, PaymentSchema } from './schemas/payment.schema';
-import { ServiceCatalogItem, ServiceCatalogItemSchema } from './schemas/service-catalog-item.schema';
+import {
+  ServiceCatalogItem,
+  ServiceCatalogItemSchema,
+} from './schemas/service-catalog-item.schema';
 import { PdfModule } from '../pdf/pdf.module';
 import { StorageModule } from '../storage/storage.module';
 import { DocumentsModule } from '../documents/documents.module';
@@ -24,4 +27,3 @@ import { DocumentsModule } from '../documents/documents.module';
   providers: [BillingService],
 })
 export class BillingModule {}
-

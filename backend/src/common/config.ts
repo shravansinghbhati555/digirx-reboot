@@ -13,10 +13,16 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): void {
   const isProd = env.NODE_ENV === 'production';
 
   if (isProd) {
-    if (!env.JWT_ACCESS_SECRET || env.JWT_ACCESS_SECRET === DEFAULT_JWT_ACCESS) {
+    if (
+      !env.JWT_ACCESS_SECRET ||
+      env.JWT_ACCESS_SECRET === DEFAULT_JWT_ACCESS
+    ) {
       errors.push('JWT_ACCESS_SECRET must be overridden in production');
     }
-    if (!env.JWT_REFRESH_SECRET || env.JWT_REFRESH_SECRET === DEFAULT_JWT_REFRESH) {
+    if (
+      !env.JWT_REFRESH_SECRET ||
+      env.JWT_REFRESH_SECRET === DEFAULT_JWT_REFRESH
+    ) {
       errors.push('JWT_REFRESH_SECRET must be overridden in production');
     }
 

@@ -40,5 +40,7 @@ export class Payment {
 
 export const PaymentSchema = SchemaFactory.createForClass(Payment);
 
-PaymentSchema.index({ clinicId: 1, billId: 1, paidAt: -1 }, { name: 'payment_bill_paidAt_idx' });
-
+PaymentSchema.index(
+  { clinicId: 1, billId: 1, paidAt: -1 },
+  { name: 'payment_bill_paidAt_idx' },
+);

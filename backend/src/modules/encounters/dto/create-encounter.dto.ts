@@ -7,4 +7,3 @@ export class CreateEncounterDto {
   visitedAt?: string; // ISO (defaults now)
   chiefComplaint?: string;
 }
-

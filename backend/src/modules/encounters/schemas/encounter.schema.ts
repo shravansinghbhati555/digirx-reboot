@@ -43,11 +43,18 @@ export class Encounter {
   @Prop({ type: Date })
   followUpAt?: Date;
 
-  @Prop({ required: true, enum: EncounterStatus, default: EncounterStatus.Draft, index: true })
+  @Prop({
+    required: true,
+    enum: EncounterStatus,
+    default: EncounterStatus.Draft,
+    index: true,
+  })
   status!: EncounterStatus;
 }
 
 export const EncounterSchema = SchemaFactory.createForClass(Encounter);
 
-EncounterSchema.index({ clinicId: 1, patientId: 1, visitedAt: -1 }, { name: 'encounter_patient_history_idx' });
-
+EncounterSchema.index(
+  { clinicId: 1, patientId: 1, visitedAt: -1 },
+  { name: 'encounter_patient_history_idx' },
+);

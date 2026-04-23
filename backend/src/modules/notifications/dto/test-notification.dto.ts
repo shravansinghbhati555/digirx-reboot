@@ -5,4 +5,3 @@ export class TestNotificationDto {
   to!: string;
   body!: string;
 }
-

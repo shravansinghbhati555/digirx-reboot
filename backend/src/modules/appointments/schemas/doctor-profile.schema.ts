@@ -19,4 +19,3 @@ export class DoctorProfile {
 }
 
 export const DoctorProfileSchema = SchemaFactory.createForClass(DoctorProfile);
-

@@ -28,4 +28,3 @@ import { Session, SessionSchema } from './schemas/session.schema';
   exports: [AuthService, JwtModule],
 })
 export class AuthModule {}
-

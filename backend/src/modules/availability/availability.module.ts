@@ -3,7 +3,10 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 import { AvailabilityController } from './availability.controller';
 import { AvailabilityService } from './availability.service';
-import { DoctorAvailabilityRule, DoctorAvailabilityRuleSchema } from './schemas/doctor-availability-rule.schema';
+import {
+  DoctorAvailabilityRule,
+  DoctorAvailabilityRuleSchema,
+} from './schemas/doctor-availability-rule.schema';
 import {
   DoctorAvailabilityOverride,
   DoctorAvailabilityOverrideSchema,
@@ -12,8 +15,14 @@ import {
 @Module({
   imports: [
     MongooseModule.forFeature([
-      { name: DoctorAvailabilityRule.name, schema: DoctorAvailabilityRuleSchema },
-      { name: DoctorAvailabilityOverride.name, schema: DoctorAvailabilityOverrideSchema },
+      {
+        name: DoctorAvailabilityRule.name,
+        schema: DoctorAvailabilityRuleSchema,
+      },
+      {
+        name: DoctorAvailabilityOverride.name,
+        schema: DoctorAvailabilityOverrideSchema,
+      },
       { name: Clinic.name, schema: ClinicSchema },
     ]),
   ],
@@ -22,4 +31,3 @@ import {
   exports: [AvailabilityService],
 })
 export class AvailabilityModule {}
-

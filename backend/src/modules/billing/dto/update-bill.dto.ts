@@ -7,4 +7,3 @@ export class UpdateBillDto {
   tax?: number;
   status?: BillStatus; // allow VOID via PATCH
 }
-

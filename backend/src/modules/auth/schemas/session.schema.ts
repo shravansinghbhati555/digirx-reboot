@@ -23,4 +23,3 @@ export const SessionSchema = SchemaFactory.createForClass(Session);
 
 // Auto-cleanup expired sessions
 SessionSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-

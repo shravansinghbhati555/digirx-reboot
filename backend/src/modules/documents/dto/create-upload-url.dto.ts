@@ -8,4 +8,3 @@ export class CreateUploadUrlDto {
   sizeBytes!: number;
   access?: DocumentAccess;
 }
-

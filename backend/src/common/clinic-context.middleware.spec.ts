@@ -22,7 +22,9 @@ describe('ClinicContextMiddleware', () => {
   }
 
   function mockReq(headers: Record<string, string>): AppRequest {
-    const lower = Object.fromEntries(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
+    const lower = Object.fromEntries(
+      Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]),
+    );
     return {
       header: (name: string) => lower[name.toLowerCase()],
       headers: lower,

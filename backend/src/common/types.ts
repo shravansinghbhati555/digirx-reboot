@@ -4,4 +4,3 @@ import { Request } from 'express';
 export type AppRequest = Request & {
   context?: RequestContext;
 };
-

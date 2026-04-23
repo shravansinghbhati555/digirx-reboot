@@ -1,4 +1,8 @@
-import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { CreateEncounterDto } from './dto/create-encounter.dto';
@@ -7,16 +11,22 @@ import { Encounter, EncounterStatus } from './schemas/encounter.schema';
 
 @Injectable()
 export class EncountersService {
-  constructor(@InjectModel(Encounter.name) private readonly encounterModel: Model<Encounter>) {}
+  constructor(
+    @InjectModel(Encounter.name)
+    private readonly encounterModel: Model<Encounter>,
+  ) {}
 
   async create(clinicId: Types.ObjectId, dto: CreateEncounterDto) {
     const branchId = new Types.ObjectId(dto.branchId);
     const doctorId = new Types.ObjectId(dto.doctorId);
     const patientId = new Types.ObjectId(dto.patientId);
-    const appointmentId = dto.appointmentId ? new Types.ObjectId(dto.appointmentId) : undefined;
+    const appointmentId = dto.appointmentId
+      ? new Types.ObjectId(dto.appointmentId)
+      : undefined;
 
     const visitedAt = dto.visitedAt ? new Date(dto.visitedAt) : new Date();
-    if (isNaN(visitedAt.getTime())) throw new BadRequestException('Invalid visitedAt');
+    if (isNaN(visitedAt.getTime()))
+      throw new BadRequestException('Invalid visitedAt');
 
     return await this.encounterModel.create({
       clinicId,
@@ -42,13 +52,15 @@ export class EncountersService {
       throw new BadRequestException('Encounter already signed');
     }
 
-    if (dto.chiefComplaint !== undefined) enc.chiefComplaint = dto.chiefComplaint;
+    if (dto.chiefComplaint !== undefined)
+      enc.chiefComplaint = dto.chiefComplaint;
     if (dto.notes !== undefined) enc.notes = dto.notes;
     if (dto.diagnosis !== undefined) enc.diagnosis = dto.diagnosis;
     if (dto.vitals !== undefined) enc.vitals = dto.vitals;
     if (dto.followUpAt !== undefined) {
       const d = dto.followUpAt ? new Date(dto.followUpAt) : undefined;
-      if (d && isNaN(d.getTime())) throw new BadRequestException('Invalid followUpAt');
+      if (d && isNaN(d.getTime()))
+        throw new BadRequestException('Invalid followUpAt');
       enc.followUpAt = d;
     }
 
@@ -63,4 +75,3 @@ export class EncountersService {
     return enc;
   }
 }
-

@@ -7,7 +7,10 @@ const prodBase: NodeJS.ProcessEnv = {
   MONGODB_URI: 'mongodb://prod.internal:27017/digirx',
 } as NodeJS.ProcessEnv;
 
-function expectValidationError(env: NodeJS.ProcessEnv, predicate: (errs: string[]) => boolean) {
+function expectValidationError(
+  env: NodeJS.ProcessEnv,
+  predicate: (errs: string[]) => boolean,
+) {
   let thrown: EnvValidationError | undefined;
   try {
     validateEnv(env);
@@ -20,7 +23,9 @@ function expectValidationError(env: NodeJS.ProcessEnv, predicate: (errs: string[
 
 describe('validateEnv', () => {
   it('passes in development with minimal config', () => {
-    expect(() => validateEnv({ NODE_ENV: 'development' } as NodeJS.ProcessEnv)).not.toThrow();
+    expect(() =>
+      validateEnv({ NODE_ENV: 'development' } as NodeJS.ProcessEnv),
+    ).not.toThrow();
   });
 
   it('passes in production with all overrides', () => {

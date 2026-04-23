@@ -29,5 +29,7 @@ export class DocumentShare {
 
 export const DocumentShareSchema = SchemaFactory.createForClass(DocumentShare);
 
-DocumentShareSchema.index({ token: 1 }, { unique: true, name: 'doc_share_token_unique' });
-
+DocumentShareSchema.index(
+  { token: 1 },
+  { unique: true, name: 'doc_share_token_unique' },
+);

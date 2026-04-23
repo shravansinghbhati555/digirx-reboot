@@ -1,4 +1,12 @@
-import { IsBoolean, IsIn, IsInt, IsOptional, Max, Min, ValidateNested } from 'class-validator';
+import {
+  IsBoolean,
+  IsIn,
+  IsInt,
+  IsOptional,
+  Max,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 class PatchAppointmentsDto {
@@ -37,4 +45,3 @@ export class PatchClinicSettingsDto {
   @Type(() => PatchModulesDto)
   modules?: PatchModulesDto;
 }
-

@@ -11,4 +11,3 @@ export class CreateBillDto {
   discount?: number;
   tax?: number;
 }
-

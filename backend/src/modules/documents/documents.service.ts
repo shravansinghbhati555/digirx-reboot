@@ -1,11 +1,17 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { Document, DocumentAccess, DocumentOwnerType } from './schemas/document.schema';
+import {
+  Document,
+  DocumentAccess,
+  DocumentOwnerType,
+} from './schemas/document.schema';
 
 @Injectable()
 export class DocumentsService {
-  constructor(@InjectModel(Document.name) private readonly docModel: Model<Document>) {}
+  constructor(
+    @InjectModel(Document.name) private readonly docModel: Model<Document>,
+  ) {}
 
   async createForOwner(input: {
     clinicId: Types.ObjectId;
@@ -30,4 +36,3 @@ export class DocumentsService {
     return doc;
   }
 }
-

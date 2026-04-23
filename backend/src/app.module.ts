@@ -1,4 +1,9 @@
-import { MiddlewareConsumer, Module, NestModule, RequestMethod } from '@nestjs/common';
+import {
+  MiddlewareConsumer,
+  Module,
+  NestModule,
+  RequestMethod,
+} from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { MongooseModule } from '@nestjs/mongoose';
 import { APP_INTERCEPTOR } from '@nestjs/core';
@@ -32,7 +37,9 @@ import { StorageModule } from './modules/storage/storage.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
-    MongooseModule.forRoot(process.env.MONGODB_URI ?? 'mongodb://localhost:27017/digirx'),
+    MongooseModule.forRoot(
+      process.env.MONGODB_URI ?? 'mongodb://localhost:27017/digirx',
+    ),
     AuditModule,
     AuthModule,
     AuthzModule,

@@ -20,7 +20,13 @@ export class AccessLogsController {
   ) {
     const limit = Number(limitRaw ?? 50) || 50;
     const statusCode = statusCodeRaw ? Number(statusCodeRaw) : undefined;
-    return await this.logs.list(req.context!.clinicId, { limit, before, path, method, statusCode });
+    return await this.logs.list(req.context!.clinicId, {
+      limit,
+      before,
+      path,
+      method,
+      statusCode,
+    });
   }
 
   @Get('export')
@@ -34,4 +40,3 @@ export class AccessLogsController {
     return await this.logs.list(req.context!.clinicId, { limit, before });
   }
 }
-

@@ -12,14 +12,25 @@ export class AuthzService {
     @InjectModel(Role.name) private readonly roleModel: Model<Role>,
   ) {}
 
-  async getActor(input: { clinicId: Types.ObjectId; actorUserId?: Types.ObjectId }) {
-    if (!input.actorUserId) throw new UnauthorizedException('Missing x-user-id');
-    const user = await this.userModel.findOne({ _id: input.actorUserId, clinicId: input.clinicId });
+  async getActor(input: {
+    clinicId: Types.ObjectId;
+    actorUserId?: Types.ObjectId;
+  }) {
+    if (!input.actorUserId)
+      throw new UnauthorizedException('Missing x-user-id');
+    const user = await this.userModel.findOne({
+      _id: input.actorUserId,
+      clinicId: input.clinicId,
+    });
     if (!user) throw new UnauthorizedException('User not found');
-    if (user.status !== UserStatus.Active) throw new UnauthorizedException('User disabled');
+    if (user.status !== UserStatus.Active)
+      throw new UnauthorizedException('User disabled');
 
     const roles = user.roleIds?.length
-      ? await this.roleModel.find({ clinicId: input.clinicId, _id: { $in: user.roleIds } })
+      ? await this.roleModel.find({
+          clinicId: input.clinicId,
+          _id: { $in: user.roleIds },
+        })
       : [];
 
     const permissions = new Set<Permission>();
@@ -34,4 +45,3 @@ export class AuthzService {
     };
   }
 }
-

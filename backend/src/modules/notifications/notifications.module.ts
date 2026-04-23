@@ -2,21 +2,32 @@ import { DynamicModule, Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ScheduleModule } from '@nestjs/schedule';
-import { NotificationLog, NotificationLogSchema } from './schemas/notification-log.schema';
-import { NotificationTemplate, NotificationTemplateSchema } from './schemas/notification-template.schema';
+import {
+  NotificationLog,
+  NotificationLogSchema,
+} from './schemas/notification-log.schema';
+import {
+  NotificationTemplate,
+  NotificationTemplateSchema,
+} from './schemas/notification-template.schema';
 import { NOTIFICATIONS_QUEUE } from './notifications.queue';
 import { NotificationsService } from './notifications.service';
 import { NotificationsController } from './notifications.controller';
 import { ConsoleNotificationProvider } from './providers/console.provider';
 import { NotificationsProcessor } from './notifications.processor';
 import { NotificationsScheduler } from './notifications.scheduler';
-import { Appointment, AppointmentSchema } from '../appointments/schemas/appointment.schema';
+import {
+  Appointment,
+  AppointmentSchema,
+} from '../appointments/schemas/appointment.schema';
 import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
 
 @Module({})
 export class NotificationsModule {
   static forRoot(): DynamicModule {
-    const enableQueue = (process.env.NOTIFICATIONS_QUEUE_ENABLED ?? 'false').toLowerCase() === 'true';
+    const enableQueue =
+      (process.env.NOTIFICATIONS_QUEUE_ENABLED ?? 'false').toLowerCase() ===
+      'true';
     const redisUrl = process.env.REDIS_URL;
 
     const imports = [
@@ -54,4 +65,3 @@ export class NotificationsModule {
     };
   }
 }
-

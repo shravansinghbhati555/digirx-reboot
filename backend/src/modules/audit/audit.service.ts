@@ -5,7 +5,9 @@ import { AuditAction, AuditLog } from './schemas/audit-log.schema';
 
 @Injectable()
 export class AuditService {
-  constructor(@InjectModel(AuditLog.name) private readonly auditModel: Model<AuditLog>) {}
+  constructor(
+    @InjectModel(AuditLog.name) private readonly auditModel: Model<AuditLog>,
+  ) {}
 
   async write(entry: {
     clinicId: Types.ObjectId;
@@ -19,4 +21,3 @@ export class AuditService {
     await this.auditModel.create(entry);
   }
 }
-

@@ -55,7 +55,12 @@ export class Bill {
   @Prop({ default: 0 })
   total!: number;
 
-  @Prop({ required: true, enum: BillStatus, default: BillStatus.Draft, index: true })
+  @Prop({
+    required: true,
+    enum: BillStatus,
+    default: BillStatus.Draft,
+    index: true,
+  })
   status!: BillStatus;
 
   @Prop({ type: Date })
@@ -70,9 +75,11 @@ export class Bill {
 
 export const BillSchema = SchemaFactory.createForClass(Bill);
 
-BillSchema.index({ clinicId: 1, branchId: 1, createdAt: -1 }, { name: 'bill_branch_created_idx' });
+BillSchema.index(
+  { clinicId: 1, branchId: 1, createdAt: -1 },
+  { name: 'bill_branch_created_idx' },
+);
 BillSchema.index(
   { clinicId: 1, branchId: 1, billNo: 1 },
   { unique: true, sparse: true, name: 'billno_unique_per_branch' },
 );
-

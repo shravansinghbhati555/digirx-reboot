@@ -54,10 +54,20 @@ export class Appointment {
   @Prop({ type: Number })
   queueNumber?: number;
 
-  @Prop({ required: true, enum: AppointmentStatus, default: AppointmentStatus.Booked, index: true })
+  @Prop({
+    required: true,
+    enum: AppointmentStatus,
+    default: AppointmentStatus.Booked,
+    index: true,
+  })
   status!: AppointmentStatus;
 
-  @Prop({ required: true, enum: AppointmentSource, default: AppointmentSource.FrontDesk, index: true })
+  @Prop({
+    required: true,
+    enum: AppointmentSource,
+    default: AppointmentSource.FrontDesk,
+    index: true,
+  })
   source!: AppointmentSource;
 
   @Prop()
@@ -75,7 +85,14 @@ AppointmentSchema.index(
 );
 // QUEUE: ensure unique token numbers per doctor per day (only applies to QUEUE docs).
 AppointmentSchema.index(
-  { clinicId: 1, branchId: 1, doctorId: 1, type: 1, queueDate: 1, queueNumber: 1 },
+  {
+    clinicId: 1,
+    branchId: 1,
+    doctorId: 1,
+    type: 1,
+    queueDate: 1,
+    queueNumber: 1,
+  },
   {
     unique: true,
     sparse: true,
@@ -83,4 +100,3 @@ AppointmentSchema.index(
     partialFilterExpression: { type: AppointmentType.Queue },
   },
 );
-

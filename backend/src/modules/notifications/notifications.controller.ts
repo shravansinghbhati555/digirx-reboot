@@ -7,14 +7,19 @@ import { NotificationsService } from './notifications.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { NotificationLog } from './schemas/notification-log.schema';
-import { NotificationTemplate, NotificationChannel } from './schemas/notification-template.schema';
+import {
+  NotificationTemplate,
+  NotificationChannel,
+} from './schemas/notification-template.schema';
 
 @Controller('notifications')
 export class NotificationsController {
   constructor(
     private readonly notifications: NotificationsService,
-    @InjectModel(NotificationLog.name) private readonly logModel: Model<NotificationLog>,
-    @InjectModel(NotificationTemplate.name) private readonly templateModel: Model<NotificationTemplate>,
+    @InjectModel(NotificationLog.name)
+    private readonly logModel: Model<NotificationLog>,
+    @InjectModel(NotificationTemplate.name)
+    private readonly templateModel: Model<NotificationTemplate>,
   ) {}
 
   @Post('test')
@@ -51,7 +56,13 @@ export class NotificationsController {
   @RequirePermissions(Permission.NotificationWrite)
   async upsertTemplate(
     @Req() req: AppRequest,
-    @Body() body: { channel: NotificationChannel; key: string; body: string; active?: boolean },
+    @Body()
+    body: {
+      channel: NotificationChannel;
+      key: string;
+      body: string;
+      active?: boolean;
+    },
   ) {
     const doc = await this.templateModel.findOneAndUpdate(
       { clinicId: req.context!.clinicId, channel: body.channel, key: body.key },
@@ -61,4 +72,3 @@ export class NotificationsController {
     return doc;
   }
 }
-

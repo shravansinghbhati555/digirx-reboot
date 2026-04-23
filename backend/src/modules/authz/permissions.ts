@@ -23,4 +23,3 @@ export enum Permission {
   NotificationRead = 'notification:read',
   NotificationWrite = 'notification:write',
 }
-

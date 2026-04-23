@@ -40,6 +40,11 @@ export class User {
 
 export const UserSchema = SchemaFactory.createForClass(User);
 
-UserSchema.index({ clinicId: 1, email: 1 }, { unique: true, sparse: true, name: 'user_unique_email_per_clinic' });
-UserSchema.index({ clinicId: 1, phone: 1 }, { unique: true, sparse: true, name: 'user_unique_phone_per_clinic' });
-
+UserSchema.index(
+  { clinicId: 1, email: 1 },
+  { unique: true, sparse: true, name: 'user_unique_email_per_clinic' },
+);
+UserSchema.index(
+  { clinicId: 1, phone: 1 },
+  { unique: true, sparse: true, name: 'user_unique_phone_per_clinic' },
+);

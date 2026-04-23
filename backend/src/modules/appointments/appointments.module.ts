@@ -4,8 +4,14 @@ import { AppointmentsController } from './appointments.controller';
 import { DoctorAvailabilityController } from './doctor-availability.controller';
 import { AppointmentsService } from './appointments.service';
 import { Appointment, AppointmentSchema } from './schemas/appointment.schema';
-import { DoctorProfile, DoctorProfileSchema } from './schemas/doctor-profile.schema';
-import { QueueCounter, QueueCounterSchema } from './schemas/queue-counter.schema';
+import {
+  DoctorProfile,
+  DoctorProfileSchema,
+} from './schemas/doctor-profile.schema';
+import {
+  QueueCounter,
+  QueueCounterSchema,
+} from './schemas/queue-counter.schema';
 import { AvailabilityModule } from '../availability/availability.module';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 
@@ -23,4 +29,3 @@ import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
   providers: [AppointmentsService],
 })
 export class AppointmentsModule {}
-

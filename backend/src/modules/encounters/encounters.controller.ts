@@ -24,7 +24,11 @@ export class EncountersController {
 
   @Patch(':id')
   @RequirePermissions(Permission.PatientWrite)
-  async update(@Req() req: AppRequest, @Param('id') id: string, @Body() dto: UpdateEncounterDto) {
+  async update(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdateEncounterDto,
+  ) {
     return await this.encounters.update(req.context!.clinicId, id, dto);
   }
 
@@ -34,4 +38,3 @@ export class EncountersController {
     return await this.encounters.sign(req.context!.clinicId, id);
   }
 }
-

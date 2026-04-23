@@ -18,5 +18,7 @@ export class Role {
 
 export const RoleSchema = SchemaFactory.createForClass(Role);
 
-RoleSchema.index({ clinicId: 1, name: 1 }, { unique: true, name: 'role_unique_name_per_clinic' });
-
+RoleSchema.index(
+  { clinicId: 1, name: 1 },
+  { unique: true, name: 'role_unique_name_per_clinic' },
+);

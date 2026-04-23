@@ -2,10 +2,17 @@ import { Injectable } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
-import { Appointment, AppointmentStatus, AppointmentType } from '../appointments/schemas/appointment.schema';
+import {
+  Appointment,
+  AppointmentStatus,
+  AppointmentType,
+} from '../appointments/schemas/appointment.schema';
 import { Patient } from '../patients/schemas/patient.schema';
 import { NotificationsService } from './notifications.service';
-import { NotificationChannel, NotificationTemplate } from './schemas/notification-template.schema';
+import {
+  NotificationChannel,
+  NotificationTemplate,
+} from './schemas/notification-template.schema';
 import { renderTemplate } from './template.utils';
 
 const ACTIVE_STATUSES: AppointmentStatus[] = [
@@ -25,9 +32,11 @@ function parseWindowsMinutes(): number[] {
 @Injectable()
 export class NotificationsScheduler {
   constructor(
-    @InjectModel(Appointment.name) private readonly apptModel: Model<Appointment>,
+    @InjectModel(Appointment.name)
+    private readonly apptModel: Model<Appointment>,
     @InjectModel(Patient.name) private readonly patientModel: Model<Patient>,
-    @InjectModel(NotificationTemplate.name) private readonly templateModel: Model<NotificationTemplate>,
+    @InjectModel(NotificationTemplate.name)
+    private readonly templateModel: Model<NotificationTemplate>,
     private readonly notifications: NotificationsService,
   ) {}
 
@@ -49,14 +58,19 @@ export class NotificationsScheduler {
       });
 
       const patientIds = Array.from(
-        new Set(appts.map((a) => a.patientId?.toHexString()).filter(Boolean) as string[]),
+        new Set(appts.map((a) => a.patientId?.toHexString()).filter(Boolean)),
       );
       const patients = patientIds.length
-        ? await this.patientModel.find({ _id: { $in: patientIds } }, { phones: 1 })
+        ? await this.patientModel.find(
+            { _id: { $in: patientIds } },
+            { phones: 1 },
+          )
         : [];
       const phoneByPatientId = new Map<string, string>();
       for (const p of patients) {
-        const phone = (p.phones ?? []).map((x) => String(x).trim()).find(Boolean);
+        const phone = (p.phones ?? [])
+          .map((x) => String(x).trim())
+          .find(Boolean);
         if (phone) phoneByPatientId.set(p._id.toHexString(), phone);
       }
 
@@ -107,4 +121,3 @@ export class NotificationsScheduler {
     }
   }
 }
-
