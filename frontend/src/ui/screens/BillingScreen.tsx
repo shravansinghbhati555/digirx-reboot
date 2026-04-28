@@ -401,6 +401,7 @@ function AddPaymentSheet({
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const [payments, setPayments] = useState<Payment[] | null>(null);
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   useEffect(() => {
     apiGet<Payment[]>(ctx, `/bills/${bill._id}/payments`)
@@ -415,6 +416,7 @@ function AddPaymentSheet({
       await apiPost(ctx, `/bills/${bill._id}/payments`, {
         method,
         amount: Number(amount),
+        idempotencyKey,
       });
       onAdded();
     } catch (e) {

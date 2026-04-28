@@ -7,7 +7,9 @@ import {
   Post,
   Query,
   Req,
+  Res,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
@@ -67,13 +69,18 @@ export class BillingController {
     @Req() req: AppRequest,
     @Param('id') billId: string,
     @Body() dto: CreatePaymentDto,
+    @Res({ passthrough: true }) res: Response,
   ) {
-    return await this.billing.addPayment(
+    const result = await this.billing.addPayment(
       req.context!.clinicId,
       req.context!.actorUserId,
       billId,
       dto,
     );
+    if (result.replayed) {
+      res.setHeader('X-Idempotent-Replay', 'true');
+    }
+    return result.payment;
   }
 
   @Get('bills/:id/payments')
