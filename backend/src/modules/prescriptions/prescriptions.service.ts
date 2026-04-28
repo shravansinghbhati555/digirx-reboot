@@ -10,6 +10,8 @@ import { CreatePrescriptionDto } from './dto/create-prescription.dto';
 import { Prescription } from './schemas/prescription.schema';
 import { randomBytes } from 'crypto';
 
+const DEFAULT_RX_SHARE_EXPIRY_SECONDS = 7 * 24 * 60 * 60;
+
 @Injectable()
 export class PrescriptionsService {
   constructor(
@@ -64,23 +66,49 @@ export class PrescriptionsService {
   }
 
   async getById(clinicId: Types.ObjectId, id: string) {
-    const rx = await this.rxModel.findOne({ _id: id, clinicId });
+    const rx = await this.rxModel.findOne({ _id: id, clinicId }).exec();
     if (!rx) throw new NotFoundException('Prescription not found');
     return rx;
   }
 
   async share(clinicId: Types.ObjectId, id: string) {
-    const rx = await this.getById(clinicId, id);
-    if (!rx.shareToken) {
-      rx.shareToken = randomBytes(24).toString('hex');
-      await rx.save();
-    }
-    return { id: rx._id, shareToken: rx.shareToken };
+    const rx = await this.rxModel.findOne({ _id: id, clinicId }).exec();
+    if (!rx) throw new NotFoundException('Prescription not found');
+
+    rx.shareToken = randomBytes(24).toString('hex');
+    rx.shareTokenExpiresAt = new Date(
+      Date.now() + DEFAULT_RX_SHARE_EXPIRY_SECONDS * 1000,
+    );
+    rx.shareTokenRevokedAt = undefined;
+    await rx.save();
+
+    return {
+      id: rx._id,
+      shareToken: rx.shareToken,
+      shareTokenExpiresAt: rx.shareTokenExpiresAt,
+    };
   }
 
   async getByShareToken(token: string) {
-    const rx = await this.rxModel.findOne({ shareToken: token });
+    const rx = await this.rxModel.findOne({ shareToken: token }).exec();
     if (!rx) throw new NotFoundException('Invalid token');
+    if (rx.shareTokenRevokedAt) throw new NotFoundException('Invalid token');
+    if (
+      rx.shareTokenExpiresAt &&
+      rx.shareTokenExpiresAt.getTime() <= Date.now()
+    ) {
+      throw new NotFoundException('Invalid token');
+    }
+    return rx;
+  }
+
+  async revokeShare(clinicId: Types.ObjectId, id: string) {
+    const rx = await this.rxModel.findOneAndUpdate(
+      { _id: id, clinicId, shareToken: { $ne: null }, shareTokenRevokedAt: null },
+      { $set: { shareTokenRevokedAt: new Date() } },
+      { new: true },
+    );
+    if (!rx) throw new NotFoundException('Active share not found');
     return rx;
   }
 }
