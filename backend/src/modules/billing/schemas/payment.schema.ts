@@ -36,6 +36,9 @@ export class Payment {
 
   @Prop({ type: Types.ObjectId })
   receivedBy?: Types.ObjectId;
+
+  @Prop({ trim: true })
+  idempotencyKey?: string;
 }
 
 export const PaymentSchema = SchemaFactory.createForClass(Payment);
@@ -43,4 +46,13 @@ export const PaymentSchema = SchemaFactory.createForClass(Payment);
 PaymentSchema.index(
   { clinicId: 1, billId: 1, paidAt: -1 },
   { name: 'payment_bill_paidAt_idx' },
+);
+
+PaymentSchema.index(
+  { clinicId: 1, billId: 1, idempotencyKey: 1 },
+  {
+    unique: true,
+    name: 'payment_idempotency_unique_idx',
+    partialFilterExpression: { idempotencyKey: { $type: 'string' } },
+  },
 );

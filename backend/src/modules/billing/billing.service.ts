@@ -113,7 +113,7 @@ export class BillingService {
     actorUserId: Types.ObjectId | undefined,
     billId: string,
     dto: CreatePaymentDto,
-  ) {
+  ): Promise<{ payment: Payment; replayed: boolean }> {
     const bill = await this.getBill(clinicId, billId);
     if (bill.status !== BillStatus.Issued)
       throw new BadRequestException(
@@ -128,18 +128,30 @@ export class BillingService {
     if (isNaN(paidAt.getTime()))
       throw new BadRequestException('Invalid paidAt');
 
-    const payment = await this.paymentModel.create({
-      clinicId,
-      branchId: bill.branchId,
-      billId: bill._id,
-      method: dto.method,
-      amount,
-      providerRef: dto.providerRef,
-      paidAt,
-      receivedBy: actorUserId,
-    });
-
-    return payment;
+    try {
+      const payment = await this.paymentModel.create({
+        clinicId,
+        branchId: bill.branchId,
+        billId: bill._id,
+        method: dto.method,
+        amount,
+        providerRef: dto.providerRef,
+        paidAt,
+        receivedBy: actorUserId,
+        idempotencyKey: dto.idempotencyKey,
+      });
+      return { payment, replayed: false };
+    } catch (err: any) {
+      if (err && err.code === 11000) {
+        const original = await this.paymentModel.findOne({
+          clinicId,
+          billId: bill._id,
+          idempotencyKey: dto.idempotencyKey,
+        });
+        if (original) return { payment: original, replayed: true };
+      }
+      throw err;
+    }
   }
 
   async getBill(clinicId: Types.ObjectId, id: string) {

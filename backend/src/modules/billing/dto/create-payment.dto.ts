@@ -1,4 +1,13 @@
-import { IsEnum, IsISO8601, IsNumber, IsOptional, IsString, MaxLength, Min } from 'class-validator';
+import {
+  IsEnum,
+  IsISO8601,
+  IsNumber,
+  IsOptional,
+  IsString,
+  MaxLength,
+  Min,
+  MinLength,
+} from 'class-validator';
 import { PaymentMethod } from '../schemas/payment.schema';
 
 export class CreatePaymentDto {
@@ -17,4 +26,9 @@ export class CreatePaymentDto {
   @IsOptional()
   @IsISO8601()
   paidAt?: string;
+
+  @IsString()
+  @MinLength(8)
+  @MaxLength(64)
+  idempotencyKey!: string;
 }
