@@ -92,6 +92,8 @@ Settings are stored as an opaque `Record<string, unknown>` on `Clinic.settings`.
 
 `StorageService` talks to S3-compatible storage (MinIO in dev). `S3_FORCE_PATH_STYLE=true` is required for MinIO. The standard document flow is presigned-PUT → record `Document` row → later presign-GET for download; `Document.access` is either `INTERNAL_ONLY` or `SHAREABLE_WITH_TOKEN` (token-based public sharing lives in `DocumentShare`).
 
+Public share endpoints (`GET /share/:token` for documents, `GET /share/prescriptions/:token`) enforce expiry, revocation, and (for documents) `maxViews` in `DocumentsService.shareDownload` / `PrescriptionsService.getByShareToken`. Invalid/expired/revoked → 404; doc-share view limit reached → 410. `maxViews` is enforced atomically via `findOneAndUpdate` + `$inc(viewCount)` + `$lt` guard. Revoke via `POST /documents/:id/share/revoke` (`document:write`) or `POST /prescriptions/:id/share/revoke` (`patient:write`).
+
 ### Patient search
 
 `PatientsService` maintains `normalizedName` and `normalizedPhones` alongside the raw fields; search queries these normalized variants (see `patient.utils.ts`). Always populate both on write.

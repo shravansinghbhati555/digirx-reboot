@@ -20,6 +20,9 @@ export class DocumentShare {
   @Prop()
   maxViews?: number;
 
+  @Prop({ default: 0 })
+  viewCount!: number;
+
   @Prop()
   revokedAt?: Date;
 

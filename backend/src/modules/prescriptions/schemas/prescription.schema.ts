@@ -35,6 +35,12 @@ export class Prescription {
   @Prop({ trim: true })
   shareToken?: string;
 
+  @Prop()
+  shareTokenExpiresAt?: Date;
+
+  @Prop()
+  shareTokenRevokedAt?: Date;
+
   @Prop({ type: Types.ObjectId })
   pdfDocumentId?: Types.ObjectId;
 }

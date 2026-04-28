@@ -47,6 +47,13 @@ export class PrescriptionsController {
     return await this.prescriptions.share(req.context!.clinicId, id);
   }
 
+  @Post('prescriptions/:id/share/revoke')
+  @RequirePermissions(Permission.PatientWrite)
+  async revokeShare(@Req() req: AppRequest, @Param('id') id: string) {
+    const out = await this.prescriptions.revokeShare(req.context!.clinicId, id);
+    return { shareTokenRevokedAt: out.shareTokenRevokedAt };
+  }
+
   @Get('share/prescriptions/:token')
   @Public()
   @Throttle({ [THROTTLE_SHARE]: { limit: 10, ttl: 60_000 } })
