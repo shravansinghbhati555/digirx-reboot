@@ -102,6 +102,8 @@ Public share endpoints (`GET /share/:token` for documents, `GET /share/prescript
 
 `BillingService` enforces state transitions: bills are created as `Draft`, finalized via `issueBill` (assigns `billNo`), and only issued bills accept payments. Totals are computed centrally in `computeTotals` (`billing.utils.ts`) — call it whenever `items/discount/tax` change.
 
+`POST /bills/:id/payments` requires a client-generated `idempotencyKey` (8–64 chars; UUIDv4 in the FE). A repeat POST with the same key on the same bill returns the original payment with `X-Idempotent-Replay: true`, enforced by a partial unique index on `(clinicId, billId, idempotencyKey)`. The service returns `{ payment, replayed }` and the controller maps `replayed` to the response header.
+
 ### Frontend
 
 - Mobile-first shell (`MobileShell.tsx`) with a bottom tab bar — `home | patients | appointments | billing | reports | me`. `App.tsx` switches screens based on the active tab; there is no router.
