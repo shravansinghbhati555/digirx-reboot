@@ -301,6 +301,15 @@ export class AppointmentsService {
     return { ...daySlots, slots };
   }
 
+  async getById(clinicId: Types.ObjectId, id: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('Appointment not found');
+    }
+    const appt = await this.apptModel.findOne({ _id: id, clinicId });
+    if (!appt) throw new NotFoundException('Appointment not found');
+    return appt;
+  }
+
   async update(
     clinicId: Types.ObjectId,
     id: string,

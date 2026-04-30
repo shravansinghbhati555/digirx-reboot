@@ -175,6 +175,7 @@ function SignInStep({
   const [showPw, setShowPw] = useState(false);
   const [errors, setErrors] = useState<{ clinic?: string; email?: string; password?: string; general?: string }>({});
   const [btnState, setBtnState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [shakeKey, setShakeKey] = useState(0);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [manualClinicId, setManualClinicId] = useState(ctx.clinicId);
   const [manualBranchId, setManualBranchId] = useState(ctx.branchId ?? '');
@@ -191,7 +192,7 @@ function SignInStep({
   async function handleSubmit(ev: React.FormEvent) {
     ev.preventDefault();
     const e = validate();
-    if (Object.keys(e).length) { setErrors(e); return; }
+    if (Object.keys(e).length) { setErrors(e); setShakeKey((k) => k + 1); return; }
     setErrors({});
     setBtnState('loading');
     try {
@@ -204,7 +205,8 @@ function SignInStep({
       setTimeout(() => onSuccess({ clinic: clinic!, accessToken: res.accessToken, userId: res.userId, email }), 600);
     } catch (err) {
       setBtnState('error');
-      setTimeout(() => setBtnState('idle'), 240);
+      setShakeKey((k) => k + 1);
+      setTimeout(() => setBtnState('idle'), 600);
       setErrors({ general: err instanceof Error ? err.message : String(err) });
     }
   }
@@ -241,7 +243,8 @@ function SignInStep({
         </div>
       )}
 
-      <form onSubmit={handleSubmit} noValidate>
+      <form key={shakeKey} onSubmit={handleSubmit} noValidate
+        style={shakeKey ? { animation: 'shakeX 240ms var(--ease-out)' } : undefined}>
         <FormGroup label="Clinic">
           <ClinicCombobox apiBaseUrl={apiBaseUrl} value={clinic} onChange={(c) => { setClinic(c); setErrors((prev) => ({ ...prev, clinic: undefined })); }} error={!!errors.clinic} />
           {errors.clinic && <FieldError>{errors.clinic}</FieldError>}

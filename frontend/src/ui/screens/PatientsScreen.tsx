@@ -3,6 +3,9 @@ import { apiGet, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Avatar, EmptyState, Field, Spinner, StatusPill, formatDate, formatINR, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
+import { AnimatedTabs } from '../shared/AnimatedTabs';
+import { ListItemSkeleton } from '../shared/Skeleton';
+import { useShake } from '../shared/useShake';
 
 type Patient = {
   _id: string;
@@ -62,6 +65,8 @@ export function PatientsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [genderFilter, setGenderFilter] = useState<'ALL' | 'MALE' | 'FEMALE' | 'OTHER'>('ALL');
+  const [tagFilter, setTagFilter] = useState<string>('');
 
   useEffect(() => {
     let cancelled = false;
@@ -90,7 +95,24 @@ export function PatientsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, refreshKey]);
 
-  const groups = useMemo(() => alphaGroups(items), [items]);
+  const tagOptions = useMemo(() => {
+    const set = new Set<string>();
+    items.forEach((p) => (p.tags ?? []).forEach((t) => set.add(t)));
+    return Array.from(set).sort();
+  }, [items]);
+
+  const visibleItems = useMemo(() => {
+    return items.filter((p) => {
+      if (genderFilter !== 'ALL') {
+        const g = (p.gender || '').toUpperCase();
+        if (g !== genderFilter && !(genderFilter === 'OTHER' && g !== 'MALE' && g !== 'FEMALE')) return false;
+      }
+      if (tagFilter && !(p.tags ?? []).includes(tagFilter)) return false;
+      return true;
+    });
+  }, [items, genderFilter, tagFilter]);
+
+  const groups = useMemo(() => alphaGroups(visibleItems), [visibleItems]);
 
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
@@ -111,11 +133,41 @@ export function PatientsScreen() {
             <Icon name="plus" size={16} strokeWidth={2.5} />
           </button>
         </div>
+        {/* Filters row */}
+        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 6 }}>
+          <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 8, padding: 2 }}>
+            {(['ALL', 'MALE', 'FEMALE', 'OTHER'] as const).map((g) => (
+              <button key={g} onClick={() => setGenderFilter(g)} className="press-scale"
+                style={{ flex: 1, padding: '4px 8px', fontSize: 11, fontWeight: genderFilter === g ? 600 : 400, color: genderFilter === g ? 'var(--text)' : 'var(--text-subtle)', background: genderFilter === g ? 'var(--surface)' : 'transparent', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
+                {g === 'ALL' ? 'All' : g[0] + g.slice(1).toLowerCase()}
+              </button>
+            ))}
+          </div>
+          {tagOptions.length > 0 && (
+            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+              <button onClick={() => setTagFilter('')} className="press-scale"
+                style={{ padding: '3px 9px', fontSize: 10, fontWeight: tagFilter === '' ? 600 : 500, color: tagFilter === '' ? 'var(--brand-700)' : 'var(--text-subtle)', background: tagFilter === '' ? 'var(--brand-50)' : 'var(--surface-muted)', border: `1px solid ${tagFilter === '' ? 'var(--brand-100)' : 'var(--border)'}`, borderRadius: 100, cursor: 'pointer' }}>
+                Any tag
+              </button>
+              {tagOptions.slice(0, 8).map((t) => (
+                <button key={t} onClick={() => setTagFilter(tagFilter === t ? '' : t)} className="press-scale"
+                  style={{ padding: '3px 9px', fontSize: 10, fontWeight: tagFilter === t ? 600 : 500, color: tagFilter === t ? 'var(--brand-700)' : 'var(--text-subtle)', background: tagFilter === t ? 'var(--brand-50)' : 'var(--surface-muted)', border: `1px solid ${tagFilter === t ? 'var(--brand-100)' : 'var(--border)'}`, borderRadius: 100, cursor: 'pointer' }}>
+                  {t}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          {loading && <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>Loading…</div>}
+          {loading && (
+            <div>
+              {Array.from({ length: 6 }).map((_, i) => <ListItemSkeleton key={i} />)}
+            </div>
+          )}
           {error && <div style={{ padding: 16, color: 'var(--danger-500)', fontSize: 12 }}>{error}</div>}
-          {!loading && !error && items.length === 0 && (
-            <EmptyState icon="users" title="No patients found" hint={query ? 'Try a different name or phone.' : 'Register a new patient to get started.'} />
+          {!loading && !error && visibleItems.length === 0 && (
+            <EmptyState illustration="patients" title="No patients found" hint={query || genderFilter !== 'ALL' || tagFilter ? 'Try clearing the filters.' : 'Register a new patient to get started.'} />
           )}
           {groups.map(([letter, patients]) => (
             <div key={letter}>
@@ -214,13 +266,18 @@ function PatientDetail({ patient }: { patient: Patient }) {
           </button>
         </div>
 
-        <div style={{ display: 'flex', gap: 0, marginTop: 16 }}>
-          {(['overview', 'history', 'documents', 'bills'] as const).map((t) => (
-            <button key={t} onClick={() => setTab(t)}
-              style={{ padding: '7px 16px', background: 'none', border: 'none', borderBottom: tab === t ? '2px solid var(--brand-500)' : '2px solid transparent', color: tab === t ? 'var(--brand-500)' : 'var(--text-muted)', fontSize: 13, fontWeight: tab === t ? 600 : 400, cursor: 'pointer', textTransform: 'capitalize', marginBottom: '-1px' }}>
-              {t}
-            </button>
-          ))}
+        <div style={{ marginTop: 16 }}>
+          <AnimatedTabs
+            tabs={[
+              { id: 'overview', label: 'Overview' },
+              { id: 'history', label: 'History' },
+              { id: 'documents', label: 'Documents' },
+              { id: 'bills', label: 'Bills' },
+            ] as const}
+            value={tab}
+            onChange={setTab}
+            style={{ borderBottom: 'none' }}
+          />
         </div>
       </div>
 
@@ -300,10 +357,31 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [duplicate, setDuplicate] = useState<Patient | null>(null);
+  const { shakeProps, shake } = useShake();
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const steps = ['Identity', 'Contact', 'Tags & Notes'];
 
+  // Debounced duplicate-phone check on contact step
+  useEffect(() => {
+    setDuplicate(null);
+    if (step !== 1) return;
+    const phone = form.phone.trim();
+    if (!phone || phone.length < 6) return;
+    const handle = setTimeout(async () => {
+      try {
+        const hits = await apiGet<Patient[]>(ctx, `/patients?query=${encodeURIComponent(phone)}&limit=5`);
+        const match = hits.find((h) => (h.phones ?? []).some((p) => p.replace(/\s/g, '').includes(phone.replace(/\s/g, ''))));
+        if (match) setDuplicate(match);
+      } catch {
+        // ignore
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [form.phone, step, ctx]);
+
   async function submit() {
+    if (!form.fullName.trim()) { shake(); setError('Full name is required.'); return; }
     setSaving(true);
     setError(null);
     try {
@@ -318,6 +396,7 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
       const created = await apiPost<Patient>(ctx, '/patients', body);
       onCreated(created);
     } catch (e) {
+      shake();
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
@@ -326,7 +405,8 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)', animation: 'fadeIn 150ms ease-out' }} onClick={onClose}>
-      <div style={{ background: 'var(--surface)', borderRadius: 20, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 480, overflow: 'hidden', animation: 'slideUp 200ms ease-out' }} onClick={(e) => e.stopPropagation()}>
+      <div {...shakeProps}
+        style={{ background: 'var(--surface)', borderRadius: 20, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 480, overflow: 'hidden', animation: 'slideUp 200ms ease-out', ...shakeProps.style }} onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>New patient</div>
@@ -361,6 +441,19 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
           {step === 1 && (
             <>
               <Field label="Phone number" value={form.phone} onChange={(v) => set('phone', v)} placeholder="98765 43210" prefix="+91" />
+              {duplicate && (
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', fontSize: 12, color: '#92400e' }}>
+                  <Icon name="alertTriangle" size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 600 }}>Possible duplicate</div>
+                    <div style={{ marginTop: 2 }}>{duplicate.fullName} already has this phone. Open existing instead?</div>
+                  </div>
+                  <button onClick={() => { onCreated(duplicate); onClose(); }}
+                    style={{ height: 28, padding: '0 10px', background: 'var(--surface)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 7, fontSize: 11, fontWeight: 600, color: '#92400e', cursor: 'pointer', flexShrink: 0 }}>
+                    Open
+                  </button>
+                </div>
+              )}
               <Field label="Email address" value={form.email} onChange={(v) => set('email', v)} placeholder="patient@email.com" />
             </>
           )}

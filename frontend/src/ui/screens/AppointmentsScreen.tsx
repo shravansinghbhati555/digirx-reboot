@@ -396,7 +396,7 @@ export function AppointmentsScreen() {
 }
 
 function ApptSheet({ appt, patientName, onClose, onChanged }: { appt: Appointment; patientName: string; onClose: () => void; onChanged: () => void }) {
-  const { ctx } = useApp();
+  const { ctx, setScreen, setSelectedAppointmentId } = useApp();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
 
@@ -411,6 +411,12 @@ function ApptSheet({ appt, patientName, onClose, onChanged }: { appt: Appointmen
     } finally {
       setBusy(false);
     }
+  }
+
+  function startEncounter() {
+    setSelectedAppointmentId(appt._id);
+    setScreen('encounters');
+    onClose();
   }
 
   async function cancel() {
@@ -461,13 +467,28 @@ function ApptSheet({ appt, patientName, onClose, onChanged }: { appt: Appointmen
         </div>
         <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {status === 'BOOKED' && (
-            <button onClick={checkIn} disabled={busy}
-              style={{ height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: busy ? 'wait' : 'pointer' }}>
+            <button onClick={checkIn} disabled={busy} className="press-scale"
+              style={{ height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <Icon name="checkCircle" size={14} strokeWidth={2.5} />
               {busy ? 'Checking in…' : 'Check in patient'}
             </button>
           )}
+          {status === 'CHECKED_IN' && (
+            <button onClick={startEncounter} className="press-scale"
+              style={{ height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <Icon name="stethoscope" size={14} />
+              Start encounter
+            </button>
+          )}
+          {status === 'IN_PROGRESS' && (
+            <button onClick={startEncounter} className="press-scale"
+              style={{ height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <Icon name="clipboard" size={14} />
+              Continue encounter
+            </button>
+          )}
           {(status === 'BOOKED' || status === 'CHECKED_IN') && (
-            <button onClick={cancel} disabled={busy}
+            <button onClick={cancel} disabled={busy} className="press-scale"
               style={{ height: 40, background: 'none', border: '1.5px solid var(--danger-500)', color: 'var(--danger-500)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: busy ? 'wait' : 'pointer' }}>
               Cancel appointment
             </button>

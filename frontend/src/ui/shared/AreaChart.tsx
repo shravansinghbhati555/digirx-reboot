@@ -28,6 +28,11 @@ export function AreaChart({
   const yTicks = 4;
   const tickVals = Array.from({ length: yTicks + 1 }, (_, i) => Math.round((max / yTicks) * i));
 
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) {
+    len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+  }
+
   return (
     <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', height, display: 'block' }}>
       <defs>
@@ -56,9 +61,17 @@ export function AreaChart({
           </text>
         );
       })}
-      <path d={areaPath} fill="url(#areaGrad)" />
-      <path d={linePath} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r="4" fill={color} stroke="var(--surface)" strokeWidth="2" />
+      <path d={areaPath} fill="url(#areaGrad)"
+        style={{ opacity: 0, animation: 'pathFadeIn 800ms var(--ease-out) 200ms forwards' }} />
+      <path d={linePath} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+        style={{
+          strokeDasharray: len.toFixed(1),
+          strokeDashoffset: len.toFixed(1),
+          animation: 'pathDraw 800ms var(--ease-out) forwards',
+          ['--draw-len' as never]: len.toFixed(1),
+        }} />
+      <circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r="4" fill={color} stroke="var(--surface)" strokeWidth="2"
+        style={{ opacity: 0, animation: 'pathFadeIn 200ms var(--ease-out) 780ms forwards' }} />
     </svg>
   );
 }

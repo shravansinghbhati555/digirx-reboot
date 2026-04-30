@@ -3,6 +3,9 @@ import { apiGet } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Sparkline, StatusPill, formatINR } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
+import { Counter } from '../shared/Counter';
+import { Skeleton } from '../shared/Skeleton';
+import type { ReactNode } from 'react';
 
 type RevenueResp = {
   from?: string; to?: string;
@@ -103,13 +106,17 @@ export function DashboardScreen() {
       {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
 
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-        <KPITile label="Revenue (last 14d)" value={revenue ? formatINR(revenue.payments.totalPaid) : '—'}
+        <KPITile label="Revenue (last 14d)"
+          value={revenue ? <Counter value={revenue.payments.totalPaid} format={(n) => formatINR(n)} /> : '—'}
           sub={revenue ? `${revenue.payments.count} payments` : 'No data'} data={fauxSpark} color="var(--brand-500)" icon="trendingUp" />
-        <KPITile label="Bills issued (14d)" value={revenue ? String(revenue.issuedBills.count) : '—'}
+        <KPITile label="Bills issued (14d)"
+          value={revenue ? <Counter value={revenue.issuedBills.count} /> : '—'}
           sub={revenue ? `${formatINR(revenue.issuedBills.totalBilled)} billed` : 'No data'} data={fauxSpark.map((v) => v / 1000)} color="var(--accent-500)" icon="receipt" />
-        <KPITile label="Pending payments" value={String(pending?.count ?? 0)}
+        <KPITile label="Pending payments"
+          value={<Counter value={pending?.count ?? 0} />}
           sub={`${formatINR(totalOutstanding)} outstanding`} data={fauxSpark.map((v) => v / 2)} color="var(--warning-500)" icon="clock" />
-        <KPITile label="Today's appointments" value={schedule ? String(schedule.total) : '—'}
+        <KPITile label="Today's appointments"
+          value={schedule ? <Counter value={schedule.total} /> : '—'}
           sub={ctx.branchId ? '' : 'Set branch ID to see schedule'} data={fauxSpark.map((v) => v / 4)} color="var(--info-500)" icon="calendar" />
       </div>
 
@@ -123,7 +130,15 @@ export function DashboardScreen() {
             {!ctx.branchId ? (
               <div style={{ padding: 24, fontSize: 13, color: 'var(--text-subtle)' }}>Set a branch ID in your context to see today's schedule.</div>
             ) : !schedule ? (
-              <div style={{ padding: 24, fontSize: 13, color: 'var(--text-subtle)' }}>Loading…</div>
+              <div style={{ display: 'flex', gap: 10, padding: '14px 20px', overflowX: 'hidden' }}>
+                {Array.from({ length: 6 }).map((_, i) => (
+                  <div key={i} style={{ flexShrink: 0, width: 168, background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    <Skeleton width="40%" height={9} />
+                    <Skeleton width="80%" height={12} />
+                    <Skeleton width={70} height={16} radius={9} />
+                  </div>
+                ))}
+              </div>
             ) : schedule.items.length === 0 ? (
               <div style={{ padding: 24, fontSize: 13, color: 'var(--text-subtle)' }}>No appointments on this date.</div>
             ) : (
@@ -159,7 +174,7 @@ export function DashboardScreen() {
               </thead>
               <tbody>
                 {!pending && <tr><td colSpan={5} style={{ padding: 16, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>Loading…</td></tr>}
-                {pending && pending.rows.length === 0 && <tr><td colSpan={5} style={{ padding: 16, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>All bills paid 🎉</td></tr>}
+                {pending && pending.rows.length === 0 && <tr><td colSpan={5} style={{ padding: 16, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>All bills are paid.</td></tr>}
                 {pending?.rows.slice(0, 8).map((b) => (
                   <tr key={b._id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-subtle)', fontFamily: 'monospace' }}>{b.billNo ?? b._id.slice(-6)}</td>
@@ -266,7 +281,7 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 }
 
-function KPITile({ label, value, sub, data, color, icon }: { label: string; value: string; sub: string; data: number[]; color: string; icon: IconName }) {
+function KPITile({ label, value, sub, data, color, icon }: { label: string; value: ReactNode; sub: string; data: number[]; color: string; icon: IconName }) {
   return (
     <div style={{ flex: '1 1 220px', minWidth: 180, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '20px 20px 16px', display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>

@@ -1,5 +1,6 @@
 import { createContext, useCallback, useContext, useState, type CSSProperties, type ReactNode } from 'react';
 import { Icon, type IconName } from './Icon';
+import { EmptyIllustration } from './EmptyIllustration';
 
 const AVATAR_COLORS = ['#3B82F6','#14B8A6','#8B5CF6','#EC4899','#F59E0B','#10B981','#6366F1','#EF4444'];
 
@@ -48,11 +49,14 @@ export function StatusPill({ status, small }: { status: string; small?: boolean 
     <span style={{
       display: 'inline-flex', alignItems: 'center', gap: 5,
       padding: small ? '2px 8px' : '3px 10px', borderRadius: 100,
-      background: cfg.bg, color: cfg.color,
       fontSize: small ? 11 : 12, fontWeight: 600, whiteSpace: 'nowrap',
+      transition: 'background 180ms var(--ease-out), color 180ms var(--ease-out)',
+      background: cfg.bg, color: cfg.color,
     }}>
-      <Icon name={cfg.icon} size={small ? 10 : 12} strokeWidth={2} />
-      {cfg.label}
+      <span key={key} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, animation: 'pathFadeIn 180ms var(--ease-out)' }}>
+        <Icon name={cfg.icon} size={small ? 10 : 12} strokeWidth={2} />
+        {cfg.label}
+      </span>
     </span>
   );
 }
@@ -74,6 +78,12 @@ export function Sparkline({
   const linePath = `M ${pts[0]} ` + pts.slice(1).map((pt) => `L ${pt}`).join(' ');
   const last = pts[pts.length - 1].split(',');
   const gid = `sg-${color.replace(/[^a-z]/gi, '')}`;
+  let len = 0;
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, y0] = pts[i - 1].split(',').map(Number);
+    const [x1, y1] = pts[i].split(',').map(Number);
+    len += Math.hypot(x1 - x0, y1 - y0);
+  }
   return (
     <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ display: 'block' }}>
       <defs>
@@ -82,9 +92,16 @@ export function Sparkline({
           <stop offset="100%" stopColor={color} stopOpacity="0" />
         </linearGradient>
       </defs>
-      <path d={areaPath} fill={`url(#${gid})`} />
-      <path d={linePath} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      <circle cx={last[0]} cy={last[1]} r="2.5" fill={color} />
+      <path d={areaPath} fill={`url(#${gid})`} style={{ animation: 'pathFadeIn 800ms var(--ease-out) both' }} />
+      <path d={linePath} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+        style={{
+          strokeDasharray: len.toFixed(1),
+          strokeDashoffset: len.toFixed(1),
+          animation: 'pathDraw 800ms var(--ease-out) forwards',
+          ['--draw-len' as never]: len.toFixed(1),
+        }} />
+      <circle cx={last[0]} cy={last[1]} r="2.5" fill={color}
+        style={{ opacity: 0, animation: 'pathFadeIn 200ms var(--ease-out) 760ms forwards' }} />
     </svg>
   );
 }
@@ -183,14 +200,14 @@ export function PrimaryButton({
   children: ReactNode; onClick?: () => void; disabled?: boolean; type?: 'button' | 'submit';
 }) {
   return (
-    <button type={type} onClick={onClick} disabled={disabled}
+    <button type={type} onClick={onClick} disabled={disabled} className="press-scale"
       style={{
         height: 40, padding: '0 20px',
         background: disabled ? 'var(--border)' : 'var(--brand-500)',
         color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600,
         cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: "'Inter',sans-serif",
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-        transition: 'background 120ms', opacity: disabled ? 0.6 : 1,
+        transition: 'background 120ms, transform 120ms var(--ease-out)', opacity: disabled ? 0.6 : 1,
       }}
     >
       {children}
@@ -204,14 +221,14 @@ export function GhostButton({
   children: ReactNode; onClick?: () => void; disabled?: boolean; type?: 'button' | 'submit';
 }) {
   return (
-    <button type={type} onClick={onClick} disabled={disabled}
+    <button type={type} onClick={onClick} disabled={disabled} className="press-scale"
       style={{
         height: 40, padding: '0 18px',
         background: 'none', color: 'var(--text-muted)',
         border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 500,
         cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: "'Inter',sans-serif",
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-        opacity: disabled ? 0.5 : 1,
+        opacity: disabled ? 0.5 : 1, transition: 'transform 120ms var(--ease-out)',
       }}
     >
       {children}
@@ -229,10 +246,24 @@ export function Spinner({ size = 16 }: { size?: number }) {
   );
 }
 
-export function EmptyState({ icon = 'folder', title, hint, cta }: { icon?: IconName; title: string; hint?: string; cta?: ReactNode }) {
+export function EmptyState({
+  illustration, icon = 'folder', title, hint, cta,
+}: {
+  illustration?: 'folder' | 'patients' | 'calendar' | 'receipt' | 'documents' | 'bell';
+  icon?: IconName;
+  title: string;
+  hint?: string;
+  cta?: ReactNode;
+}) {
   return (
-    <div style={{ textAlign: 'center', padding: '48px 16px', color: 'var(--text-subtle)' }}>
-      <Icon name={icon} size={36} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
+    <div style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--text-subtle)' }}>
+      {illustration ? (
+        <div style={{ marginBottom: 12 }}>
+          <EmptyIllustration kind={illustration} size={120} />
+        </div>
+      ) : (
+        <Icon name={icon} size={36} style={{ margin: '0 auto 12px', opacity: 0.3 }} />
+      )}
       <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-muted)' }}>{title}</div>
       {hint && <div style={{ fontSize: 12, marginTop: 4 }}>{hint}</div>}
       {cta && <div style={{ marginTop: 16 }}>{cta}</div>}

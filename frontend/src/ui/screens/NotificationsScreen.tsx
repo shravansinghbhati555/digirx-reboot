@@ -3,6 +3,8 @@ import { apiGet, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { EmptyState, Field, formatDateTime, labelStyle, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
+import { AnimatedTabs } from '../shared/AnimatedTabs';
+import { Skeleton } from '../shared/Skeleton';
 
 type NotifLog = {
   _id: string;
@@ -63,14 +65,11 @@ export function NotificationsScreen() {
         <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>SMS · WhatsApp · Email — delivery logs and templates.</p>
       </div>
 
-      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)' }}>
-        {([{ id: 'logs', label: 'Logs' }, { id: 'templates', label: 'Templates' }] as const).map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            style={{ padding: '8px 20px', background: 'none', border: 'none', borderBottom: tab === t.id ? '2px solid var(--brand-500)' : '2px solid transparent', color: tab === t.id ? 'var(--brand-500)' : 'var(--text-muted)', fontSize: 13, fontWeight: tab === t.id ? 600 : 400, cursor: 'pointer', marginBottom: '-1px' }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <AnimatedTabs
+        tabs={[{ id: 'logs', label: 'Logs' }, { id: 'templates', label: 'Templates' }] as const}
+        value={tab}
+        onChange={setTab}
+      />
 
       <div key={tab} style={{ animation: 'slideUp 180ms ease-out' }}>
         {tab === 'logs' && <LogsTab />}
@@ -108,9 +107,22 @@ function LogsTab() {
 
       {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
 
-      {!logs && !error && <div style={{ padding: 24, color: 'var(--text-subtle)', fontSize: 13 }}>Loading…</div>}
+      {!logs && !error && (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          {Array.from({ length: 6 }).map((_, i) => (
+            <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+              <Skeleton width={64} height={18} radius={9} />
+              <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <Skeleton width="40%" height={11} />
+                <Skeleton width="65%" height={9} />
+              </div>
+              <Skeleton width={80} height={11} />
+            </div>
+          ))}
+        </div>
+      )}
 
-      {filtered && filtered.length === 0 && <EmptyState icon="bell" title="No notifications yet" hint="Reminders are queued by the scheduler 24h and 2h before appointments." />}
+      {filtered && filtered.length === 0 && <EmptyState illustration="bell" title="No notifications yet" hint="Reminders are queued by the scheduler 24h and 2h before appointments." />}
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {filtered?.map((log) => {

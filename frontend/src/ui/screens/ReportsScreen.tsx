@@ -3,6 +3,9 @@ import { apiGet } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { EmptyState, Field, StatusPill, formatINR } from '../shared/primitives';
 import { AreaChart } from '../shared/AreaChart';
+import { AnimatedTabs } from '../shared/AnimatedTabs';
+import { Counter } from '../shared/Counter';
+import { Skeleton } from '../shared/Skeleton';
 
 type RevenueResp = {
   from?: string; to?: string; timezone: string; branchId: string | null;
@@ -30,36 +33,53 @@ function daysAgoIso(n: number) {
   return d.toISOString().slice(0, 10);
 }
 
+type ReportTab = 'revenue' | 'schedule' | 'pending' | 'utilization';
+const REPORT_TABS = [
+  { id: 'revenue', label: 'Revenue' },
+  { id: 'schedule', label: 'Schedule' },
+  { id: 'pending', label: 'Pending payments' },
+  { id: 'utilization', label: 'Doctor utilization' },
+] as const;
+
 export function ReportsScreen() {
-  const [tab, setTab] = useState<'revenue' | 'schedule' | 'pending'>('revenue');
+  const [tab, setTab] = useState<ReportTab>('revenue');
 
   return (
     <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
       <div>
         <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>Reports</h1>
-        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Revenue, schedule, and pending payments.</p>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Revenue, schedule, pending payments and doctor utilization.</p>
       </div>
 
-      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)' }}>
-        {([
-          { id: 'revenue', label: 'Revenue' },
-          { id: 'schedule', label: 'Schedule' },
-          { id: 'pending', label: 'Pending payments' },
-        ] as const).map((t) => (
-          <button key={t.id} onClick={() => setTab(t.id)}
-            style={{ padding: '8px 18px', background: 'none', border: 'none', borderBottom: tab === t.id ? '2px solid var(--brand-500)' : '2px solid transparent', color: tab === t.id ? 'var(--brand-500)' : 'var(--text-muted)', fontSize: 13, fontWeight: tab === t.id ? 600 : 400, cursor: 'pointer', marginBottom: '-1px' }}>
-            {t.label}
-          </button>
-        ))}
-      </div>
+      <AnimatedTabs tabs={REPORT_TABS} value={tab} onChange={setTab} />
 
-      <div key={tab} style={{ animation: 'slideUp 180ms ease-out' }}>
+      <div key={tab} style={{ animation: 'slideUp 200ms ease-out' }}>
         {tab === 'revenue' && <RevenueTab />}
         {tab === 'schedule' && <ScheduleTab />}
         {tab === 'pending' && <PendingTab />}
+        {tab === 'utilization' && <UtilizationTab />}
       </div>
     </div>
   );
+}
+
+function ExportButton({ onClick }: { onClick: () => void }) {
+  return (
+    <button onClick={onClick} className="press-scale"
+      style={{ display: 'flex', alignItems: 'center', gap: 6, height: 32, padding: '0 12px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer' }}>
+      <span style={{ fontWeight: 600 }}>↓</span> CSV
+    </button>
+  );
+}
+
+function downloadCsv(filename: string, rows: string[][]) {
+  const csv = rows.map((r) => r.map((c) => /[",\n]/.test(c) ? `"${c.replace(/"/g, '""')}"` : c).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 }
 
 function RevenueTab() {
@@ -67,7 +87,7 @@ function RevenueTab() {
   const [from, setFrom] = useState(daysAgoIso(13));
   const [to, setTo] = useState(todayIso());
   const [data, setData] = useState<RevenueResp | null>(null);
-  const [series, setSeries] = useState<{ labels: string[]; values: number[] } | null>(null);
+  const [series, setSeries] = useState<{ labels: string[]; values: number[]; full: string[] } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -93,6 +113,7 @@ function RevenueTab() {
       setSeries({
         labels: dailyResults.map((r) => r.date.slice(5)),
         values: dailyResults.map((r) => r.value),
+        full: dailyResults.map((r) => r.date),
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -119,24 +140,157 @@ function RevenueTab() {
       {data && (
         <>
           <div style={{ display: 'flex', gap: 14 }}>
-            <KpiTile label="Issued bills" value={String(data.issuedBills.count)} sub={`${formatINR(data.issuedBills.totalBilled)} billed`} />
-            <KpiTile label="Payments" value={String(data.payments.count)} sub={`${formatINR(data.payments.totalPaid)} paid`} />
-            <KpiTile label="Net collected" value={formatINR(data.payments.totalPaid)} sub={`${data.from} → ${data.to}`} />
+            <KpiTile label="Issued bills" value={<Counter value={data.issuedBills.count} />} sub={`${formatINR(data.issuedBills.totalBilled)} billed`} />
+            <KpiTile label="Payments" value={<Counter value={data.payments.count} />} sub={`${formatINR(data.payments.totalPaid)} paid`} />
+            <KpiTile label="Net collected" value={<Counter value={data.payments.totalPaid} format={(n) => formatINR(n)} />} sub={`${data.from} → ${data.to}`} />
             <KpiTile label="Timezone" value={data.timezone} sub={data.branchId ? `Branch: ${data.branchId.slice(-6)}` : 'All branches'} />
           </div>
 
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
             <div style={{ padding: '18px 20px 12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Daily revenue</div>
-              <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{from} → {to}</span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{from} → {to}</span>
+                {series && <ExportButton onClick={() => downloadCsv(`revenue-${from}-to-${to}.csv`, [['Date', 'Revenue (INR)'], ...series.full.map((d, i) => [d, String(series.values[i])])])} />}
+              </div>
             </div>
             {series ? (
-              <AreaChart data={series.values} labels={series.labels} height={220} />
+              <>
+                <AreaChart data={series.values} labels={series.labels} height={220} />
+                <div style={{ overflowX: 'auto' }}>
+                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                    <thead>
+                      <tr style={{ background: 'var(--surface-muted)' }}>
+                        <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Date</th>
+                        <th style={{ padding: '10px 16px', textAlign: 'right', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Revenue</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {series.full.map((d, i) => (
+                        <tr key={d} style={{ borderTop: '1px solid var(--border)', animation: `slideUp 150ms ease-out ${Math.min(i * 20, 240)}ms both` }}>
+                          <td style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-muted)' }}>{d}</td>
+                          <td style={{ padding: '10px 16px', fontSize: 13, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{formatINR(series.values[i])}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
             ) : (
-              <div style={{ padding: 24, color: 'var(--text-subtle)', fontSize: 13 }}>Building daily series…</div>
+              <div style={{ padding: 16 }}>
+                <Skeleton height={200} />
+                <div style={{ marginTop: 12 }}>
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 12, padding: '6px 0' }}>
+                      <Skeleton width="40%" height={11} />
+                      <Skeleton width="20%" height={11} />
+                    </div>
+                  ))}
+                </div>
+              </div>
             )}
           </div>
         </>
+      )}
+    </div>
+  );
+}
+
+function UtilizationTab() {
+  const { ctx } = useApp();
+  const [date, setDate] = useState(todayIso());
+  const [branchId, setBranchId] = useState(ctx.branchId ?? '');
+  const [data, setData] = useState<ScheduleResp | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    if (!branchId.trim()) { setError('Branch ID is required.'); return; }
+    setLoading(true); setError(null);
+    try {
+      const qs = new URLSearchParams({ date, branchId: branchId.trim() });
+      const res = await apiGet<ScheduleResp>(ctx, `/reports/schedule/daily?${qs.toString()}`);
+      setData(res);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void load(); }, [ctx.clinicId]);
+
+  const rows = data ? Object.entries(data.byDoctor).map(([doctorId, d]) => {
+    const completed = (d.byStatus.DONE ?? 0) + (d.byStatus.CHECKED_IN ?? 0) + (d.byStatus.IN_PROGRESS ?? 0);
+    const cancelled = (d.byStatus.CANCELLED ?? 0) + (d.byStatus.NO_SHOW ?? 0);
+    const utilPct = d.total > 0 ? Math.round((completed / d.total) * 100) : 0;
+    return { doctorId, total: d.total, completed, cancelled, time: d.byType.TIME ?? 0, queue: d.byType.QUEUE ?? 0, utilPct };
+  }).sort((a, b) => b.total - a.total) : [];
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16, display: 'flex', gap: 12, alignItems: 'flex-end' }}>
+        <div style={{ flex: 1 }}><Field label="Date" value={date} onChange={setDate} placeholder="YYYY-MM-DD" /></div>
+        <div style={{ flex: 1 }}><Field label="Branch ID" value={branchId} onChange={setBranchId} placeholder="ObjectId" /></div>
+        <button onClick={load} disabled={loading} className="press-scale"
+          style={{ height: 40, padding: '0 20px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
+          {loading ? 'Loading…' : 'Reload'}
+        </button>
+      </div>
+
+      {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
+
+      {data && rows.length > 0 ? (
+        <>
+          <div style={{ display: 'flex', gap: 14 }}>
+            <KpiTile label="Doctors active" value={<Counter value={rows.length} />} sub={`${data.total} appts total`} />
+            <KpiTile label="Avg per doctor" value={<Counter value={Math.round(data.total / Math.max(rows.length, 1))} />} sub="Across all types" />
+            <KpiTile label="Time-based" value={<Counter value={rows.reduce((s, r) => s + r.time, 0)} />} sub="Booked slots" />
+            <KpiTile label="Queue" value={<Counter value={rows.reduce((s, r) => s + r.queue, 0)} />} sub="Walk-in tokens" />
+          </div>
+
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+            <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>By doctor</div>
+              <ExportButton onClick={() => downloadCsv(`utilization-${date}.csv`,
+                [['Doctor', 'Total', 'Completed', 'Cancelled', 'Time', 'Queue', 'Utilization %'],
+                  ...rows.map((r) => [r.doctorId, String(r.total), String(r.completed), String(r.cancelled), String(r.time), String(r.queue), String(r.utilPct)])])} />
+            </div>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--surface-muted)' }}>
+                  {['Doctor', 'Total', 'Completed', 'Cancelled', 'Time', 'Queue', 'Utilization'].map((h, i) => (
+                    <th key={h} style={{ padding: '10px 16px', textAlign: i === 0 ? 'left' : 'right', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={r.doctorId} style={{ borderTop: '1px solid var(--border)', animation: `slideUp 150ms ease-out ${Math.min(i * 20, 240)}ms both` }}>
+                    <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text)', fontFamily: 'monospace' }}>{r.doctorId.slice(-8)}</td>
+                    <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{r.total}</td>
+                    <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--success-500)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.completed}</td>
+                    <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--danger-500)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.cancelled}</td>
+                    <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--text-muted)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.time}</td>
+                    <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--text-muted)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.queue}</td>
+                    <td style={{ padding: '11px 16px', textAlign: 'right' }}>
+                      <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                        <div style={{ width: 60, height: 6, background: 'var(--surface-muted)', borderRadius: 3, overflow: 'hidden' }}>
+                          <div style={{ width: `${r.utilPct}%`, height: '100%', background: 'var(--brand-500)', borderRadius: 3, transition: 'width 600ms var(--ease-out)' }} />
+                        </div>
+                        <span style={{ fontSize: 12, color: 'var(--text-muted)', fontVariantNumeric: 'tabular-nums', minWidth: 30 }}>{r.utilPct}%</span>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
+      ) : data && rows.length === 0 ? (
+        <EmptyState illustration="calendar" title="No appointments to analyze" hint="Pick a different date or branch." />
+      ) : !loading && !data ? null : (
+        <Skeleton height={240} />
       )}
     </div>
   );
@@ -204,7 +358,7 @@ function ScheduleTab() {
             <KpiTile label="Doctors" value={String(Object.keys(data.byDoctor).length)} sub={`Branch ${branchId.slice(-6)}`} />
           </div>
           {data.items.length === 0 ? (
-            <EmptyState icon="calendar" title="No appointments on this date" />
+            <EmptyState illustration="calendar" title="No appointments on this date" />
           ) : (
             <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -273,7 +427,7 @@ function PendingTab() {
       {loading && !data && <div style={{ padding: 24, color: 'var(--text-subtle)', fontSize: 13 }}>Loading…</div>}
 
       {data && (data.rows.length === 0 ? (
-        <EmptyState icon="checkCircle" title="All bills paid" hint="There are no issued bills with outstanding balances." />
+        <EmptyState illustration="receipt" title="All bills paid" hint="There are no issued bills with outstanding balances." />
       ) : (
         <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -302,7 +456,7 @@ function PendingTab() {
   );
 }
 
-function KpiTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
+function KpiTile({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
   return (
     <div style={{ flex: 1, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '16px 18px' }}>
       <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>{label}</div>

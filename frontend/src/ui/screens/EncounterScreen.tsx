@@ -16,6 +16,9 @@ type Encounter = {
   vitals?: Record<string, string>;
   followUpAt?: string;
   visitedAt: string;
+  signedAt?: string;
+  signedByUserId?: string;
+  updatedAt?: string;
 };
 
 type Patient = { _id: string; fullName: string; gender?: string; dob?: string; phones?: string[]; tags?: string[] };
@@ -158,6 +161,7 @@ function EncounterEditor({
   const [savingDraft, setSavingDraft] = useState(false);
   const [showSign, setShowSign] = useState(false);
   const [signing, setSigning] = useState(false);
+  const [justSigned, setJustSigned] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function addDiag() {
@@ -211,9 +215,11 @@ function EncounterEditor({
           })),
         });
       }
-      const signed = await apiPost<Encounter>(ctx, `/encounters/${encounter._id}/sign`, {});
-      onChanged(signed);
+      const signedEnc = await apiPost<Encounter>(ctx, `/encounters/${encounter._id}/sign`, {});
+      onChanged(signedEnc);
       setShowSign(false);
+      setJustSigned(true);
+      setTimeout(() => setJustSigned(false), 1200);
       toast('Encounter signed', 'success');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -289,11 +295,28 @@ function EncounterEditor({
         </div>
       </div>
 
-      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, transition: 'filter 600ms var(--ease-out)', filter: signed && justSigned ? 'saturate(0.6)' : 'saturate(1)' }}>
         {signed && (
-          <div style={{ padding: '10px 20px', background: 'rgba(16,185,129,0.08)', borderBottom: '1px solid rgba(16,185,129,0.2)', display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Icon name="checkCircle" size={16} style={{ color: 'var(--success-500)' }} />
-            <span style={{ fontSize: 13, color: 'var(--success-500)', fontWeight: 600 }}>Encounter signed and locked</span>
+          <div style={{
+            padding: '10px 20px',
+            background: 'rgba(16,185,129,0.08)',
+            borderBottom: '1px solid rgba(16,185,129,0.2)',
+            display: 'flex', alignItems: 'center', gap: 10,
+            animation: justSigned ? 'successHalo 1000ms var(--ease-out)' : undefined,
+          }}>
+            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: '50%', background: 'rgba(16,185,129,0.18)' }}>
+              {justSigned ? (
+                <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="var(--success-500)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" strokeDasharray="24" strokeDashoffset="24" style={{ animation: 'pathDraw 280ms var(--ease-out) forwards', ['--draw-len' as never]: 24 }} />
+                </svg>
+              ) : (
+                <Icon name="checkCircle" size={14} style={{ color: 'var(--success-500)' }} />
+              )}
+            </span>
+            <span style={{ fontSize: 13, color: 'var(--success-500)', fontWeight: 600 }}>
+              Signed by {signerLabel(encounter, ctx.fullName ?? ctx.email)} · {formatSignedAt(encounter.signedAt ?? encounter.updatedAt)}
+            </span>
+            <span style={{ marginLeft: 'auto' }}><StatusPill status="signed" small /></span>
           </div>
         )}
 
@@ -463,6 +486,19 @@ function Section({ title, icon, children, defaultOpen }: { title: string; icon: 
       {open && <div style={{ padding: '14px 16px 16px', borderTop: '1px solid var(--border)' }}>{children}</div>}
     </div>
   );
+}
+
+function signerLabel(enc: Encounter, fallback?: string): string {
+  if (fallback) return `Dr. ${fallback}`;
+  if (enc.signedByUserId) return `User ${enc.signedByUserId.slice(-6)}`;
+  return 'this user';
+}
+
+function formatSignedAt(iso: string | undefined): string {
+  if (!iso) return new Date().toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
 
 function VitalInput({ label, unit, value, onChange, disabled }: { label: string; unit: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {

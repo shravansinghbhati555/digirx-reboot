@@ -144,7 +144,7 @@ export function DocumentsScreen() {
       <div>
         <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 10 }}>Recent uploads</div>
         {recent.length === 0 ? (
-          <EmptyState icon="folder" title="No documents tracked yet" hint="Uploaded documents from this device will show up here." />
+          <EmptyState illustration="documents" title="No documents tracked yet" hint="Uploaded documents from this device will show up here." />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: 14 }}>
             {recent.map((doc, i) => (

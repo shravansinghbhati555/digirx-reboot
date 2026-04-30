@@ -1,8 +1,11 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiGet, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Avatar, EmptyState, Field, Spinner, StatusPill, formatINR, labelStyle, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
+import { Skeleton } from '../shared/Skeleton';
+import { useShake } from '../shared/useShake';
+import { Counter } from '../shared/Counter';
 
 type BillItem = {
   description?: string;
@@ -125,10 +128,23 @@ export function BillingScreen() {
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
-          {loading && <div style={{ padding: 24, color: 'var(--text-subtle)', fontSize: 13 }}>Loading…</div>}
+          {loading && (
+            <div style={{ padding: 12 }}>
+              {Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 4px', borderBottom: '1px solid var(--border)' }}>
+                  <Skeleton width={80} height={11} />
+                  <Skeleton width={26} height={26} radius={13} />
+                  <Skeleton width="30%" height={12} />
+                  <Skeleton width={70} height={11} style={{ marginLeft: 'auto' }} />
+                  <Skeleton width={70} height={11} />
+                  <Skeleton width={64} height={18} radius={9} />
+                </div>
+              ))}
+            </div>
+          )}
           {error && <div style={{ padding: 16, fontSize: 13, color: 'var(--danger-500)' }}>{error}</div>}
           {!loading && !error && filtered.length === 0 && (
-            <EmptyState icon="receipt" title="No issued bills with outstanding balance"
+            <EmptyState illustration="receipt" title="No issued bills with outstanding balance"
               hint="Create a bill or look one up by ID. Drafts don't appear here yet." />
           )}
           {filtered.length > 0 && (
@@ -184,11 +200,26 @@ function BillDetail({ bill, onClose, onChanged }: { bill: Bill; onClose: () => v
   const [payments, setPayments] = useState<Payment[] | null>(null);
   const [showPay, setShowPay] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [billNoFreshKey, setBillNoFreshKey] = useState(0);
+  const [latestPaymentId, setLatestPaymentId] = useState<string | null>(null);
+  const prevBillNoRef = useRef<string | undefined>(bill.billNo);
 
-  async function loadPayments() {
+  useEffect(() => {
+    if (!prevBillNoRef.current && bill.billNo) {
+      setBillNoFreshKey((k) => k + 1);
+    }
+    prevBillNoRef.current = bill.billNo;
+  }, [bill.billNo]);
+
+  async function loadPayments(highlightLatest = false) {
     try {
       const data = await apiGet<Payment[]>(ctx, `/bills/${bill._id}/payments`);
       setPayments(data);
+      if (highlightLatest && data.length > 0) {
+        const sorted = [...data].sort((a, b) => new Date(b.paidAt).getTime() - new Date(a.paidAt).getTime());
+        setLatestPaymentId(sorted[0]._id);
+        setTimeout(() => setLatestPaymentId(null), 1200);
+      }
     } catch {
       setPayments([]);
     }
@@ -228,7 +259,11 @@ function BillDetail({ bill, onClose, onChanged }: { bill: Bill; onClose: () => v
       <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 12 }}>
         <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 4 }}><Icon name="chevronLeft" size={18} /></button>
         <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: 'monospace', fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{bill.billNo ?? bill._id}</div>
+          <div style={{ fontFamily: 'monospace', fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
+            <span key={billNoFreshKey} style={{ display: 'inline-block', animation: billNoFreshKey > 0 ? 'slideInRight 240ms var(--ease-out)' : undefined }}>
+              {bill.billNo ?? bill._id}
+            </span>
+          </div>
           <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>{bill.patientId.slice(-12)} · {bill.currency}</div>
         </div>
         <StatusPill status={bill.status.toLowerCase()} />
@@ -295,17 +330,26 @@ function BillDetail({ bill, onClose, onChanged }: { bill: Bill; onClose: () => v
           {payments && payments.length > 0 && (
             <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '14px 16px' }}>
               <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Payments</div>
-              {payments.map((p) => (
-                <div key={p._id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
-                  <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(16,185,129,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <Icon name="check" size={13} style={{ color: 'var(--success-500)' }} strokeWidth={2.5} />
+              {payments.map((p) => {
+                const isFresh = latestPaymentId === p._id;
+                return (
+                  <div key={p._id}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0',
+                      borderBottom: '1px solid var(--border)',
+                      animation: isFresh ? 'slideUp 320ms var(--ease-out), successHalo 1000ms var(--ease-out)' : undefined,
+                      borderRadius: isFresh ? 10 : 0,
+                    }}>
+                    <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(16,185,129,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Icon name="check" size={13} style={{ color: 'var(--success-500)' }} strokeWidth={2.5} />
+                    </div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{formatINR(p.amount)}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{p.method} · {new Date(p.paidAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</div>
+                    </div>
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{formatINR(p.amount)}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{p.method} · {new Date(p.paidAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</div>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
@@ -314,7 +358,7 @@ function BillDetail({ bill, onClose, onChanged }: { bill: Bill; onClose: () => v
       {showPay && (
         <PaymentSheet bill={bill} balance={balance}
           onClose={() => setShowPay(false)}
-          onSuccess={async () => { setShowPay(false); await loadPayments(); try { const fresh = await apiGet<Bill>(ctx, `/bills/${bill._id}`); onChanged(fresh); } catch {} }}
+          onSuccess={async () => { setShowPay(false); await loadPayments(true); try { const fresh = await apiGet<Bill>(ctx, `/bills/${bill._id}`); onChanged(fresh); } catch {} }}
         />
       )}
     </div>
@@ -330,9 +374,12 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [idempotencyKey] = useState(() => crypto.randomUUID());
+  const { shakeProps, shake } = useShake();
 
   async function submit() {
-    if (!amount || isNaN(Number(amount))) { setError('Enter a valid amount'); return; }
+    if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
+      setError('Enter a valid amount'); shake(); return;
+    }
     setLoading(true); setError(null);
     try {
       await apiPost(ctx, `/bills/${bill._id}/payments`, {
@@ -341,6 +388,7 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
       toast(`Payment of ${formatINR(Number(amount))} recorded`, 'success');
       onSuccess();
     } catch (e) {
+      shake();
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setLoading(false);
@@ -349,7 +397,8 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', background: 'rgba(15,23,42,0.3)', backdropFilter: 'blur(2px)' }} onClick={onClose}>
-      <div style={{ width: 420, height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--border)', boxShadow: '-8px 0 32px rgba(15,23,42,0.12)', display: 'flex', flexDirection: 'column', animation: 'slideInRight 240ms ease-out' }} onClick={(e) => e.stopPropagation()}>
+      <div {...shakeProps}
+        style={{ width: 420, height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--border)', boxShadow: '-8px 0 32px rgba(15,23,42,0.12)', display: 'flex', flexDirection: 'column', animation: 'slideInRight 240ms ease-out', ...shakeProps.style }} onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>Record payment</div>
@@ -425,6 +474,7 @@ function CreateBillSheet({ onClose, onCreated }: { onClose: () => void; onCreate
   const [tax, setTax] = useState('0');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const { shakeProps, shake } = useShake();
 
   useEffect(() => {
     apiGet<Service[]>(ctx, '/catalog/services').then(setServices).catch(() => setServices([]));
@@ -448,10 +498,11 @@ function CreateBillSheet({ onClose, onCreated }: { onClose: () => void; onCreate
   }
 
   async function submit() {
-    if (!ctx.branchId) { setError('Set a branch ID (sign in to a branch).'); return; }
-    if (!patientId.trim()) { setError('Patient ID is required.'); return; }
+    if (!ctx.branchId) { setError('Set a branch ID (sign in to a branch).'); shake(); return; }
+    if (!patientId.trim()) { setError('Patient ID is required.'); shake(); return; }
     if (items.length === 0 || items.some((i) => !i.name.trim() || i.qty <= 0)) {
       setError('All items need a name and a quantity > 0.');
+      shake();
       return;
     }
     setSaving(true); setError(null);
@@ -473,6 +524,7 @@ function CreateBillSheet({ onClose, onCreated }: { onClose: () => void; onCreate
       toast('Draft bill created', 'success');
       onCreated(created);
     } catch (e) {
+      shake();
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
@@ -481,7 +533,8 @@ function CreateBillSheet({ onClose, onCreated }: { onClose: () => void; onCreate
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
-      <div style={{ background: 'var(--surface)', borderRadius: 18, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 640, maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+      <div {...shakeProps}
+        style={{ background: 'var(--surface)', borderRadius: 18, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 640, maxHeight: '92vh', display: 'flex', flexDirection: 'column', ...shakeProps.style }} onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>New bill</div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}><Icon name="x" size={18} /></button>
@@ -527,9 +580,13 @@ function CreateBillSheet({ onClose, onCreated }: { onClose: () => void; onCreate
           </div>
 
           <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-muted)', marginBottom: 4 }}><span>Subtotal</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatINR(subtotal)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-muted)', marginBottom: 4 }}>
+              <span>Subtotal</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}><Counter value={subtotal} duration={280} format={(n) => formatINR(n)} /></span>
+            </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, color: 'var(--text)', marginTop: 6, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
-              <span>Total</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatINR(total)}</span>
+              <span>Total</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums' }}><Counter value={total} duration={280} format={(n) => formatINR(n)} /></span>
             </div>
           </div>
 

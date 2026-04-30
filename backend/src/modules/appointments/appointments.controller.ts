@@ -61,6 +61,12 @@ export class AppointmentsController {
     });
   }
 
+  @Get(':id')
+  @RequirePermissions(Permission.AppointmentRead)
+  async getOne(@Req() req: AppRequest, @Param('id') id: string) {
+    return await this.appts.getById(req.context!.clinicId, id);
+  }
+
   @Patch(':id')
   @RequirePermissions(Permission.AppointmentWrite)
   async update(

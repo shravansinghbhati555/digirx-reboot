@@ -88,6 +88,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   const { screen, setScreen, theme, toggleTheme, ctx, logout, selectedDate, setSelectedDate } = useApp();
   const [collapsed, setCollapsed] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
+  const [helpOpen, setHelpOpen] = useState(false);
   const rail = collapsed ? 64 : 240;
   const userName = ctx.fullName ?? 'User';
   const userEmail = ctx.email ?? '';
@@ -95,6 +96,7 @@ export function AppShell({ children }: { children: ReactNode }) {
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setCmdOpen(true); }
+      if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); setHelpOpen(true); }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
@@ -228,19 +230,80 @@ export function AppShell({ children }: { children: ReactNode }) {
             style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', color: 'var(--text-muted)' }}>
             <Icon name="bell" size={16} />
           </button>
-          <button onClick={toggleTheme}
+          <button onClick={toggleTheme} className="press-scale" title="Toggle theme"
             style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', color: 'var(--text-muted)' }}>
             <Icon name={theme === 'light' ? 'moon' : 'sun'} size={16} />
+          </button>
+          <button onClick={() => setHelpOpen(true)} className="press-scale" title="Keyboard shortcuts (⌘/)"
+            style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', color: 'var(--text-muted)' }}>
+            <Icon name="help" size={16} />
           </button>
         </div>
 
         {/* Content */}
         <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
-          {children}
+          <div key={screen} style={{ animation: 'slideUp 200ms var(--ease-out)', minHeight: '100%' }}>
+            {children}
+          </div>
         </div>
       </div>
 
       {cmdOpen && <CommandPalette onNavigate={setScreen} onClose={() => setCmdOpen(false)} />}
+      {helpOpen && <ShortcutsCheatsheet onClose={() => setHelpOpen(false)} />}
+    </div>
+  );
+}
+
+function ShortcutsCheatsheet({ onClose }: { onClose: () => void }) {
+  const groups: { title: string; rows: { keys: string[]; label: string }[] }[] = [
+    {
+      title: 'Navigation',
+      rows: [
+        { keys: ['⌘', 'K'], label: 'Open command palette' },
+        { keys: ['⌘', '/'], label: 'Show shortcuts' },
+        { keys: ['Esc'], label: 'Close modals & sheets' },
+      ],
+    },
+    {
+      title: 'Actions',
+      rows: [
+        { keys: ['+ New'], label: 'Register a new patient (header button)' },
+        { keys: ['Enter'], label: 'Submit forms / pick highlighted result' },
+        { keys: ['↑ ↓'], label: 'Navigate the command palette' },
+      ],
+    },
+  ];
+  return (
+    <div onClick={onClose} style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)', animation: 'fadeIn 150ms ease-out' }}>
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ width: '100%', maxWidth: 480, background: 'var(--surface)', borderRadius: 16, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', overflow: 'hidden', animation: 'slideUp 200ms ease-out' }}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Keyboard shortcuts</div>
+          <button onClick={onClose} className="press-scale"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}>
+            <Icon name="x" size={18} />
+          </button>
+        </div>
+        <div style={{ padding: '14px 22px 22px' }}>
+          {groups.map((g) => (
+            <div key={g.title} style={{ marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>{g.title}</div>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                {g.rows.map((r, i) => (
+                  <div key={i} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 0' }}>
+                    <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>{r.label}</span>
+                    <div style={{ display: 'flex', gap: 4 }}>
+                      {r.keys.map((k) => (
+                        <kbd key={k} style={{ padding: '2px 8px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11, color: 'var(--text-muted)', fontFamily: 'monospace', fontWeight: 600 }}>{k}</kbd>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   );
 }

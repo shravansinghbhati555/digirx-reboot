@@ -9,13 +9,17 @@ type ClinicSettingsResp = {
   settings: Record<string, unknown>;
 };
 
-type SettingsTab = 'clinic' | 'context' | 'permissions' | 'about';
+type SettingsTab = 'clinic' | 'branches' | 'users' | 'permissions' | 'notif_cfg' | 'security' | 'context' | 'about';
 
 const NAV: { id: SettingsTab; label: string; icon: IconName }[] = [
-  { id: 'clinic', label: 'Clinic', icon: 'cross' },
-  { id: 'context', label: 'My context', icon: 'user' },
-  { id: 'permissions', label: 'Permissions', icon: 'shield' },
-  { id: 'about', label: 'About', icon: 'info' },
+  { id: 'clinic',       label: 'Clinic',         icon: 'cross' },
+  { id: 'branches',     label: 'Branches',       icon: 'mapPin' },
+  { id: 'users',        label: 'Users',          icon: 'users' },
+  { id: 'permissions',  label: 'Roles & Permissions', icon: 'shield' },
+  { id: 'notif_cfg',    label: 'Notifications',  icon: 'bell' },
+  { id: 'security',     label: 'Security',       icon: 'lock' },
+  { id: 'context',      label: 'My context',     icon: 'user' },
+  { id: 'about',        label: 'About',          icon: 'info' },
 ];
 
 export function SettingsScreen() {
@@ -40,8 +44,12 @@ export function SettingsScreen() {
             {NAV.find((n) => n.id === tab)?.label}
           </h2>
           {tab === 'clinic' && <ClinicTab />}
-          {tab === 'context' && <ContextTab />}
+          {tab === 'branches' && <BranchesTab />}
+          {tab === 'users' && <UsersTab />}
           {tab === 'permissions' && <PermissionsTab />}
+          {tab === 'notif_cfg' && <NotifConfigTab />}
+          {tab === 'security' && <SecurityTab />}
+          {tab === 'context' && <ContextTab />}
           {tab === 'about' && <AboutTab />}
         </div>
       </div>
@@ -285,10 +293,13 @@ function PermCheck({ checked }: { checked: boolean }) {
       background: checked ? 'var(--brand-500)' : 'var(--surface-muted)',
       display: 'flex', alignItems: 'center', justifyContent: 'center',
       margin: '0 auto',
+      transition: 'background 160ms var(--ease-out), border-color 160ms var(--ease-out)',
     }}>
       {checked && (
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12" />
+          <polyline points="20 6 9 17 4 12"
+            strokeDasharray="24" strokeDashoffset="24"
+            style={{ animation: 'pathDraw 160ms var(--ease-out) forwards', ['--draw-len' as never]: 24 }} />
         </svg>
       )}
     </div>
@@ -324,6 +335,49 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 24 }}>
       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', flex: '0 0 200px' }}>{label}</div>
       <div style={{ fontSize: 13, color: 'var(--text)', flex: 1, textAlign: 'right' }}>{children}</div>
+    </div>
+  );
+}
+
+function StubTab({ icon, title, hint }: { icon: IconName; title: string; hint: string }) {
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 32, textAlign: 'center' }}>
+      <div style={{ width: 48, height: 48, borderRadius: 12, background: 'var(--brand-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
+        <Icon name={icon} size={22} style={{ color: 'var(--brand-500)' }} />
+      </div>
+      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', fontFamily: "'Manrope',sans-serif", marginBottom: 6 }}>{title}</div>
+      <div style={{ fontSize: 13, color: 'var(--text-muted)', maxWidth: 460, margin: '0 auto', lineHeight: 1.5 }}>{hint}</div>
+    </div>
+  );
+}
+
+function BranchesTab() {
+  return <StubTab icon="mapPin" title="Branches"
+    hint="Branch management surfaces under construction. Today, branches are created via the seed script and assigned at user login. A CRUD UI will land once the backend exposes branch endpoints." />;
+}
+
+function UsersTab() {
+  return <StubTab icon="users" title="Users"
+    hint="User invitations, roles, and deactivation will live here. The backend currently exposes user records via /me only; once a list endpoint exists we'll wire a table with role chips and last-login." />;
+}
+
+function NotifConfigTab() {
+  return <StubTab icon="bell" title="Notification providers & quiet hours"
+    hint="Provider keys (Twilio/WhatsApp Business), quiet hours, and reminder windows will live here. Templates are already editable on the Notifications page." />;
+}
+
+function SecurityTab() {
+  const { ctx } = useApp();
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>Session</div>
+        <Row label="User">{ctx.fullName ?? ctx.email ?? ctx.userId.slice(-8)}</Row>
+        <Row label="Token">{ctx.accessToken ? <code style={{ fontFamily: 'monospace', fontSize: 11 }}>{ctx.accessToken.slice(0, 18)}…</code> : 'dev headers'}</Row>
+        <Row label="Refresh">httpOnly cookie <code style={{ fontFamily: 'monospace', fontSize: 11 }}>digirx_refresh</code></Row>
+      </div>
+      <StubTab icon="lock" title="Audit retention & 2FA"
+        hint="Per-clinic 2FA enforcement, session timeouts, and audit log retention will live here. Audit writes are already happening server-side via the global AuditInterceptor." />
     </div>
   );
 }

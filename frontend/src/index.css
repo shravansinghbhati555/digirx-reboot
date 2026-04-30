@@ -91,6 +91,82 @@ input, select, textarea { font-family: inherit; }
   to   { opacity: 1; transform: translateY(0) translateX(-50%); }
 }
 
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+@keyframes float6 {
+  0%, 100% { transform: translateY(0); }
+  50%      { transform: translateY(-6px); }
+}
+@keyframes shakeX {
+  0%, 100% { transform: translateX(0); }
+  20%      { transform: translateX(-3px); }
+  40%      { transform: translateX(3px); }
+  60%      { transform: translateX(-3px); }
+  80%      { transform: translateX(3px); }
+}
+@keyframes pulseRing {
+  0%   { box-shadow: 0 0 0 0 rgba(59,130,246,0.35); }
+  70%  { box-shadow: 0 0 0 8px rgba(59,130,246,0); }
+  100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+}
+@keyframes successHalo {
+  0%   { box-shadow: 0 0 0 0 rgba(16,185,129,0.45); }
+  70%  { box-shadow: 0 0 0 14px rgba(16,185,129,0); }
+  100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+}
+@keyframes pathDraw {
+  from { stroke-dashoffset: var(--draw-len, 800); }
+  to   { stroke-dashoffset: 0; }
+}
+@keyframes pathFadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.press-scale {
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+.press-scale:not(:disabled):active {
+  transform: scale(0.98);
+}
+button:not(:disabled):not(.no-press):active {
+  transform: scale(0.98);
+}
+button {
+  transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
+}
+
+.skel {
+  position: relative;
+  background: linear-gradient(
+    90deg,
+    var(--surface-muted) 0%,
+    rgba(15, 23, 42, 0.04) 50%,
+    var(--surface-muted) 100%
+  );
+  background-size: 800px 100%;
+  animation: shimmer 1200ms ease-in-out infinite;
+  border-radius: 8px;
+}
+[data-theme='dark'] .skel {
+  background: linear-gradient(
+    90deg,
+    var(--surface-muted) 0%,
+    rgba(255, 255, 255, 0.04) 50%,
+    var(--surface-muted) 100%
+  );
+  background-size: 800px 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 1ms !important;
+    transition-duration: 100ms !important;
+  }
+}
+
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 2px solid var(--bg); }
