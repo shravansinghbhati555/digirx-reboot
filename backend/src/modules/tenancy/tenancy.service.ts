@@ -2,6 +2,7 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Clinic } from './schemas/clinic.schema';
+import { Branch } from './schemas/branch.schema';
 import {
   mergeClinicSettings,
   type ClinicSettingsV1,
@@ -12,6 +13,7 @@ import { PatchClinicSettingsDto } from './dto/patch-clinic-settings.dto';
 export class TenancyService {
   constructor(
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
+    @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
   ) {}
 
   async getClinic(clinicId: Types.ObjectId) {
@@ -59,5 +61,27 @@ export class TenancyService {
     clinic.settings = next as any;
     await clinic.save();
     return await this.getSettings(clinicId);
+  }
+
+  async searchClinics(query: string) {
+    const filter = query
+      ? { name: { $regex: query, $options: 'i' } }
+      : {};
+    const clinics = await this.clinicModel.find(filter).limit(10).exec();
+    return clinics.map((c) => ({
+      id: c._id,
+      name: c.name,
+      countryCode: c.countryCode,
+      timezone: c.timezone,
+    }));
+  }
+
+  async listBranches(clinicId: string) {
+    const branches = await this.branchModel.find({ clinicId: new Types.ObjectId(clinicId) }).exec();
+    return branches.map((b) => ({
+      id: b._id,
+      name: b.name,
+      address: b.address,
+    }));
   }
 }

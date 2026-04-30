@@ -38,7 +38,7 @@ import { StorageModule } from './modules/storage/storage.module';
       isGlobal: true,
     }),
     MongooseModule.forRoot(
-      process.env.MONGODB_URI ?? 'mongodb://localhost:27017/digirx',
+      process.env.MONGODB_URI ?? 'mongodb://127.0.0.1:27017/digirx',
     ),
     AuditModule,
     AuthModule,
@@ -75,9 +75,11 @@ export class AppModule implements NestModule {
       .apply(ClinicContextMiddleware)
       .exclude(
         'health',
-        { path: 'auth/(.*)', method: RequestMethod.ALL },
+        { path: 'auth/*path', method: RequestMethod.ALL },
         { path: 'auth', method: RequestMethod.ALL },
-        { path: 'share/(.*)', method: RequestMethod.ALL },
+        { path: 'clinic/search', method: RequestMethod.GET },
+        { path: 'clinic/:id/branches', method: RequestMethod.GET },
+        { path: 'share/*path', method: RequestMethod.ALL },
       )
       .forRoutes('*');
   }

@@ -1,7 +1,7 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
-import { Appointment } from '../appointments/schemas/appointment.schema';
+import { Appointment, AppointmentType } from '../appointments/schemas/appointment.schema';
+import { Model, QueryFilter, Types } from 'mongoose';
 import { Bill, BillStatus } from '../billing/schemas/bill.schema';
 import { Payment } from '../billing/schemas/payment.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
@@ -15,7 +15,7 @@ export class ReportsService {
     @InjectModel(Bill.name) private readonly billModel: Model<Bill>,
     @InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
-  ) {}
+  ) { }
 
   private async resolveTimezone(clinicId: Types.ObjectId): Promise<string> {
     const clinic = await this.clinicModel.findById(clinicId);
@@ -132,15 +132,17 @@ export class ReportsService {
     const { dayStart, dayEnd, tz } = await this.resolveDay(clinicId, date);
     const bId = new Types.ObjectId(branchId);
 
+    const filter: QueryFilter<Appointment> = {
+      clinicId,
+      branchId: bId,
+      $or: [
+        { type: AppointmentType.Time, startAt: { $gte: dayStart, $lte: dayEnd } },
+        { type: AppointmentType.Queue, queueDate: date },
+      ],
+    };
+
     const items = await this.apptModel
-      .find({
-        clinicId,
-        branchId: bId,
-        $or: [
-          { type: 'TIME', startAt: { $gte: dayStart, $lte: dayEnd } },
-          { type: 'QUEUE', queueDate: date },
-        ],
-      })
+      .find(filter)
       .sort({ doctorId: 1, startAt: 1, queueNumber: 1 });
 
     const byDoctor: Record<

@@ -6,7 +6,7 @@ import { ReportsService } from './reports.service';
 
 @Controller('reports')
 export class ReportsController {
-  constructor(private readonly reports: ReportsService) {}
+  constructor(private readonly reports: ReportsService) { }
 
   @Get('revenue')
   @RequirePermissions(Permission.BillingRead)

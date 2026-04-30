@@ -1,13 +1,26 @@
-import { Body, Controller, Get, Patch, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Query, Req } from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
 import { PatchClinicSettingsDto } from './dto/patch-clinic-settings.dto';
 import { TenancyService } from './tenancy.service';
+import { Public } from '../../common/public.decorator';
 
 @Controller('clinic')
 export class TenancyController {
   constructor(private readonly tenancy: TenancyService) {}
+
+  @Get('search')
+  @Public()
+  async search(@Query('q') q: string) {
+    return await this.tenancy.searchClinics(q);
+  }
+
+  @Get(':id/branches')
+  @Public()
+  async listBranches(@Param('id') id: string) {
+    return await this.tenancy.listBranches(id);
+  }
 
   @Get('settings')
   @RequirePermissions(Permission.ClinicRead)

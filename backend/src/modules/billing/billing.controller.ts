@@ -29,7 +29,7 @@ export class BillingController {
     private readonly pdf: PdfService,
     private readonly storage: StorageService,
     private readonly documents: DocumentsService,
-  ) {}
+  ) { }
 
   @Post('bills')
   @RequirePermissions(Permission.BillingWrite)
@@ -162,8 +162,8 @@ export class BillingController {
     );
   }
 
-  @Get('reports/revenue')
-  async revenueStub(@Query('from') from?: string, @Query('to') to?: string) {
-    return { status: 'NOT_IMPLEMENTED', from, to };
-  }
+  // @Get('reports/revenue')
+  // async revenueStub(@Query('from') from?: string, @Query('to') to?: string) {
+  //   return { status: 'NOT_IMPLEMENTED', from, to };
+  // }
 }
