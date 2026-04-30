@@ -1,27 +1,22 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPost } from '../../app/api';
-import type { DevContext } from '../../app/context';
-import {
-  Card,
-  Field,
-  ListRow,
-  PrimaryButton,
-  ScreenTitle,
-  SecondaryButton,
-  SheetFrame,
-  inputSurfaceClass,
-} from '../components/ui';
+import { useApp } from '../../app/AppContext';
+import { Avatar, EmptyState, Field, Spinner, StatusPill, formatINR, labelStyle, useToast } from '../shared/primitives';
+import { Icon, type IconName } from '../shared/Icon';
 
-type Service = {
-  _id: string;
-  name: string;
-  defaultPrice: number;
+type BillItem = {
+  description?: string;
+  customName?: string;
+  serviceCatalogItemId?: string;
+  quantity: number;
+  unitPrice: number;
+  amount?: number;
 };
 
 type Bill = {
   _id: string;
-  status: 'DRAFT' | 'ISSUED' | 'VOID';
   billNo?: string;
+  status: 'DRAFT' | 'ISSUED' | 'VOID' | 'PAID';
   currency: string;
   subtotal: number;
   discount: number;
@@ -29,6 +24,9 @@ type Bill = {
   total: number;
   patientId: string;
   branchId: string;
+  items: BillItem[];
+  issuedAt?: string;
+  createdAt?: string;
 };
 
 type Payment = {
@@ -36,437 +34,516 @@ type Payment = {
   method: string;
   amount: number;
   paidAt: string;
+  reference?: string;
 };
 
-type PdfUrlResponse = { url: string; expiresInSeconds: number; documentId: string };
+type Service = {
+  _id: string;
+  name: string;
+  defaultPrice: number;
+};
 
-export function BillingScreen({ ctx }: { ctx: DevContext }) {
-  const canCall = useMemo(
-    () => Boolean(ctx.apiBaseUrl && ctx.clinicId && (ctx.accessToken || ctx.userId)),
-    [ctx],
-  );
-  const [services, setServices] = useState<Service[]>([]);
-  const [servicesErr, setServicesErr] = useState<string | null>(null);
-  const [loadingServices, setLoadingServices] = useState(false);
+type PendingRow = Bill & { totalPaid: number; outstanding: number };
+type PendingPayments = { branchId: string | null; count: number; rows: PendingRow[] };
 
-  const [activeBillId, setActiveBillId] = useState('');
-  const [activeBill, setActiveBill] = useState<Bill | null>(null);
-  const [billErr, setBillErr] = useState<string | null>(null);
+const PAYMENT_METHODS: { id: string; label: string; icon: IconName }[] = [
+  { id: 'CASH',          label: 'Cash',          icon: 'banknote' },
+  { id: 'UPI',           label: 'UPI',           icon: 'smartphone' },
+  { id: 'CARD',          label: 'Card',          icon: 'creditCard' },
+  { id: 'ONLINE',        label: 'Online',        icon: 'send' },
+  { id: 'BANK_TRANSFER', label: 'Bank',          icon: 'arrowUp' },
+];
 
-  async function loadServices() {
-    if (!canCall) return;
-    setLoadingServices(true);
-    setServicesErr(null);
+export function BillingScreen() {
+  const { ctx } = useApp();
+  const [pending, setPending] = useState<PendingRow[] | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'all' | 'draft' | 'issued' | 'paid' | 'void'>('all');
+  const [selected, setSelected] = useState<Bill | null>(null);
+  const [showCreate, setShowCreate] = useState(false);
+  const [lookupId, setLookupId] = useState('');
+
+  async function loadPending() {
+    setLoading(true);
+    setError(null);
     try {
-      const data = await apiGet<Service[]>(ctx, '/catalog/services');
-      setServices(data);
+      const qs = new URLSearchParams({ limit: '50' });
+      if (ctx.branchId) qs.set('branchId', ctx.branchId);
+      const data = await apiGet<PendingPayments>(ctx, `/reports/pending-payments?${qs.toString()}`);
+      setPending(data.rows);
     } catch (e) {
-      setServicesErr(String(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setLoadingServices(false);
+      setLoading(false);
     }
   }
+
+  useEffect(() => { void loadPending(); }, [ctx.clinicId, ctx.branchId]);
 
   async function loadBill(id: string) {
-    if (!canCall || !id.trim()) return;
-    setBillErr(null);
-    setActiveBill(null);
+    if (!id.trim()) return;
+    setError(null);
     try {
-      const data = await apiGet<Bill>(ctx, `/bills/${id.trim()}`);
-      setActiveBill(data);
+      const bill = await apiGet<Bill>(ctx, `/bills/${id.trim()}`);
+      setSelected(bill);
     } catch (e) {
-      setBillErr(String(e));
+      setError(e instanceof Error ? e.message : String(e));
     }
   }
 
-  useEffect(() => {
-    void loadServices();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canCall]);
-
-  const [showCreateService, setShowCreateService] = useState(false);
-  const [showCreateBill, setShowCreateBill] = useState(false);
-  const [showPayment, setShowPayment] = useState(false);
+  const filtered = useMemo(() => {
+    if (!pending) return [];
+    if (filter === 'all' || filter === 'issued') return pending;
+    return pending.filter((b) => b.status.toLowerCase() === filter);
+  }, [pending, filter]);
 
   return (
-    <section className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <ScreenTitle title="Billing" subtitle="Services, bills, and payments." />
-        <div className="flex shrink-0 gap-2 self-stretch sm:self-start">
-          <SecondaryButton className="w-auto flex-1 px-3 py-2.5 text-xs sm:flex-none" onClick={() => setShowCreateService(true)}>
-            + Service
-          </SecondaryButton>
-          <PrimaryButton className="w-auto flex-1 px-3 py-2.5 text-xs sm:flex-none" onClick={() => setShowCreateBill(true)}>
-            New bill
-          </PrimaryButton>
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+      <div style={{ width: selected ? 520 : '100%', flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: selected ? '1px solid var(--border)' : 'none', transition: 'width 240ms ease-out' }}>
+        <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 10, padding: 3, border: '1px solid var(--border)' }}>
+            {(['all', 'draft', 'issued', 'paid', 'void'] as const).map((f) => (
+              <button key={f} onClick={() => setFilter(f)}
+                style={{ padding: '5px 12px', borderRadius: 8, border: 'none', background: filter === f ? 'var(--surface)' : 'transparent', color: filter === f ? 'var(--text)' : 'var(--text-muted)', fontSize: 12, fontWeight: filter === f ? 600 : 400, cursor: 'pointer', textTransform: 'capitalize' }}>
+                {f}
+              </button>
+            ))}
+          </div>
+          <div style={{ flex: 1 }} />
+          <input value={lookupId} onChange={(e) => setLookupId(e.target.value)} placeholder="Bill ID lookup…"
+            onKeyDown={(e) => e.key === 'Enter' && loadBill(lookupId)}
+            style={{ height: 34, padding: '0 12px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 9, fontSize: 12, color: 'var(--text)', outline: 'none', minWidth: 200, fontFamily: 'monospace' }} />
+          <button onClick={() => loadBill(lookupId)}
+            style={{ height: 34, padding: '0 14px', background: 'none', border: '1px solid var(--border)', borderRadius: 9, fontSize: 12, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
+            Load
+          </button>
+          <button onClick={() => setShowCreate(true)}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+            <Icon name="plus" size={13} strokeWidth={2.5} /> New bill
+          </button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
+          {loading && <div style={{ padding: 24, color: 'var(--text-subtle)', fontSize: 13 }}>Loading…</div>}
+          {error && <div style={{ padding: 16, fontSize: 13, color: 'var(--danger-500)' }}>{error}</div>}
+          {!loading && !error && filtered.length === 0 && (
+            <EmptyState icon="receipt" title="No issued bills with outstanding balance"
+              hint="Create a bill or look one up by ID. Drafts don't appear here yet." />
+          )}
+          {filtered.length > 0 && (
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+                <tr style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
+                  {['Bill no', 'Patient', 'Total', 'Outstanding', 'Status'].map((h, i) => (
+                    <th key={h} style={{ padding: '10px 16px', textAlign: i >= 2 && i <= 3 ? 'right' : 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((b) => (
+                  <tr key={b._id} onClick={() => loadBill(b._id)}
+                    style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', background: selected?._id === b._id ? 'var(--brand-50)' : 'transparent' }}>
+                    <td style={{ padding: '12px 16px', fontSize: 12, color: 'var(--text-subtle)', fontFamily: 'monospace', fontWeight: 500 }}>{b.billNo ?? b._id.slice(-6)}</td>
+                    <td style={{ padding: '12px 16px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                        <Avatar name={b.patientId.slice(-4)} size={26} />
+                        <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500, fontFamily: 'monospace' }}>{b.patientId.slice(-12)}</span>
+                      </div>
+                    </td>
+                    <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{formatINR(b.total)}</td>
+                    <td style={{ padding: '12px 16px', fontSize: 13, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: b.outstanding > 0 ? 'var(--danger-500)' : 'var(--success-500)' }}>
+                      {b.outstanding > 0 ? formatINR(b.outstanding) : '—'}
+                    </td>
+                    <td style={{ padding: '12px 16px' }}><StatusPill status={b.status.toLowerCase()} small /></td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
       </div>
 
-      <Card title="Service catalog">
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-xs text-brand-inkMuted">
-            {loadingServices ? 'Loading…' : `${services.length} services`}
-          </div>
-          <SecondaryButton className="w-auto shrink-0 px-3 py-2 text-xs" onClick={() => void loadServices()}>
-            Refresh
-          </SecondaryButton>
-        </div>
-        {servicesErr ? <div className="mt-2 text-xs font-medium text-rose-700">{servicesErr}</div> : null}
-        <div className="mt-3 space-y-2">
-          {services.slice(0, 8).map((s) => (
-            <ListRow key={s._id}>
-              <div className="flex items-center justify-between gap-2">
-                <div>
-                  <div className="text-sm font-semibold text-brand-ink">{s.name}</div>
-                  <div className="text-xs text-brand-inkMuted">₹ {s.defaultPrice}</div>
-                </div>
-                <div className="font-mono text-[11px] text-brand-inkMuted">{s._id.slice(-6)}</div>
-              </div>
-            </ListRow>
-          ))}
-          {services.length > 8 ? (
-            <div className="text-xs text-brand-inkMuted">Showing first 8…</div>
-          ) : null}
-        </div>
-      </Card>
+      {selected && (
+        <BillDetail bill={selected} onClose={() => setSelected(null)} onChanged={(b) => { setSelected(b); void loadPending(); }} />
+      )}
 
-      <Card title="Bill lookup">
-        <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
-          <input
-            value={activeBillId}
-            onChange={(e) => setActiveBillId(e.target.value)}
-            placeholder="Paste Bill ID"
-            className={inputSurfaceClass}
-          />
-          <SecondaryButton
-            className="w-full shrink-0 py-2.5 sm:w-auto sm:min-w-[5.5rem]"
-            onClick={() => void loadBill(activeBillId)}
-            disabled={!canCall}
-          >
-            Load
-          </SecondaryButton>
-        </div>
-        {billErr ? <div className="mt-2 text-xs font-medium text-rose-700">{billErr}</div> : null}
-        {activeBill ? (
-          <div className="mt-3 rounded-3xl border border-white/70 bg-white/90 p-4 shadow-card ring-1 ring-violet-50/80">
-            <div className="flex items-center justify-between">
-              <div className="text-sm font-semibold text-brand-ink">{activeBill.status}</div>
-              <div className="text-xs text-brand-inkMuted">{activeBill.billNo ?? '—'}</div>
-            </div>
-            <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-brand-ink">
-              <div>Subtotal: ₹ {activeBill.subtotal}</div>
-              <div>Total: ₹ {activeBill.total}</div>
-              <div>Discount: ₹ {activeBill.discount}</div>
-              <div>Tax: ₹ {activeBill.tax}</div>
-            </div>
-            <div className="mt-2 font-mono text-[11px] text-brand-inkMuted">ID: {activeBill._id}</div>
-            <div className="mt-3 grid grid-cols-2 gap-2">
-              <SecondaryButton
-                onClick={() => {
-                  setShowPayment(true);
-                }}
-              >
-                Add payment
-              </SecondaryButton>
-              <PrimaryButton
-                onClick={async () => {
-                  try {
-                    const issued = await apiPost<Bill>(ctx, `/bills/${activeBill._id}/issue`, {});
-                    setActiveBill(issued);
-                  } catch (e) {
-                    setBillErr(String(e));
-                  }
-                }}
-                disabled={activeBill.status !== 'DRAFT'}
-              >
-                Issue
-              </PrimaryButton>
-            </div>
-
-            <div className="mt-2">
-              <SecondaryButton
-                onClick={async () => {
-                  try {
-                    const pdf = await apiGet<PdfUrlResponse>(ctx, `/bills/${activeBill._id}/pdf`);
-                    window.open(pdf.url, '_blank', 'noopener,noreferrer');
-                  } catch (e) {
-                    setBillErr(String(e));
-                  }
-                }}
-              >
-                Download PDF
-              </SecondaryButton>
-            </div>
-          </div>
-        ) : null}
-      </Card>
-
-      {!canCall ? (
-        <div className="rounded-2xl border border-amber-200/80 bg-amber-50/90 p-4 text-sm font-medium text-amber-900">
-          Open Home: set clinic and sign in (JWT or dev user id).
-        </div>
-      ) : null}
-
-      {showCreateService ? (
-        <CreateServiceSheet
-          ctx={ctx}
-          onClose={() => setShowCreateService(false)}
-          onCreated={() => {
-            setShowCreateService(false);
-            void loadServices();
-          }}
-        />
-      ) : null}
-
-      {showCreateBill ? (
+      {showCreate && (
         <CreateBillSheet
-          ctx={ctx}
-          services={services}
-          onClose={() => setShowCreateBill(false)}
-          onCreated={(bill) => {
-            setShowCreateBill(false);
-            setActiveBillId(bill._id);
-            setActiveBill(bill);
-          }}
+          onClose={() => setShowCreate(false)}
+          onCreated={(b) => { setShowCreate(false); setSelected(b); void loadPending(); }}
         />
-      ) : null}
-
-      {showPayment && activeBill ? (
-        <AddPaymentSheet
-          ctx={ctx}
-          bill={activeBill}
-          onClose={() => setShowPayment(false)}
-          onAdded={async () => {
-            setShowPayment(false);
-            await loadBill(activeBill._id);
-          }}
-        />
-      ) : null}
-    </section>
+      )}
+    </div>
   );
 }
 
-function CreateServiceSheet({
-  ctx,
-  onClose,
-  onCreated,
-}: {
-  ctx: DevContext;
-  onClose: () => void;
-  onCreated: () => void;
-}) {
-  const [name, setName] = useState('');
-  const [price, setPrice] = useState('500');
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+function BillDetail({ bill, onClose, onChanged }: { bill: Bill; onClose: () => void; onChanged: (b: Bill) => void }) {
+  const { ctx } = useApp();
+  const toast = useToast();
+  const [payments, setPayments] = useState<Payment[] | null>(null);
+  const [showPay, setShowPay] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  async function loadPayments() {
+    try {
+      const data = await apiGet<Payment[]>(ctx, `/bills/${bill._id}/payments`);
+      setPayments(data);
+    } catch {
+      setPayments([]);
+    }
+  }
+
+  useEffect(() => { void loadPayments(); }, [bill._id]);
+
+  const paid = (payments ?? []).reduce((s, p) => s + (p.amount ?? 0), 0);
+  const balance = Math.max(0, bill.total - paid);
+  const isDraft = bill.status === 'DRAFT';
+  const isIssued = bill.status === 'ISSUED';
+
+  async function issue() {
+    setBusy(true);
+    try {
+      const updated = await apiPost<Bill>(ctx, `/bills/${bill._id}/issue`, {});
+      onChanged(updated);
+      toast(`Issued ${updated.billNo ?? ''}`, 'success');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Issue failed', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function downloadPdf() {
+    try {
+      const res = await apiGet<{ url: string }>(ctx, `/bills/${bill._id}/pdf`);
+      window.open(res.url, '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'PDF unavailable', 'error');
+    }
+  }
+
+  return (
+    <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflowY: 'auto', animation: 'slideInRight 240ms ease-out' }}>
+      <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 12 }}>
+        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 4 }}><Icon name="chevronLeft" size={18} /></button>
+        <div style={{ flex: 1 }}>
+          <div style={{ fontFamily: 'monospace', fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{bill.billNo ?? bill._id}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>{bill.patientId.slice(-12)} · {bill.currency}</div>
+        </div>
+        <StatusPill status={bill.status.toLowerCase()} />
+        {isDraft && <button onClick={issue} disabled={busy} style={{ height: 36, padding: '0 16px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: busy ? 'wait' : 'pointer' }}>Issue bill</button>}
+        {isIssued && balance > 0 && <button onClick={() => setShowPay(true)} style={{ height: 36, padding: '0 16px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Record payment</button>}
+        <button onClick={downloadPdf} title="PDF" style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 9, cursor: 'pointer', color: 'var(--text-muted)' }}>
+          <Icon name="download" size={14} />
+        </button>
+      </div>
+
+      <div style={{ padding: '20px 24px', display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr style={{ background: 'var(--surface-muted)' }}>
+                  {['Description', 'Qty', 'Rate', 'Amount'].map((h, i) => (
+                    <th key={h} style={{ padding: '10px 16px', textAlign: i >= 1 ? 'right' : 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {bill.items.map((item, i) => (
+                  <tr key={i} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text)' }}>{item.description ?? item.customName ?? '—'}</td>
+                    <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text-muted)', textAlign: 'right' }}>{item.quantity}</td>
+                    <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text-muted)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatINR(item.unitPrice)}</td>
+                    <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{formatINR(item.amount ?? item.quantity * item.unitPrice)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>Summary</div>
+            {([
+              ['Subtotal', formatINR(bill.subtotal)],
+              ['Discount', formatINR(bill.discount)],
+              ['Tax', formatINR(bill.tax)],
+              ['Total', formatINR(bill.total)],
+              ['Paid', formatINR(paid)],
+            ] as [string, string][]).map(([l, v], i) => (
+              <div key={l} style={{ display: 'flex', justifyContent: 'space-between', padding: i === 3 ? '10px 0 8px' : '4px 0', borderTop: i === 3 ? '1px solid var(--border)' : 'none' }}>
+                <span style={{ fontSize: 12, color: i === 3 ? 'var(--text)' : 'var(--text-muted)', fontWeight: i === 3 ? 700 : 400 }}>{l}</span>
+                <span style={{ fontSize: 12, color: i === 3 ? 'var(--text)' : 'var(--text-muted)', fontWeight: i === 3 ? 700 : 500, fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+              </div>
+            ))}
+            {balance > 0 ? (
+              <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0 0', borderTop: '1px solid var(--border)', marginTop: 4 }}>
+                <span style={{ fontSize: 13, color: 'var(--danger-500)', fontWeight: 700 }}>Balance due</span>
+                <span style={{ fontSize: 13, color: 'var(--danger-500)', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{formatINR(balance)}</span>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, padding: '8px', background: 'rgba(16,185,129,0.08)', borderRadius: 8 }}>
+                <Icon name="checkCircle" size={14} style={{ color: 'var(--success-500)' }} />
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--success-500)' }}>Fully paid</span>
+              </div>
+            )}
+          </div>
+
+          {payments && payments.length > 0 && (
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '14px 16px' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>Payments</div>
+              {payments.map((p) => (
+                <div key={p._id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 0', borderBottom: '1px solid var(--border)' }}>
+                  <div style={{ width: 28, height: 28, borderRadius: 8, background: 'rgba(16,185,129,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <Icon name="check" size={13} style={{ color: 'var(--success-500)' }} strokeWidth={2.5} />
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{formatINR(p.amount)}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{p.method} · {new Date(p.paidAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+
+      {showPay && (
+        <PaymentSheet bill={bill} balance={balance}
+          onClose={() => setShowPay(false)}
+          onSuccess={async () => { setShowPay(false); await loadPayments(); try { const fresh = await apiGet<Bill>(ctx, `/bills/${bill._id}`); onChanged(fresh); } catch {} }}
+        />
+      )}
+    </div>
+  );
+}
+
+function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balance: number; onClose: () => void; onSuccess: () => void }) {
+  const { ctx } = useApp();
+  const toast = useToast();
+  const [method, setMethod] = useState('UPI');
+  const [amount, setAmount] = useState(String(balance));
+  const [reference, setReference] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [idempotencyKey] = useState(() => crypto.randomUUID());
 
   async function submit() {
-    setSaving(true);
-    setErr(null);
+    if (!amount || isNaN(Number(amount))) { setError('Enter a valid amount'); return; }
+    setLoading(true); setError(null);
     try {
-      await apiPost(ctx, '/catalog/services', { name, defaultPrice: Number(price) });
-      onCreated();
+      await apiPost(ctx, `/bills/${bill._id}/payments`, {
+        method, amount: Number(amount), reference: reference.trim() || undefined, idempotencyKey,
+      });
+      toast(`Payment of ${formatINR(Number(amount))} recorded`, 'success');
+      onSuccess();
     } catch (e) {
-      setErr(String(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      setLoading(false);
     }
   }
 
   return (
-    <SheetFrame title="New service" onClose={onClose}>
-      <Field label="Service name" value={name} onChange={setName} placeholder="e.g. Consultation" />
-      <Field label="Default price" value={price} onChange={setPrice} placeholder="e.g. 500" />
-      {err ? <div className="text-xs font-medium text-rose-700">{err}</div> : null}
-      <div className="grid grid-cols-2 gap-2 pt-2">
-        <SecondaryButton onClick={onClose}>Cancel</SecondaryButton>
-        <PrimaryButton onClick={() => void submit()} disabled={saving || !name.trim()}>
-          {saving ? 'Saving…' : 'Create'}
-        </PrimaryButton>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', background: 'rgba(15,23,42,0.3)', backdropFilter: 'blur(2px)' }} onClick={onClose}>
+      <div style={{ width: 420, height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--border)', boxShadow: '-8px 0 32px rgba(15,23,42,0.12)', display: 'flex', flexDirection: 'column', animation: 'slideInRight 240ms ease-out' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>Record payment</div>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>{bill.billNo ?? bill._id.slice(-6)} · Balance {formatINR(balance)}</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}><Icon name="x" size={18} /></button>
+        </div>
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 18 }}>
+          <div>
+            <label style={labelStyle}>Method</label>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {PAYMENT_METHODS.map((m) => (
+                <button key={m.id} onClick={() => setMethod(m.id)}
+                  style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', border: `1.5px solid ${method === m.id ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 10, background: method === m.id ? 'var(--brand-50)' : 'var(--surface-muted)', color: method === m.id ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                  <Icon name={m.icon} size={13} />
+                  {m.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Amount <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>(₹)</span></label>
+            <div style={{ position: 'relative' }}>
+              <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 18, color: 'var(--text-muted)', fontFamily: "'Manrope',sans-serif", fontWeight: 700 }}>₹</span>
+              <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
+                style={{ width: '100%', height: 52, padding: '0 14px 0 34px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 12, fontSize: 22, fontWeight: 700, color: 'var(--text)', fontFamily: "'Manrope',sans-serif", outline: 'none', boxSizing: 'border-box', fontVariantNumeric: 'tabular-nums' }} />
+            </div>
+            <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+              {[balance, Math.round(balance / 2), 500, 1000].filter((v, i, a) => v > 0 && a.indexOf(v) === i).slice(0, 4).map((v) => (
+                <button key={v} onClick={() => setAmount(String(v))}
+                  style={{ padding: '4px 10px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-muted)', fontSize: 11, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer', fontVariantNumeric: 'tabular-nums' }}>
+                  {formatINR(v)}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label style={labelStyle}>Reference / transaction ID <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>(optional)</span></label>
+            <input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="UPI ref, cheque no."
+              style={{ width: '100%', height: 40, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' }} />
+          </div>
+
+          <div style={{ background: 'var(--surface-muted)', borderRadius: 12, padding: '12px 14px', border: '1px solid var(--border)', fontSize: 11, color: 'var(--text-subtle)' }}>
+            Idempotency key: <code style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>{idempotencyKey.slice(0, 8)}…</code>
+          </div>
+
+          {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
+        </div>
+
+        <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
+          <button onClick={submit} disabled={loading || !amount || Number(amount) <= 0}
+            style={{ width: '100%', height: 46, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: loading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: loading ? 0.8 : 1 }}>
+            {loading ? <Spinner /> : <><Icon name="check" size={16} strokeWidth={2.5} />Record {formatINR(Number(amount) || 0)}</>}
+          </button>
+        </div>
       </div>
-    </SheetFrame>
+    </div>
   );
 }
 
-function CreateBillSheet({
-  ctx,
-  services,
-  onClose,
-  onCreated,
-}: {
-  ctx: DevContext;
-  services: Service[];
-  onClose: () => void;
-  onCreated: (bill: Bill) => void;
-}) {
-  const [branchId, setBranchId] = useState(ctx.branchId ?? '');
+function CreateBillSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (b: Bill) => void }) {
+  const { ctx } = useApp();
+  const toast = useToast();
+  const [services, setServices] = useState<Service[]>([]);
   const [patientId, setPatientId] = useState('');
-  const [serviceId, setServiceId] = useState(services[0]?._id ?? '');
-  const [qty, setQty] = useState('1');
-  const [unitPrice, setUnitPrice] = useState(String(services[0]?.defaultPrice ?? 500));
+  const [items, setItems] = useState<{ name: string; serviceId?: string; qty: number; price: number }[]>([
+    { name: 'Consultation', qty: 1, price: 500 },
+  ]);
   const [discount, setDiscount] = useState('0');
   const [tax, setTax] = useState('0');
   const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    apiGet<Service[]>(ctx, '/catalog/services').then(setServices).catch(() => setServices([]));
+  }, [ctx]);
+
+  const subtotal = items.reduce((s, i) => s + i.qty * i.price, 0);
+  const total = Math.max(0, subtotal - Number(discount || 0) + Number(tax || 0));
+
+  function addItem() {
+    setItems((rows) => [...rows, { name: '', qty: 1, price: 0 }]);
+  }
+  function updateItem(i: number, patch: Partial<typeof items[number]>) {
+    setItems((rows) => rows.map((r, idx) => idx === i ? { ...r, ...patch } : r));
+  }
+  function removeItem(i: number) {
+    setItems((rows) => rows.filter((_, idx) => idx !== i));
+  }
+  function pickService(i: number, serviceId: string) {
     const s = services.find((x) => x._id === serviceId);
-    if (s) setUnitPrice(String(s.defaultPrice));
-  }, [serviceId, services]);
+    if (s) updateItem(i, { name: s.name, serviceId: s._id, price: s.defaultPrice });
+  }
 
   async function submit() {
-    setSaving(true);
-    setErr(null);
+    if (!ctx.branchId) { setError('Set a branch ID (sign in to a branch).'); return; }
+    if (!patientId.trim()) { setError('Patient ID is required.'); return; }
+    if (items.length === 0 || items.some((i) => !i.name.trim() || i.qty <= 0)) {
+      setError('All items need a name and a quantity > 0.');
+      return;
+    }
+    setSaving(true); setError(null);
     try {
-      const bill = await apiPost<Bill>(ctx, '/bills', {
-        branchId,
-        patientId,
+      const body = {
+        branchId: ctx.branchId,
+        patientId: patientId.trim(),
         currency: 'INR',
-        items: [
-          {
-            serviceCatalogItemId: serviceId || undefined,
-            customName: serviceId ? undefined : 'Custom service',
-            quantity: Number(qty),
-            unitPrice: Number(unitPrice),
-          },
-        ],
-        discount: Number(discount),
-        tax: Number(tax),
-      });
-      onCreated(bill);
+        items: items.map((i) => ({
+          serviceCatalogItemId: i.serviceId,
+          customName: i.serviceId ? undefined : i.name,
+          quantity: i.qty,
+          unitPrice: i.price,
+        })),
+        discount: Number(discount || 0),
+        tax: Number(tax || 0),
+      };
+      const created = await apiPost<Bill>(ctx, '/bills', body);
+      toast('Draft bill created', 'success');
+      onCreated(created);
     } catch (e) {
-      setErr(String(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
   }
 
   return (
-    <SheetFrame title="New bill" onClose={onClose}>
-      <Field label="Branch ID" value={branchId} onChange={setBranchId} />
-      <Field label="Patient ID" value={patientId} onChange={setPatientId} />
-
-      <label className="block">
-        <div className="text-xs font-semibold uppercase tracking-wide text-brand-inkMuted/90">Service</div>
-        <select
-          value={serviceId}
-          onChange={(e) => setServiceId(e.target.value)}
-          className={['mt-1.5', inputSurfaceClass].join(' ')}
-        >
-          {services.map((s) => (
-            <option key={s._id} value={s._id}>
-              {s.name}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Qty" value={qty} onChange={setQty} />
-        <Field label="Unit price" value={unitPrice} onChange={setUnitPrice} />
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="Discount" value={discount} onChange={setDiscount} />
-        <Field label="Tax" value={tax} onChange={setTax} />
-      </div>
-
-      {err ? <div className="text-xs font-medium text-rose-700">{err}</div> : null}
-      <div className="grid grid-cols-2 gap-2 pt-2">
-        <SecondaryButton onClick={onClose}>Cancel</SecondaryButton>
-        <PrimaryButton
-          onClick={() => void submit()}
-          disabled={saving || !branchId.trim() || !patientId.trim() || !serviceId.trim()}
-        >
-          {saving ? 'Saving…' : 'Create draft'}
-        </PrimaryButton>
-      </div>
-    </SheetFrame>
-  );
-}
-
-function AddPaymentSheet({
-  ctx,
-  bill,
-  onClose,
-  onAdded,
-}: {
-  ctx: DevContext;
-  bill: Bill;
-  onClose: () => void;
-  onAdded: () => void;
-}) {
-  const [method, setMethod] = useState('CASH');
-  const [amount, setAmount] = useState(String(bill.total));
-  const [saving, setSaving] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-  const [payments, setPayments] = useState<Payment[] | null>(null);
-  const [idempotencyKey] = useState(() => crypto.randomUUID());
-
-  useEffect(() => {
-    apiGet<Payment[]>(ctx, `/bills/${bill._id}/payments`)
-      .then(setPayments)
-      .catch(() => setPayments(null));
-  }, [bill._id, ctx]);
-
-  async function submit() {
-    setSaving(true);
-    setErr(null);
-    try {
-      await apiPost(ctx, `/bills/${bill._id}/payments`, {
-        method,
-        amount: Number(amount),
-        idempotencyKey,
-      });
-      onAdded();
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <SheetFrame title="Add payment" onClose={onClose}>
-      <label className="block">
-        <div className="text-xs font-semibold uppercase tracking-wide text-brand-inkMuted/90">Method</div>
-        <select
-          value={method}
-          onChange={(e) => setMethod(e.target.value)}
-          className={['mt-1.5', inputSurfaceClass].join(' ')}
-        >
-          {['CASH', 'UPI', 'CARD', 'ONLINE', 'BANK_TRANSFER'].map((m) => (
-            <option key={m} value={m}>
-              {m}
-            </option>
-          ))}
-        </select>
-      </label>
-      <Field label="Amount" value={amount} onChange={setAmount} />
-      {err ? <div className="text-xs font-medium text-rose-700">{err}</div> : null}
-      <div className="grid grid-cols-2 gap-2 pt-2">
-        <SecondaryButton onClick={onClose}>Cancel</SecondaryButton>
-        <PrimaryButton onClick={() => void submit()} disabled={saving || bill.status !== 'ISSUED'}>
-          {saving ? 'Saving…' : 'Add'}
-        </PrimaryButton>
-      </div>
-      {bill.status !== 'ISSUED' ? (
-        <div className="mt-2 text-xs text-amber-700">Issue the bill before adding payments.</div>
-      ) : null}
-      {payments ? (
-        <div className="mt-4 space-y-2">
-          <div className="text-xs font-semibold text-brand-ink">Recent payments</div>
-          {payments.slice(0, 5).map((p) => (
-            <ListRow key={p._id}>
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-xs text-brand-inkMuted">{p.method}</div>
-                <div className="text-xs font-semibold text-brand-ink">₹ {p.amount}</div>
-              </div>
-            </ListRow>
-          ))}
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+      <div style={{ background: 'var(--surface)', borderRadius: 18, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 640, maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>New bill</div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}><Icon name="x" size={18} /></button>
         </div>
-      ) : null}
-    </SheetFrame>
+
+        <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
+          <Field label="Patient ID" value={patientId} onChange={setPatientId} placeholder="ObjectId" />
+
+          <div>
+            <label style={labelStyle}>Items</label>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {items.map((it, i) => (
+                <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                  {services.length > 0 ? (
+                    <select value={it.serviceId ?? ''} onChange={(e) => e.target.value ? pickService(i, e.target.value) : updateItem(i, { serviceId: undefined })}
+                      style={{ flex: 2, height: 36, padding: '0 10px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 12, color: 'var(--text)', outline: 'none', cursor: 'pointer' }}>
+                      <option value="">— Custom —</option>
+                      {services.map((s) => <option key={s._id} value={s._id}>{s.name} (₹{s.defaultPrice})</option>)}
+                    </select>
+                  ) : null}
+                  <input value={it.name} onChange={(e) => updateItem(i, { name: e.target.value, serviceId: undefined })} placeholder="Description"
+                    style={{ flex: 3, height: 36, padding: '0 10px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 12, color: 'var(--text)', outline: 'none' }} />
+                  <input type="number" value={it.qty} onChange={(e) => updateItem(i, { qty: Number(e.target.value) || 1 })} placeholder="Qty"
+                    style={{ width: 60, height: 36, padding: '0 10px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 12, color: 'var(--text)', outline: 'none', textAlign: 'right' }} />
+                  <input type="number" value={it.price} onChange={(e) => updateItem(i, { price: Number(e.target.value) || 0 })} placeholder="Price"
+                    style={{ width: 90, height: 36, padding: '0 10px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 12, color: 'var(--text)', outline: 'none', textAlign: 'right' }} />
+                  <button onClick={() => removeItem(i)} disabled={items.length === 1}
+                    style={{ width: 36, height: 36, background: 'none', border: '1px solid var(--border)', borderRadius: 9, cursor: items.length === 1 ? 'not-allowed' : 'pointer', color: 'var(--danger-500)', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: items.length === 1 ? 0.4 : 1 }}>
+                    <Icon name="trash" size={14} />
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button onClick={addItem}
+              style={{ marginTop: 8, padding: '6px 12px', border: '1.5px dashed var(--border)', borderRadius: 9, background: 'none', color: 'var(--text-muted)', fontSize: 12, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Icon name="plus" size={12} strokeWidth={2.5} /> Add item
+            </button>
+          </div>
+
+          <div style={{ display: 'flex', gap: 8 }}>
+            <div style={{ flex: 1 }}><Field label="Discount" value={discount} onChange={setDiscount} /></div>
+            <div style={{ flex: 1 }}><Field label="Tax" value={tax} onChange={setTax} /></div>
+          </div>
+
+          <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-muted)', marginBottom: 4 }}><span>Subtotal</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatINR(subtotal)}</span></div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, color: 'var(--text)', marginTop: 6, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
+              <span>Total</span><span style={{ fontVariantNumeric: 'tabular-nums' }}>{formatINR(total)}</span>
+            </div>
+          </div>
+
+          {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
+        </div>
+
+        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', gap: 10 }}>
+          <button onClick={onClose} style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
+          <button onClick={submit} disabled={saving}
+            style={{ flex: 2, height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: saving ? 'wait' : 'pointer' }}>
+            {saving ? 'Saving…' : 'Create draft bill'}
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
-

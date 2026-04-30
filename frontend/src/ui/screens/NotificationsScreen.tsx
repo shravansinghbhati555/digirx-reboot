@@ -1,0 +1,300 @@
+import { useEffect, useState } from 'react';
+import { apiGet, apiPost } from '../../app/api';
+import { useApp } from '../../app/AppContext';
+import { EmptyState, Field, formatDateTime, labelStyle, useToast } from '../shared/primitives';
+import { Icon, type IconName } from '../shared/Icon';
+
+type NotifLog = {
+  _id: string;
+  channel: 'EMAIL' | 'SMS' | 'WHATSAPP' | string;
+  to: string;
+  body: string;
+  status: 'QUEUED' | 'SENT' | 'FAILED' | 'PENDING' | string;
+  attempts?: number;
+  sentAt?: string;
+  createdAt?: string;
+  templateKey?: string;
+};
+
+type Template = {
+  _id?: string;
+  channel: string;
+  key: string;
+  body: string;
+  active?: boolean;
+};
+
+const CHANNELS: Record<string, { label: string; color: string; bg: string; icon: IconName }> = {
+  EMAIL:    { label: 'Email',    color: '#3B82F6', bg: 'rgba(59,130,246,0.1)', icon: 'mail' },
+  SMS:      { label: 'SMS',      color: '#8B5CF6', bg: 'rgba(139,92,246,0.1)', icon: 'smartphone' },
+  WHATSAPP: { label: 'WhatsApp', color: '#10B981', bg: 'rgba(16,185,129,0.1)', icon: 'send' },
+};
+
+const NOTIF_STATUS_COLORS: Record<string, string> = {
+  SENT: 'var(--success-500)',
+  FAILED: 'var(--danger-500)',
+  PENDING: 'var(--warning-500)',
+  QUEUED: 'var(--text-subtle)',
+};
+
+const SAMPLE = {
+  patientName: 'Anjali Mehta',
+  doctorName: 'Dr. S. Verma',
+  appointmentTime: '10:00 AM',
+  clinicName: 'Apollo Health Centre',
+  branchName: 'Bandra West',
+  prescriptionUrl: 'digirx.in/rx/abc123',
+  billNo: 'AHC-2026-0846',
+  billAmount: '₹2,450',
+  followUpDate: '10 May 2026',
+};
+const TOKENS = Object.keys(SAMPLE);
+function renderPreview(body: string) {
+  return body.replace(/\{\{(\w+)\}\}/g, (_, k: string) => (SAMPLE as Record<string, string>)[k] ?? `{{${k}}}`);
+}
+
+export function NotificationsScreen() {
+  const [tab, setTab] = useState<'logs' | 'templates'>('logs');
+
+  return (
+    <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+      <div>
+        <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>Notifications</h1>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>SMS · WhatsApp · Email — delivery logs and templates.</p>
+      </div>
+
+      <div style={{ display: 'flex', gap: 0, borderBottom: '1px solid var(--border)' }}>
+        {([{ id: 'logs', label: 'Logs' }, { id: 'templates', label: 'Templates' }] as const).map((t) => (
+          <button key={t.id} onClick={() => setTab(t.id)}
+            style={{ padding: '8px 20px', background: 'none', border: 'none', borderBottom: tab === t.id ? '2px solid var(--brand-500)' : '2px solid transparent', color: tab === t.id ? 'var(--brand-500)' : 'var(--text-muted)', fontSize: 13, fontWeight: tab === t.id ? 600 : 400, cursor: 'pointer', marginBottom: '-1px' }}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      <div key={tab} style={{ animation: 'slideUp 180ms ease-out' }}>
+        {tab === 'logs' && <LogsTab />}
+        {tab === 'templates' && <TemplatesTab />}
+      </div>
+    </div>
+  );
+}
+
+function LogsTab() {
+  const { ctx } = useApp();
+  const [logs, setLogs] = useState<NotifLog[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState<'all' | 'sent' | 'failed' | 'pending' | 'queued'>('all');
+  const [expanded, setExpanded] = useState<string | null>(null);
+
+  useEffect(() => {
+    apiGet<NotifLog[]>(ctx, '/notifications/logs?limit=100')
+      .then(setLogs)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
+  }, [ctx]);
+
+  const filtered = logs?.filter((l) => filter === 'all' || (l.status || '').toLowerCase() === filter) ?? null;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 10, padding: 3, border: '1px solid var(--border)', alignSelf: 'flex-start' }}>
+        {(['all', 'sent', 'failed', 'pending', 'queued'] as const).map((f) => (
+          <button key={f} onClick={() => setFilter(f)}
+            style={{ padding: '5px 14px', borderRadius: 8, border: 'none', background: filter === f ? 'var(--surface)' : 'transparent', color: filter === f ? 'var(--text)' : 'var(--text-muted)', fontSize: 12, fontWeight: filter === f ? 600 : 400, cursor: 'pointer', textTransform: 'capitalize' }}>
+            {f}
+          </button>
+        ))}
+      </div>
+
+      {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
+
+      {!logs && !error && <div style={{ padding: 24, color: 'var(--text-subtle)', fontSize: 13 }}>Loading…</div>}
+
+      {filtered && filtered.length === 0 && <EmptyState icon="bell" title="No notifications yet" hint="Reminders are queued by the scheduler 24h and 2h before appointments." />}
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+        {filtered?.map((log) => {
+          const channel = CHANNELS[(log.channel || '').toUpperCase()] ?? { label: log.channel, color: 'var(--text-subtle)', bg: 'var(--surface-muted)', icon: 'bell' as IconName };
+          const statusUp = (log.status || '').toUpperCase();
+          const statusColor = NOTIF_STATUS_COLORS[statusUp] ?? 'var(--text-subtle)';
+          const isExp = expanded === log._id;
+          return (
+            <div key={log._id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', cursor: 'pointer' }}
+              onClick={() => setExpanded(isExp ? null : log._id)}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px' }}>
+                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 100, background: channel.bg, color: channel.color, fontSize: 11, fontWeight: 700 }}>
+                  <Icon name={channel.icon} size={11} /> {channel.label}
+                </span>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{log.to}</div>
+                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {log.templateKey ?? '—'}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, fontWeight: 600, color: statusColor, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Icon name={statusUp === 'SENT' ? 'checkCircle' : statusUp === 'FAILED' ? 'xCircle' : 'clock'} size={12} strokeWidth={2} />
+                    {statusUp}
+                  </span>
+                  {(log.attempts ?? 0) > 1 && <span style={{ fontSize: 10, color: 'var(--text-subtle)', background: 'var(--surface-muted)', padding: '1px 6px', borderRadius: 6, border: '1px solid var(--border)' }}>{log.attempts} attempts</span>}
+                  <span style={{ fontSize: 11, color: 'var(--text-subtle)', minWidth: 130, textAlign: 'right' }}>{formatDateTime(log.sentAt ?? log.createdAt)}</span>
+                  <Icon name={isExp ? 'chevronUp' : 'chevronDown'} size={14} style={{ color: 'var(--text-subtle)' }} />
+                </div>
+              </div>
+              {isExp && (
+                <div style={{ padding: '12px 16px 14px', borderTop: '1px solid var(--border)' }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Body</div>
+                  <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6, background: 'var(--surface-muted)', padding: '10px 14px', borderRadius: 9, border: '1px solid var(--border)', whiteSpace: 'pre-wrap' }}>{log.body}</div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function TemplatesTab() {
+  const { ctx } = useApp();
+  const toast = useToast();
+  const [templates, setTemplates] = useState<Template[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [selected, setSelected] = useState<Template | null>(null);
+  const [body, setBody] = useState('');
+  const [key, setKey] = useState('');
+  const [channel, setChannel] = useState<'SMS' | 'EMAIL' | 'WHATSAPP'>('SMS');
+  const [active, setActive] = useState(true);
+  const [saving, setSaving] = useState(false);
+
+  async function reload() {
+    try {
+      const t = await apiGet<Template[]>(ctx, '/notifications/templates');
+      setTemplates(t);
+      if (!selected && t.length > 0) {
+        setSelected(t[0]);
+        setBody(t[0].body);
+        setKey(t[0].key);
+        setChannel(t[0].channel as 'SMS' | 'EMAIL' | 'WHATSAPP');
+        setActive(t[0].active ?? true);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  useEffect(() => { void reload(); }, []);
+
+  function pick(t: Template) {
+    setSelected(t); setBody(t.body); setKey(t.key); setChannel(t.channel as 'SMS' | 'EMAIL' | 'WHATSAPP'); setActive(t.active ?? true);
+  }
+
+  function newTemplate() {
+    setSelected({ channel: 'SMS', key: '', body: '', active: true });
+    setBody(''); setKey(''); setChannel('SMS'); setActive(true);
+  }
+
+  async function save() {
+    if (!key.trim() || !body.trim()) { setError('Key and body required.'); return; }
+    setSaving(true); setError(null);
+    try {
+      await apiPost(ctx, '/notifications/templates', { channel, key: key.trim(), body, active });
+      toast('Template saved', 'success');
+      await reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  function insertToken(tok: string) {
+    setBody((b) => b + `{{${tok}}}`);
+  }
+
+  return (
+    <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+      <div style={{ width: 240, flexShrink: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+        <div style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>{templates?.length ?? 0} templates</span>
+          <button onClick={newTemplate}
+            style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '4px 10px', fontSize: 11, fontWeight: 600, color: 'var(--brand-500)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4 }}>
+            <Icon name="plus" size={11} strokeWidth={2.5} /> New
+          </button>
+        </div>
+        {!templates && <div style={{ padding: 16, fontSize: 12, color: 'var(--text-subtle)' }}>Loading…</div>}
+        {templates?.map((t) => (
+          <div key={`${t.channel}-${t.key}`} onClick={() => pick(t)}
+            style={{ padding: '12px 16px', cursor: 'pointer', borderBottom: '1px solid var(--border)', background: selected?.key === t.key && selected?.channel === t.channel ? 'var(--brand-50)' : 'transparent', borderLeft: selected?.key === t.key ? '3px solid var(--brand-500)' : '3px solid transparent' }}>
+            <div style={{ fontSize: 12, fontWeight: 600, color: selected?.key === t.key ? 'var(--brand-700)' : 'var(--text)', marginBottom: 4 }}>{t.key}</div>
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 100, background: 'var(--surface-muted)', color: 'var(--text-muted)', fontSize: 10, fontWeight: 700 }}>{t.channel}</span>
+          </div>
+        ))}
+      </div>
+
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
+        {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
+
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16 }}>
+          <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+            <div style={{ flex: 1 }}>
+              <label style={labelStyle}>Channel</label>
+              <select value={channel} onChange={(e) => setChannel(e.target.value as 'SMS' | 'EMAIL' | 'WHATSAPP')}
+                style={{ width: '100%', height: 38, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none', cursor: 'pointer' }}>
+                <option value="SMS">SMS</option>
+                <option value="EMAIL">Email</option>
+                <option value="WHATSAPP">WhatsApp</option>
+              </select>
+            </div>
+            <div style={{ flex: 2 }}>
+              <Field label="Key" value={key} onChange={setKey} placeholder="appointment_reminder_120m" />
+            </div>
+          </div>
+
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+            {TOKENS.map((tok) => (
+              <button key={tok} onClick={() => insertToken(tok)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '3px 10px', border: '1px solid var(--border)', borderRadius: 100, background: 'var(--surface-muted)', color: 'var(--brand-600)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                <Icon name="plus" size={9} strokeWidth={3} />{`{{${tok}}}`}
+              </button>
+            ))}
+          </div>
+
+          <textarea value={body} onChange={(e) => setBody(e.target.value)} rows={5}
+            placeholder="Reminder: appointment at {{appointmentTime}}"
+            style={{ width: '100%', padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box', lineHeight: 1.6 }} />
+
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginTop: 10 }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12, color: 'var(--text-muted)', cursor: 'pointer' }}>
+              <input type="checkbox" checked={active} onChange={(e) => setActive(e.target.checked)} />
+              Active
+            </label>
+            <button onClick={save} disabled={saving}
+              style={{ height: 36, padding: '0 20px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: saving ? 'wait' : 'pointer' }}>
+              {saving ? 'Saving…' : 'Save template'}
+            </button>
+          </div>
+        </div>
+
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Live preview</div>
+            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Sample patient: {SAMPLE.patientName}</span>
+          </div>
+          <div style={{ background: 'var(--surface-muted)', borderRadius: 12, padding: '14px 16px', border: '1px solid var(--border)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10, paddingBottom: 10, borderBottom: '1px solid var(--border)' }}>
+              <div style={{ width: 32, height: 32, borderRadius: '50%', background: 'var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="cross" size={14} style={{ color: 'var(--brand-500)' }} strokeWidth={2.5} />
+              </div>
+              <div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>DigiRx</div>
+                <div style={{ fontSize: 10, color: 'var(--text-subtle)' }}>{channel} preview</div>
+              </div>
+            </div>
+            <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>{renderPreview(body) || <span style={{ color: 'var(--text-subtle)' }}>Type a body above to see the preview…</span>}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}

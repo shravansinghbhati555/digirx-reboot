@@ -1,32 +1,97 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap');
 
-@layer base {
-  :root {
-    color-scheme: light;
-  }
-
-  html,
-  body,
-  #app {
-    height: 100%;
-  }
-
-  body {
-    @apply min-h-full text-brand-ink antialiased;
-    background-color: #faf5ff;
-    background-image: theme(backgroundImage.mesh-pastel);
-    background-attachment: fixed;
-  }
+:root {
+  --bg:             #FAFBFC;
+  --surface:        #FFFFFF;
+  --surface-muted:  #F4F6F8;
+  --border:         #E5E9EF;
+  --border-strong:  #CBD2DB;
+  --text:           #0F172A;
+  --text-muted:     #5A6473;
+  --text-subtle:    #8993A4;
+  --brand-50:       #EEF6FF;
+  --brand-100:      #DCEBFF;
+  --brand-500:      #3B82F6;
+  --brand-600:      #2563EB;
+  --brand-700:      #1D4ED8;
+  --accent-500:     #14B8A6;
+  --success-500:    #10B981;
+  --warning-500:    #F59E0B;
+  --danger-500:     #EF4444;
+  --info-500:       #6366F1;
+  --e1: 0 1px 2px rgba(15,23,42,0.04);
+  --e2: 0 4px 12px rgba(15,23,42,0.06);
+  --e3: 0 12px 32px rgba(15,23,42,0.10);
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 24px;
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 320ms;
+  --ease-out: cubic-bezier(.2,.8,.2,1);
+  --ease-inout: cubic-bezier(.4,0,.2,1);
 }
 
-@layer utilities {
-  .tap-scale {
-    @apply motion-safe:transition-transform motion-safe:duration-150 motion-safe:active:scale-[0.97];
-  }
-
-  .screen-enter {
-    @apply motion-safe:animate-fade-up;
-  }
+[data-theme="dark"] {
+  --bg:            #0B0F17;
+  --surface:       #121826;
+  --surface-muted: #1A2233;
+  --border:        #232B3D;
+  --border-strong: #2E3A50;
+  --text:          #E6EBF2;
+  --text-muted:    #97A2B5;
+  --text-subtle:   #5A6880;
+  --brand-50:      #0D1B33;
+  --brand-100:     #1A2E4A;
 }
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html, body, #app { height: 100%; }
+body {
+  font-family: 'Inter', system-ui, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background var(--dur-slow) var(--ease-inout), color var(--dur-slow) var(--ease-inout);
+}
+
+button { font-family: inherit; }
+input, select, textarea { font-family: inherit; }
+
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(16px); }
+  to   { opacity: 1; transform: translateX(0); }
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+@keyframes shake {
+  0%, 100% { transform: translateX(0); }
+  20%       { transform: translateX(-3px); }
+  40%       { transform: translateX(3px); }
+  60%       { transform: translateX(-3px); }
+  80%       { transform: translateX(3px); }
+}
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+@keyframes checkDraw {
+  from { stroke-dashoffset: 24; }
+  to   { stroke-dashoffset: 0; }
+}
+@keyframes toastIn {
+  from { opacity: 0; transform: translateY(-8px) translateX(-50%); }
+  to   { opacity: 1; transform: translateY(0) translateX(-50%); }
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 2px solid var(--bg); }
+::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }

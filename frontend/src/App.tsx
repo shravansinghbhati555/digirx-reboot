@@ -1,28 +1,43 @@
-import { useMemo, useState } from 'react';
-import { loadContext } from './app/context';
-import { MobileShell, type TabKey } from './ui/MobileShell';
-import { HomeScreen } from './ui/screens/HomeScreen';
-import { MeScreen } from './ui/screens/MeScreen';
+import { AppProvider, useApp } from './app/AppContext';
+import { ToastProvider } from './ui/shared/primitives';
+import { AppShell } from './ui/AppShell';
+import { LoginScreen } from './ui/screens/LoginScreen';
+import { DashboardScreen } from './ui/screens/DashboardScreen';
 import { PatientsScreen } from './ui/screens/PatientsScreen';
 import { AppointmentsScreen } from './ui/screens/AppointmentsScreen';
+import { EncounterScreen } from './ui/screens/EncounterScreen';
 import { BillingScreen } from './ui/screens/BillingScreen';
+import { DocumentsScreen } from './ui/screens/DocumentsScreen';
 import { ReportsScreen } from './ui/screens/ReportsScreen';
+import { NotificationsScreen } from './ui/screens/NotificationsScreen';
+import { SettingsScreen } from './ui/screens/SettingsScreen';
 
-export function App() {
-  const initial = useMemo(() => loadContext(), []);
-  const [ctx, setCtx] = useState(initial);
-  const [tab, setTab] = useState<TabKey>('home');
+function Router() {
+  const { loggedIn, screen } = useApp();
+
+  if (!loggedIn) return <LoginScreen />;
 
   return (
-    <MobileShell active={tab} onChange={setTab}>
-      {tab === 'home' ? <HomeScreen ctx={ctx} onChange={setCtx} /> : null}
-      {tab === 'me' ? <MeScreen ctx={ctx} /> : null}
-
-      {tab === 'patients' ? <PatientsScreen ctx={ctx} /> : null}
-      {tab === 'appointments' ? <AppointmentsScreen ctx={ctx} /> : null}
-      {tab === 'billing' ? <BillingScreen ctx={ctx} /> : null}
-      {tab === 'reports' ? <ReportsScreen ctx={ctx} /> : null}
-    </MobileShell>
+    <AppShell>
+      {screen === 'dashboard' && <DashboardScreen />}
+      {screen === 'patients' && <PatientsScreen />}
+      {screen === 'appointments' && <AppointmentsScreen />}
+      {screen === 'encounters' && <EncounterScreen />}
+      {screen === 'billing' && <BillingScreen />}
+      {screen === 'documents' && <DocumentsScreen />}
+      {screen === 'reports' && <ReportsScreen />}
+      {screen === 'notifications' && <NotificationsScreen />}
+      {screen === 'settings' && <SettingsScreen />}
+    </AppShell>
   );
 }
 
+export function App() {
+  return (
+    <AppProvider>
+      <ToastProvider>
+        <Router />
+      </ToastProvider>
+    </AppProvider>
+  );
+}

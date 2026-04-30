@@ -1,0 +1,479 @@
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { apiGet, apiPatch, apiPost } from '../../app/api';
+import { useApp } from '../../app/AppContext';
+import { Avatar, Field, Spinner, StatusPill, useToast } from '../shared/primitives';
+import { Icon, type IconName } from '../shared/Icon';
+
+type Encounter = {
+  _id: string;
+  patientId: string;
+  doctorId: string;
+  branchId: string;
+  status: 'DRAFT' | 'SIGNED';
+  chiefComplaint?: string;
+  notes?: string;
+  diagnosis?: string;
+  vitals?: Record<string, string>;
+  followUpAt?: string;
+  visitedAt: string;
+};
+
+type Patient = { _id: string; fullName: string; gender?: string; dob?: string; phones?: string[]; tags?: string[] };
+
+type RxItem = { id: number; med: string; dose: string; freq: string; dur: string; note: string };
+
+const VITAL_FIELDS: { key: string; label: string; unit: string }[] = [
+  { key: 'bp',     label: 'BP',     unit: 'mmHg' },
+  { key: 'spo2',   label: 'SpO2',   unit: '%' },
+  { key: 'temp',   label: 'Temp',   unit: '°F' },
+  { key: 'pulse',  label: 'Pulse',  unit: 'bpm' },
+  { key: 'rr',     label: 'RR',     unit: '/min' },
+  { key: 'weight', label: 'Weight', unit: 'kg' },
+];
+
+export function EncounterScreen() {
+  const { ctx, selectedAppointmentId, setSelectedAppointmentId, setScreen } = useApp();
+  const [patientId, setPatientId] = useState('');
+  const [doctorId, setDoctorId] = useState(ctx.userId);
+  const [encounterId, setEncounterId] = useState<string | undefined>();
+  const [encounter, setEncounter] = useState<Encounter | null>(null);
+  const [patient, setPatient] = useState<Patient | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+
+  // If we arrived from an appointment, pre-load the appointment to get patient/doctor
+  useEffect(() => {
+    if (!selectedAppointmentId) return;
+    apiGet<{ patientId: string; doctorId: string }>(ctx, `/appointments/${selectedAppointmentId}`)
+      .then((appt) => {
+        setPatientId(appt.patientId);
+        setDoctorId(appt.doctorId);
+      })
+      .catch(() => undefined);
+  }, [selectedAppointmentId, ctx]);
+
+  useEffect(() => {
+    if (!patientId.trim()) { setPatient(null); return; }
+    apiGet<Patient>(ctx, `/patients/${patientId.trim()}`).then(setPatient).catch(() => setPatient(null));
+  }, [patientId, ctx]);
+
+  async function loadEncounter(id: string) {
+    setError(null);
+    try {
+      const enc = await apiGet<Encounter>(ctx, `/encounters/${id}`);
+      setEncounter(enc);
+      setEncounterId(enc._id);
+      setPatientId(enc.patientId);
+      setDoctorId(enc.doctorId);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function startEncounter() {
+    if (!ctx.branchId) { setError('Sign in to a branch first.'); return; }
+    if (!patientId.trim() || !doctorId.trim()) { setError('Patient and doctor are required.'); return; }
+    setCreating(true);
+    setError(null);
+    try {
+      const created = await apiPost<Encounter>(ctx, '/encounters', {
+        branchId: ctx.branchId,
+        doctorId: doctorId.trim(),
+        patientId: patientId.trim(),
+        appointmentId: selectedAppointmentId || undefined,
+        visitedAt: new Date().toISOString(),
+      });
+      setEncounter(created);
+      setEncounterId(created._id);
+      setSelectedAppointmentId(undefined);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  if (!encounter) {
+    return (
+      <div style={{ padding: '32px 32px', maxWidth: 720, margin: '0 auto' }}>
+        <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>Encounter</h1>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Start a new encounter or load one by ID.</p>
+
+        <div style={{ marginTop: 24, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+          <Field label="Patient ID" value={patientId} onChange={setPatientId} placeholder="ObjectId" />
+          {patient && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>→ {patient.fullName}</div>}
+          <Field label="Doctor user ID" value={doctorId} onChange={setDoctorId} placeholder="ObjectId" />
+          {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={startEncounter} disabled={creating}
+              style={{ flex: 1, height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: creating ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              {creating ? <Spinner /> : <><Icon name="plus" size={14} strokeWidth={2.5} /> Start encounter</>}
+            </button>
+            <button onClick={() => setScreen('appointments')}
+              style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
+              Back to Appointments
+            </button>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 24, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 10 }}>Load existing encounter</div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input value={encounterId ?? ''} onChange={(e) => setEncounterId(e.target.value)} placeholder="Encounter ID"
+              style={{ flex: 1, height: 38, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none', fontFamily: 'monospace' }} />
+            <button onClick={() => encounterId && loadEncounter(encounterId)}
+              style={{ height: 38, padding: '0 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
+              Load
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return <EncounterEditor encounter={encounter} patient={patient} onChanged={setEncounter} onClose={() => { setEncounter(null); setEncounterId(undefined); }} />;
+}
+
+function EncounterEditor({
+  encounter, patient, onChanged, onClose,
+}: {
+  encounter: Encounter; patient: Patient | null; onChanged: (e: Encounter) => void; onClose: () => void;
+}) {
+  const { ctx } = useApp();
+  const toast = useToast();
+  const signed = encounter.status === 'SIGNED';
+
+  const [vitals, setVitals] = useState<Record<string, string>>(() => ({
+    bp: '', spo2: '', temp: '', pulse: '', rr: '', weight: '',
+    ...(encounter.vitals as Record<string, string> | undefined),
+  }));
+  const [complaint, setComplaint] = useState(encounter.chiefComplaint ?? '');
+  const [diagnosis, setDiagnosis] = useState(encounter.diagnosis ?? '');
+  const [notes, setNotes] = useState(encounter.notes ?? '');
+  const [followUp, setFollowUp] = useState(encounter.followUpAt ? encounter.followUpAt.slice(0, 10) : '');
+  const [diagInput, setDiagInput] = useState('');
+  const diags = diagnosis.split('|').map((s) => s.trim()).filter(Boolean);
+  const [rx, setRx] = useState<RxItem[]>([{ id: 1, med: '', dose: '', freq: '', dur: '', note: '' }]);
+  const nextRxId = useRef(2);
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [showSign, setShowSign] = useState(false);
+  const [signing, setSigning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function addDiag() {
+    const v = diagInput.trim();
+    if (!v) return;
+    setDiagnosis((d) => (d ? d + ' | ' + v : v));
+    setDiagInput('');
+  }
+
+  function removeDiag(idx: number) {
+    setDiagnosis(diags.filter((_, i) => i !== idx).join(' | '));
+  }
+
+  async function saveDraft() {
+    if (signed) return;
+    setSavingDraft(true); setError(null);
+    try {
+      const cleanVitals: Record<string, string> = {};
+      Object.entries(vitals).forEach(([k, v]) => { if (v) cleanVitals[k] = v; });
+      const updated = await apiPatch<Encounter>(ctx, `/encounters/${encounter._id}`, {
+        chiefComplaint: complaint || undefined,
+        diagnosis: diagnosis || undefined,
+        notes: notes || undefined,
+        vitals: Object.keys(cleanVitals).length ? cleanVitals : undefined,
+        followUpAt: followUp ? new Date(followUp).toISOString() : undefined,
+      });
+      onChanged(updated);
+      toast('Draft saved', 'success');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSavingDraft(false);
+    }
+  }
+
+  async function sign() {
+    setSigning(true); setError(null);
+    try {
+      // Save first, then sign
+      await saveDraft();
+      // Save Rx items as a prescription if any are filled
+      const filled = rx.filter((r) => r.med.trim());
+      if (filled.length > 0) {
+        await apiPost(ctx, `/encounters/${encounter._id}/prescriptions`, {
+          items: filled.map((r) => ({
+            customName: r.med,
+            dosage: r.dose || undefined,
+            frequency: r.freq || undefined,
+            duration: r.dur || undefined,
+            instructions: r.note || undefined,
+          })),
+        });
+      }
+      const signed = await apiPost<Encounter>(ctx, `/encounters/${encounter._id}/sign`, {});
+      onChanged(signed);
+      setShowSign(false);
+      toast('Encounter signed', 'success');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSigning(false);
+    }
+  }
+
+  return (
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
+      <div style={{ width: 280, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ padding: 16, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
+          <button onClick={onClose} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}>
+            <Icon name="chevronLeft" size={14} />
+          </button>
+          <div style={{ fontSize: 12, color: 'var(--text-subtle)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Encounter</div>
+          <div style={{ marginLeft: 'auto' }}><StatusPill status={signed ? 'signed' : 'draft'} small /></div>
+        </div>
+
+        <div style={{ padding: 16, borderBottom: '1px solid var(--border)' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
+            <Avatar name={patient?.fullName ?? '?'} size={40} />
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{patient?.fullName ?? 'Patient'}</div>
+              <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{patient?.phones?.[0] ?? '—'}</div>
+            </div>
+          </div>
+          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
+            {(patient?.tags ?? []).map((t) => (
+              <span key={t} style={{ padding: '2px 8px', borderRadius: 100, background: 'var(--brand-50)', color: 'var(--brand-600)', fontSize: 11, fontWeight: 600, border: '1px solid var(--brand-100)' }}>{t}</span>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Current vitals</div>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+            {[
+              { l: 'BP', v: vitals.bp, u: 'mmHg' },
+              { l: 'SpO2', v: vitals.spo2, u: '%' },
+              { l: 'Temp', v: vitals.temp, u: '°F' },
+              { l: 'Pulse', v: vitals.pulse, u: 'bpm' },
+            ].map((row) => (
+              <div key={row.l} style={{ background: 'var(--surface-muted)', borderRadius: 8, padding: '7px 9px' }}>
+                <div style={{ fontSize: 9, color: 'var(--text-subtle)', textTransform: 'uppercase', fontWeight: 700 }}>{row.l}</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+                  {row.v || '—'} <span style={{ fontSize: 9, color: 'var(--text-subtle)', fontWeight: 400 }}>{row.u}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Prescription items</div>
+          {rx.filter((r) => r.med.trim()).length === 0 ? (
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>None added yet.</div>
+          ) : rx.filter((r) => r.med.trim()).slice(0, 5).map((r) => (
+            <div key={r.id} style={{ display: 'flex', gap: 7, alignItems: 'flex-start', marginBottom: 7 }}>
+              <Icon name="pill" size={12} style={{ color: 'var(--brand-500)', marginTop: 2, flexShrink: 0 }} />
+              <span style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.4 }}>
+                {r.med}{r.freq ? ` · ${r.freq}` : ''}{r.dur ? ` · ${r.dur}` : ''}
+              </span>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ padding: 16, fontSize: 11, color: 'var(--text-subtle)' }}>
+          <div style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Encounter ID</div>
+          <code style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-muted)', wordBreak: 'break-all' }}>{encounter._id}</code>
+          <div style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 14, marginBottom: 6 }}>Visited</div>
+          <div style={{ color: 'var(--text-muted)' }}>{new Date(encounter.visitedAt).toLocaleString('en-IN')}</div>
+        </div>
+      </div>
+
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+        {signed && (
+          <div style={{ padding: '10px 20px', background: 'rgba(16,185,129,0.08)', borderBottom: '1px solid rgba(16,185,129,0.2)', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon name="checkCircle" size={16} style={{ color: 'var(--success-500)' }} />
+            <span style={{ fontSize: 13, color: 'var(--success-500)', fontWeight: 600 }}>Encounter signed and locked</span>
+          </div>
+        )}
+
+        <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <Section title="Vitals" icon="activity" defaultOpen>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 10 }}>
+              {VITAL_FIELDS.map((f) => (
+                <VitalInput key={f.key} label={f.label} unit={f.unit}
+                  value={vitals[f.key] ?? ''}
+                  onChange={(v) => setVitals((x) => ({ ...x, [f.key]: v }))}
+                  disabled={signed} />
+              ))}
+            </div>
+          </Section>
+
+          <Section title="Chief complaint" icon="stethoscope" defaultOpen>
+            <textarea value={complaint} onChange={(e) => setComplaint(e.target.value)} disabled={signed}
+              placeholder="Describe the patient's presenting complaint…"
+              style={{ width: '100%', minHeight: 72, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box', opacity: signed ? 0.7 : 1 }} />
+          </Section>
+
+          <Section title="Diagnosis" icon="fileText" defaultOpen>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+              {diags.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>No diagnoses yet.</div>}
+              {diags.map((d, i) => (
+                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 100, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', color: 'var(--brand-700)', fontSize: 12, fontWeight: 500 }}>
+                  {d}
+                  {!signed && (
+                    <button onClick={() => removeDiag(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--brand-500)', display: 'flex', padding: 0 }}>
+                      <Icon name="x" size={11} strokeWidth={2.5} />
+                    </button>
+                  )}
+                </span>
+              ))}
+            </div>
+            {!signed && (
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={diagInput} onChange={(e) => setDiagInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addDiag())}
+                  placeholder="Add ICD-10 code or diagnosis…"
+                  style={{ flex: 1, height: 36, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }} />
+                <button onClick={addDiag} style={{ height: 36, padding: '0 14px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 9, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Add</button>
+              </div>
+            )}
+          </Section>
+
+          <Section title="Prescription" icon="pill" defaultOpen>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, padding: '0 12px 6px', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                <span style={{ flex: '0 0 30%' }}>Medicine</span>
+                <span style={{ flex: '0 0 16%' }}>Dose</span>
+                <span style={{ flex: '0 0 14%' }}>Freq</span>
+                <span style={{ flex: '0 0 14%' }}>Duration</span>
+                <span style={{ flex: 1 }}>Instructions</span>
+              </div>
+              {rx.map((item) => (
+                <div key={item.id} style={{ display: 'flex', gap: 8, padding: '10px 12px', background: 'var(--surface-muted)', borderRadius: 10, border: '1px solid var(--border)', alignItems: 'flex-start' }}>
+                  <div style={{ flex: '0 0 30%' }}>
+                    <input value={item.med} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, med: e.target.value } : x))} disabled={signed} placeholder="Medicine name" style={rxInputStyle} />
+                  </div>
+                  <div style={{ flex: '0 0 16%' }}>
+                    <input value={item.dose} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dose: e.target.value } : x))} disabled={signed} placeholder="1 tab" style={rxInputStyle} />
+                  </div>
+                  <div style={{ flex: '0 0 14%' }}>
+                    <select value={item.freq} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, freq: e.target.value } : x))} disabled={signed} style={{ ...rxInputStyle, cursor: 'pointer' }}>
+                      <option value="">Freq</option>
+                      <option>OD</option><option>BD</option><option>TDS</option><option>QID</option><option>SOS</option>
+                    </select>
+                  </div>
+                  <div style={{ flex: '0 0 14%' }}>
+                    <input value={item.dur} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dur: e.target.value } : x))} disabled={signed} placeholder="7 days" style={rxInputStyle} />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} disabled={signed} placeholder="Instructions" style={rxInputStyle} />
+                  </div>
+                  {!signed && (
+                    <button onClick={() => setRx((r) => r.filter((x) => x.id !== item.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-500)', padding: '6px 4px', display: 'flex', marginTop: 1 }}>
+                      <Icon name="trash" size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
+              {!signed && (
+                <button onClick={() => setRx((r) => [...r, { id: nextRxId.current++, med: '', dose: '', freq: '', dur: '', note: '' }])}
+                  style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', background: 'none', border: '1.5px dashed var(--border)', borderRadius: 9, color: 'var(--text-subtle)', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
+                  <Icon name="plus" size={13} strokeWidth={2.5} /> Add medicine
+                </button>
+              )}
+            </div>
+          </Section>
+
+          <Section title="Follow-up" icon="calendar">
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+              <input type="date" value={followUp} onChange={(e) => setFollowUp(e.target.value)} disabled={signed}
+                style={{ height: 38, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }} />
+              <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>Leave blank if no follow-up needed.</span>
+            </div>
+          </Section>
+
+          <Section title="Notes" icon="fileText">
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} disabled={signed}
+              placeholder="Clinical notes, observations, or special instructions…"
+              style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box', opacity: signed ? 0.7 : 1 }} />
+          </Section>
+
+          {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
+        </div>
+
+        {!signed && (
+          <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', gap: 10, alignItems: 'center' }}>
+            <span style={{ flex: 1, fontSize: 12, color: 'var(--text-subtle)' }}>{patient?.fullName} · {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+            <button onClick={saveDraft} disabled={savingDraft}
+              style={{ height: 40, padding: '0 20px', background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, fontWeight: 500, cursor: savingDraft ? 'wait' : 'pointer' }}>
+              {savingDraft ? 'Saving…' : 'Save draft'}
+            </button>
+            <button onClick={() => setShowSign(true)}
+              style={{ height: 40, padding: '0 24px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Icon name="lock" size={14} /> Sign encounter
+            </button>
+          </div>
+        )}
+      </div>
+
+      {showSign && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)' }} onClick={() => setShowSign(false)}>
+          <div style={{ background: 'var(--surface)', borderRadius: 18, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: 380, padding: 28, animation: 'slideUp 200ms ease-out' }} onClick={(e) => e.stopPropagation()}>
+            <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(59,130,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
+              <Icon name="lock" size={20} style={{ color: 'var(--brand-500)' }} />
+            </div>
+            <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 17, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>Sign encounter?</div>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 24 }}>
+              Once signed, the record will be locked and cannot be edited. This action confirms the clinical details are accurate.
+            </p>
+            {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)', marginBottom: 12 }}>{error}</div>}
+            <div style={{ display: 'flex', gap: 10 }}>
+              <button onClick={() => setShowSign(false)}
+                style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                Cancel
+              </button>
+              <button onClick={sign} disabled={signing}
+                style={{ flex: 2, height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: signing ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                {signing ? <Spinner /> : <><Icon name="lock" size={14} /> Sign encounter</>}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+const rxInputStyle: React.CSSProperties = {
+  width: '100%', padding: '6px 8px', background: 'var(--surface)', border: '1px solid var(--border)',
+  borderRadius: 7, fontSize: 12, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
+};
+
+function Section({ title, icon, children, defaultOpen }: { title: string; icon: IconName; children: ReactNode; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(!!defaultOpen);
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+      <button onClick={() => setOpen((o) => !o)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
+        <div style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--brand-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <Icon name={icon} size={14} style={{ color: 'var(--brand-500)' }} />
+        </div>
+        <span style={{ flex: 1, fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{title}</span>
+        <Icon name={open ? 'chevronUp' : 'chevronDown'} size={16} style={{ color: 'var(--text-subtle)' }} />
+      </button>
+      {open && <div style={{ padding: '14px 16px 16px', borderTop: '1px solid var(--border)' }}>{children}</div>}
+    </div>
+  );
+}
+
+function VitalInput({ label, unit, value, onChange, disabled }: { label: string; unit: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  return (
+    <div>
+      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</label>
+      <div style={{ position: 'relative' }}>
+        <input value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder="—"
+          style={{ width: '100%', height: 38, padding: '0 36px 0 10px', background: 'var(--surface-muted)', border: `1.5px solid ${disabled ? 'transparent' : 'var(--border)'}`, borderRadius: 9, fontSize: 14, fontWeight: 600, color: 'var(--text)', outline: 'none', boxSizing: 'border-box', textAlign: 'center', fontVariantNumeric: 'tabular-nums' }} />
+        <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: 10, color: 'var(--text-subtle)', pointerEvents: 'none' }}>{unit}</span>
+      </div>
+    </div>
+  );
+}

@@ -29,6 +29,10 @@ export async function apiPatch<T>(ctx: DevContext, path: string, body: unknown =
   });
 }
 
+export async function apiDelete<T>(ctx: DevContext, path: string): Promise<T> {
+  return await apiFetch<T>(ctx, path, { method: 'DELETE' });
+}
+
 async function apiFetch<T>(
   ctx: DevContext,
   path: string,
@@ -45,7 +49,6 @@ async function apiFetch<T>(
   if (res.status === 401 && attempt === 0) {
     const next = await refreshAccessToken(ctx);
     if (next) {
-      // Persist for future requests. (Caller state may not re-render, but requests will work.)
       ctx.accessToken = next;
       saveContext(ctx);
       return await apiFetch<T>(ctx, path, init, 1);
@@ -54,8 +57,23 @@ async function apiFetch<T>(
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(text || `HTTP ${res.status}`);
+    let parsed: unknown = null;
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      // fall through
+    }
+    const detail =
+      parsed && typeof parsed === 'object' && parsed !== null && 'message' in parsed
+        ? Array.isArray((parsed as { message: unknown }).message)
+          ? ((parsed as { message: string[] }).message.join(', '))
+          : String((parsed as { message: unknown }).message)
+        : (text || `HTTP ${res.status}`);
+    throw new Error(detail);
   }
+  if (res.status === 204) return undefined as T;
+  const ct = res.headers.get('content-type') ?? '';
+  if (!ct.includes('application/json')) return undefined as T;
   return (await res.json()) as T;
 }
 
@@ -79,4 +97,3 @@ function buildHeaders(ctx: DevContext) {
   if (!ctx.accessToken && ctx.userId) headers['x-user-id'] = ctx.userId; // dev fallback
   return headers;
 }
-

@@ -1,9 +1,14 @@
 export type DevContext = {
   apiBaseUrl: string;
   clinicId: string;
+  clinicName?: string;
   branchId?: string;
+  branchName?: string;
   userId: string;
   accessToken?: string;
+  email?: string;
+  fullName?: string;
+  permissions?: string[];
 };
 
 const KEY = 'digirx.devContext.v1';
@@ -28,3 +33,12 @@ export function saveContext(ctx: DevContext) {
   localStorage.setItem(KEY, JSON.stringify(ctx));
 }
 
+export function clearContext() {
+  const cur = loadContext();
+  // Keep apiBaseUrl, drop everything else
+  saveContext({ apiBaseUrl: cur.apiBaseUrl, clinicId: '', userId: '' });
+}
+
+export function isLoggedIn(ctx: DevContext): boolean {
+  return Boolean(ctx.clinicId && (ctx.accessToken || ctx.userId));
+}
