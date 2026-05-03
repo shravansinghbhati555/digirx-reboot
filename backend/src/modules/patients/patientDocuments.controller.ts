@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Controller,
   Param,
   Post,
@@ -14,6 +15,7 @@ import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
 import { DocumentsService } from '../documents/documents.service';
 import { DocumentOwnerType } from '../documents/schemas/document.schema';
+import { StorageService } from '../storage/storage.service';
 import { PatientsService } from './patients.service';
 
 @Controller('patients/:id/documents')
@@ -21,6 +23,7 @@ export class PatientDocumentsController {
   constructor(
     private readonly patients: PatientsService,
     private readonly documents: DocumentsService,
+    private readonly storage: StorageService,
   ) {}
 
   @Post()
@@ -35,12 +38,17 @@ export class PatientDocumentsController {
     await this.patients.getById(clinicId, id);
 
     if (!file) {
-      throw new Error('file is required');
+      throw new BadRequestException('file is required');
     }
 
-    // Storage integration (S3/MinIO) comes next; for now we generate a deterministic key
-    // and store metadata. The actual bytes are not persisted yet.
-    const storageKey = `clinic/${clinicId.toHexString()}/patient/${id}/${randomUUID()}-${file.originalname}`;
+    const safeName = file.originalname.replace(/[^\w.\- ]+/g, '_').slice(0, 120);
+    const storageKey = `clinic/${clinicId.toHexString()}/patient/${id}/${randomUUID()}-${safeName}`;
+
+    await this.storage.putObject({
+      key: storageKey,
+      body: file.buffer,
+      contentType: file.mimetype,
+    });
 
     return await this.documents.createForOwner({
       clinicId,

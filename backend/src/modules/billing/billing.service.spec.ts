@@ -16,6 +16,7 @@ describe('BillingService.addPayment idempotency', () => {
       clinicId: new Types.ObjectId(),
       branchId: new Types.ObjectId(),
       status: BillStatus.Issued,
+      total: 1000,
       ...overrides,
     };
   }
@@ -23,10 +24,12 @@ describe('BillingService.addPayment idempotency', () => {
   beforeEach(() => {
     billModel = {
       findOne: jest.fn(),
+      updateOne: jest.fn().mockResolvedValue({ acknowledged: true, modifiedCount: 0 }),
     };
     paymentModel = {
       create: jest.fn(),
       findOne: jest.fn(),
+      aggregate: jest.fn().mockResolvedValue([{ total: 0 }]),
     };
     serviceModel = {};
     service = new BillingService(billModel, paymentModel, serviceModel);
@@ -139,5 +142,58 @@ describe('BillingService.addPayment idempotency', () => {
       }),
     ).rejects.toBeInstanceOf(BadRequestException);
     expect(paymentModel.create).not.toHaveBeenCalled();
+  });
+
+  it('auto-transitions Issued bill to Paid once total payments meet bill.total', async () => {
+    const bill = makeIssuedBill({ total: 1000 });
+    billModel.findOne.mockResolvedValue(bill);
+    paymentModel.create.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      billId: bill._id,
+      amount: 500,
+    });
+    paymentModel.aggregate.mockResolvedValue([{ total: 1000 }]);
+
+    await service.addPayment(
+      bill.clinicId,
+      undefined,
+      bill._id.toHexString(),
+      {
+        method: PaymentMethod.Cash,
+        amount: 500,
+        idempotencyKey: 'k-final-pay',
+      },
+    );
+
+    expect(billModel.updateOne).toHaveBeenCalledWith(
+      expect.objectContaining({ _id: bill._id, status: BillStatus.Issued }),
+      expect.objectContaining({
+        $set: expect.objectContaining({ status: BillStatus.Paid }),
+      }),
+    );
+  });
+
+  it('does not auto-Paid a bill that is not yet fully settled', async () => {
+    const bill = makeIssuedBill({ total: 1000 });
+    billModel.findOne.mockResolvedValue(bill);
+    paymentModel.create.mockResolvedValue({
+      _id: new Types.ObjectId(),
+      billId: bill._id,
+      amount: 400,
+    });
+    paymentModel.aggregate.mockResolvedValue([{ total: 400 }]);
+
+    await service.addPayment(
+      bill.clinicId,
+      undefined,
+      bill._id.toHexString(),
+      {
+        method: PaymentMethod.Cash,
+        amount: 400,
+        idempotencyKey: 'k-partial',
+      },
+    );
+
+    expect(billModel.updateOne).not.toHaveBeenCalled();
   });
 });

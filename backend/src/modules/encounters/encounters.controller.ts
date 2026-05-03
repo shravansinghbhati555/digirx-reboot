@@ -35,6 +35,10 @@ export class EncountersController {
   @Post(':id/sign')
   @RequirePermissions(Permission.PatientWrite)
   async sign(@Req() req: AppRequest, @Param('id') id: string) {
-    return await this.encounters.sign(req.context!.clinicId, id);
+    return await this.encounters.sign(
+      req.context!.clinicId,
+      id,
+      req.context!.actorUserId,
+    );
   }
 }

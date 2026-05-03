@@ -26,6 +26,39 @@ const ACTIVE_TIME_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.InProgress,
 ];
 
+const ALLOWED_STATUS_TRANSITIONS: Record<AppointmentStatus, AppointmentStatus[]> = {
+  [AppointmentStatus.Booked]: [
+    AppointmentStatus.CheckedIn,
+    AppointmentStatus.Cancelled,
+    AppointmentStatus.NoShow,
+  ],
+  [AppointmentStatus.CheckedIn]: [
+    AppointmentStatus.InProgress,
+    AppointmentStatus.Cancelled,
+    AppointmentStatus.NoShow,
+  ],
+  [AppointmentStatus.InProgress]: [
+    AppointmentStatus.Done,
+    AppointmentStatus.Cancelled,
+  ],
+  [AppointmentStatus.Done]: [],
+  [AppointmentStatus.Cancelled]: [],
+  [AppointmentStatus.NoShow]: [],
+};
+
+function assertAllowedTransition(
+  from: AppointmentStatus,
+  to: AppointmentStatus,
+) {
+  if (from === to) return;
+  const allowed = ALLOWED_STATUS_TRANSITIONS[from] ?? [];
+  if (!allowed.includes(to)) {
+    throw new BadRequestException(
+      `Cannot transition appointment from ${from} to ${to}`,
+    );
+  }
+}
+
 @Injectable()
 export class AppointmentsService {
   constructor(
@@ -158,6 +191,29 @@ export class AppointmentsService {
       const queueDate = (dto.queueDate ?? '').trim();
       if (!queueDate)
         throw new BadRequestException('queueDate is required for QUEUE');
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(queueDate))
+        throw new BadRequestException('queueDate must be YYYY-MM-DD');
+
+      // Reject dates that aren't valid in the clinic's timezone, are in the past,
+      // or are absurdly far in the future. We trust the client to derive the
+      // local date but defend against typos and tampered payloads.
+      const clinic = await this.clinicModel.findById(clinicId);
+      if (!clinic) throw new NotFoundException('Clinic not found');
+      const tz = clinic.timezone || 'UTC';
+      const requested = DateTime.fromISO(queueDate, { zone: tz });
+      if (!requested.isValid) {
+        throw new BadRequestException(
+          `Invalid queueDate "${queueDate}" for clinic timezone`,
+        );
+      }
+      const today = DateTime.now().setZone(tz).startOf('day');
+      const requestedStart = requested.startOf('day');
+      if (requestedStart < today) {
+        throw new BadRequestException('queueDate cannot be in the past');
+      }
+      if (requestedStart.diff(today, 'days').days > 365) {
+        throw new BadRequestException('queueDate is too far in the future');
+      }
 
       const session = await this.connection
         .startSession()
@@ -348,6 +404,7 @@ export class AppointmentsService {
     }
 
     if (dto.status) {
+      assertAllowedTransition(appt.status, dto.status);
       appt.status = dto.status;
     }
     if (dto.notes !== undefined) {
@@ -361,8 +418,7 @@ export class AppointmentsService {
   async checkin(clinicId: Types.ObjectId, id: string) {
     const appt = await this.apptModel.findOne({ _id: id, clinicId });
     if (!appt) throw new NotFoundException('Appointment not found');
-    if (appt.status === AppointmentStatus.Cancelled)
-      throw new BadRequestException('Appointment is cancelled');
+    assertAllowedTransition(appt.status, AppointmentStatus.CheckedIn);
     appt.status = AppointmentStatus.CheckedIn;
     await appt.save();
     return appt;

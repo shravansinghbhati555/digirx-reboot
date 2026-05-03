@@ -8,6 +8,7 @@ export enum NotificationStatus {
   Queued = 'QUEUED',
   Sent = 'SENT',
   Failed = 'FAILED',
+  Skipped = 'SKIPPED',
 }
 
 @Schema({ timestamps: true })

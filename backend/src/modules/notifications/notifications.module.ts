@@ -21,6 +21,7 @@ import {
   AppointmentSchema,
 } from '../appointments/schemas/appointment.schema';
 import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
+import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 
 @Module({})
 export class NotificationsModule {
@@ -37,6 +38,7 @@ export class NotificationsModule {
         { name: NotificationLog.name, schema: NotificationLogSchema },
         { name: Appointment.name, schema: AppointmentSchema },
         { name: Patient.name, schema: PatientSchema },
+        { name: Clinic.name, schema: ClinicSchema },
       ]),
     ];
 

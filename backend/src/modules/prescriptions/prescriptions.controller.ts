@@ -1,16 +1,21 @@
 import { Body, Controller, Get, Param, Post, Req } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
+import { InjectModel } from '@nestjs/mongoose';
+import { Model } from 'mongoose';
 import type { AppRequest } from '../../common/types';
 import { Public } from '../../common/public.decorator';
-import { THROTTLE_SHARE } from '../../common/throttler.config';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
+import { SharePrescriptionDto } from './dto/share-prescription.dto';
 import { PrescriptionsService } from './prescriptions.service';
 import { PdfService } from '../pdf/pdf.service';
 import { StorageService } from '../storage/storage.service';
 import { DocumentsService } from '../documents/documents.service';
 import { DocumentOwnerType } from '../documents/schemas/document.schema';
+import { Patient } from '../patients/schemas/patient.schema';
+import { User } from '../authz/schemas/user.schema';
+import { Clinic } from '../tenancy/schemas/clinic.schema';
 
 @Controller()
 export class PrescriptionsController {
@@ -19,6 +24,9 @@ export class PrescriptionsController {
     private readonly pdfService: PdfService,
     private readonly storage: StorageService,
     private readonly documents: DocumentsService,
+    @InjectModel(Patient.name) private readonly patientModel: Model<Patient>,
+    @InjectModel(User.name) private readonly userModel: Model<User>,
+    @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
   ) {}
 
   @Post('encounters/:id/prescriptions')
@@ -43,8 +51,16 @@ export class PrescriptionsController {
 
   @Post('prescriptions/:id/share')
   @RequirePermissions(Permission.PatientRead)
-  async share(@Req() req: AppRequest, @Param('id') id: string) {
-    return await this.prescriptions.share(req.context!.clinicId, id);
+  async share(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @Body() body: SharePrescriptionDto,
+  ) {
+    return await this.prescriptions.share(
+      req.context!.clinicId,
+      id,
+      body.expiresInSeconds,
+    );
   }
 
   @Post('prescriptions/:id/share/revoke')
@@ -56,7 +72,7 @@ export class PrescriptionsController {
 
   @Get('share/prescriptions/:token')
   @Public()
-  @Throttle({ [THROTTLE_SHARE]: { limit: 10, ttl: 60_000 } })
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async getShared(@Param('token') token: string) {
     // Public read endpoint (token-based). Rate limiting + expiry comes next.
     return await this.prescriptions.getByShareToken(token);
@@ -67,10 +83,22 @@ export class PrescriptionsController {
   async pdfUrl(@Req() req: AppRequest, @Param('id') id: string) {
     const rx = await this.prescriptions.getById(req.context!.clinicId, id);
     if (!rx.pdfDocumentId) {
+      const [clinic, patient, doctor] = await Promise.all([
+        this.clinicModel.findById(req.context!.clinicId),
+        this.patientModel.findOne({
+          _id: rx.patientId,
+          clinicId: req.context!.clinicId,
+        }),
+        this.userModel.findOne({
+          _id: rx.doctorId,
+          clinicId: req.context!.clinicId,
+        }),
+      ]);
+
       const bytes = await this.pdfService.prescriptionPdf({
-        clinicName: 'DigiRx Clinic',
-        patientName: rx.patientId.toHexString(),
-        doctorName: rx.doctorId.toHexString(),
+        clinicName: clinic?.name ?? 'Clinic',
+        patientName: patient?.fullName ?? 'Patient',
+        doctorName: doctor?.name ?? 'Doctor',
         createdAtIso:
           (rx as any).createdAt?.toISOString?.() ?? new Date().toISOString(),
         items: (rx.items ?? []).map((it: any) => ({

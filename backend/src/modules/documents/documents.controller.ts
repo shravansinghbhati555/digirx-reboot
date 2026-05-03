@@ -4,8 +4,8 @@ import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
 import { Public } from '../../common/public.decorator';
 import { Throttle } from '@nestjs/throttler';
-import { THROTTLE_SHARE } from '../../common/throttler.config';
 import { StorageService } from '../storage/storage.service';
+import { CreateShareDto } from './dto/create-share.dto';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 import { DocumentsService } from './documents.service';
 import { Types } from 'mongoose';
@@ -55,7 +55,7 @@ export class DocumentsController {
   async share(
     @Req() req: AppRequest,
     @Param('id') id: string,
-    @Body() body: { expiresInSeconds?: number; maxViews?: number },
+    @Body() body: CreateShareDto,
   ) {
     const out = await this.documents.createShare({
       clinicId: req.context!.clinicId,
@@ -76,7 +76,7 @@ export class DocumentsController {
 
   @Get('share/:token')
   @Public()
-  @Throttle({ [THROTTLE_SHARE]: { limit: 10, ttl: 60_000 } })
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async shareDownload(@Param('token') token: string, @Query('inline') inline?: string) {
     const share = await this.documents.shareDownload(token);
     const doc = await this.documents.getById(share.clinicId, share.documentId.toHexString());

@@ -14,7 +14,7 @@ export class AuthService {
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(Session.name) private readonly sessionModel: Model<Session>,
     private readonly jwt: JwtService,
-  ) {}
+  ) { }
 
   private accessToken(claims: JwtClaims) {
     const expiresIn = (process.env.JWT_ACCESS_TTL ?? '8h') as unknown as string;
@@ -57,14 +57,18 @@ export class AuthService {
   }) {
     const clinicId = new Types.ObjectId(input.clinicId);
     const email = input.email.trim().toLowerCase();
-    const user = await this.userModel.findOne({ clinicId, email });
-    if (!user) throw new UnauthorizedException('Invalid credentials');
-    if (user.status !== UserStatus.Active)
-      throw new UnauthorizedException('User disabled');
-    if (!user.passwordHash) throw new UnauthorizedException('Password not set');
+    const user = await this.userModel
+      .findOne({ clinicId, email })
+      .select('+passwordHash');
+    // Uniform error to prevent user enumeration: don't reveal whether the
+    // account exists, is disabled, has no password, or has a wrong password.
+    const invalid = new UnauthorizedException('Invalid credentials');
+    if (!user) throw invalid;
+    if (user.status !== UserStatus.Active) throw invalid;
+    if (!user.passwordHash) throw invalid;
 
     const ok = await bcrypt.compare(input.password, user.passwordHash);
-    if (!ok) throw new UnauthorizedException('Invalid credentials');
+    if (!ok) throw invalid;
 
     const claims: JwtClaims = {
       sub: user._id.toHexString(),
@@ -92,35 +96,61 @@ export class AuthService {
   }
 
   async refresh(input: { sessionId: string; refreshToken: string }) {
-    const session = await this.sessionModel.findById(input.sessionId);
+    if (!Types.ObjectId.isValid(input.sessionId)) {
+      throw new UnauthorizedException('Invalid session');
+    }
+    const sessionId = new Types.ObjectId(input.sessionId);
+
+    const session = await this.sessionModel.findById(sessionId);
     if (!session) throw new UnauthorizedException('Invalid session');
     if (session.revokedAt) throw new UnauthorizedException('Session revoked');
     if (session.expiresAt.getTime() <= Date.now())
       throw new UnauthorizedException('Session expired');
 
-    const ok = await bcrypt.compare(
+    const matchesCurrent = await bcrypt.compare(
       input.refreshToken,
       session.refreshTokenHash,
     );
-    if (!ok) throw new UnauthorizedException('Invalid session');
+    if (!matchesCurrent) {
+      throw new UnauthorizedException('Invalid session');
+    }
 
-    // rotate refresh token
+    // Atomic compare-and-swap: only the first concurrent caller for this
+    // (sessionId, currentHash) wins. Late racers find the hash already rotated
+    // and the predicate fails, so they get null back. We treat that as a
+    // benign 401 ("Stale refresh") rather than corrupting the session.
+    const guardHash = session.refreshTokenHash;
     const newRaw = crypto.randomBytes(32).toString('base64url');
-    session.refreshTokenHash = await bcrypt.hash(newRaw, 10);
-    await session.save();
+    const newHash = await bcrypt.hash(newRaw, 10);
+
+    const updated = await this.sessionModel.findOneAndUpdate(
+      {
+        _id: sessionId,
+        refreshTokenHash: guardHash,
+        revokedAt: null,
+        expiresAt: { $gt: new Date() },
+      },
+      { $set: { refreshTokenHash: newHash } },
+      { new: true },
+    );
+
+    if (!updated) {
+      // Lost the race or session got revoked/expired between read and write.
+      throw new UnauthorizedException('Stale refresh');
+    }
 
     const claims: JwtClaims = {
-      sub: session.userId.toHexString(),
-      clinicId: session.clinicId.toHexString(),
+      sub: updated.userId.toHexString(),
+      clinicId: updated.clinicId.toHexString(),
     };
     const accessToken = await this.accessToken(claims);
 
     return {
       accessToken,
       refresh: {
-        sessionId: session._id.toHexString(),
+        sessionId: updated._id.toHexString(),
         refreshToken: newRaw,
-        expiresAt: session.expiresAt,
+        expiresAt: updated.expiresAt,
       },
     };
   }

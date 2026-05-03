@@ -2,7 +2,10 @@ import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
 import type { AvailabilityWindow } from './doctor-availability-rule.schema';
 
-export type OverrideType = 'CLOSED' | 'CUSTOM_WINDOWS';
+export type OverrideType =
+  | 'CLOSED'
+  | 'CUSTOM_WINDOWS'
+  | 'ADDITIONAL_WINDOWS';
 
 @Schema({ timestamps: true })
 export class DoctorAvailabilityOverride {

@@ -11,6 +11,8 @@ import {
 import { PdfModule } from '../pdf/pdf.module';
 import { StorageModule } from '../storage/storage.module';
 import { DocumentsModule } from '../documents/documents.module';
+import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
+import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 
 @Module({
   imports: [
@@ -18,6 +20,8 @@ import { DocumentsModule } from '../documents/documents.module';
       { name: Bill.name, schema: BillSchema },
       { name: Payment.name, schema: PaymentSchema },
       { name: ServiceCatalogItem.name, schema: ServiceCatalogItemSchema },
+      { name: Patient.name, schema: PatientSchema },
+      { name: Clinic.name, schema: ClinicSchema },
     ]),
     PdfModule,
     StorageModule,

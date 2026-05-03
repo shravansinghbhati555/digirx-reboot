@@ -90,6 +90,41 @@ export class AvailabilityService {
       .sort({ weekday: 1 });
   }
 
+  async listRules(input: {
+    clinicId: Types.ObjectId;
+    branchId: Types.ObjectId;
+    doctorUserId: Types.ObjectId;
+  }) {
+    return await this.ruleModel
+      .find({
+        clinicId: input.clinicId,
+        branchId: input.branchId,
+        doctorUserId: input.doctorUserId,
+      })
+      .sort({ weekday: 1 });
+  }
+
+  async listOverrides(input: {
+    clinicId: Types.ObjectId;
+    branchId: Types.ObjectId;
+    doctorUserId: Types.ObjectId;
+    from?: string;
+    to?: string;
+  }) {
+    const filter: Record<string, unknown> = {
+      clinicId: input.clinicId,
+      branchId: input.branchId,
+      doctorUserId: input.doctorUserId,
+    };
+    if (input.from || input.to) {
+      const range: Record<string, string> = {};
+      if (input.from) range.$gte = input.from;
+      if (input.to) range.$lte = input.to;
+      filter.date = range;
+    }
+    return await this.overrideModel.find(filter).sort({ date: 1 });
+  }
+
   async upsertOverride(input: {
     clinicId: Types.ObjectId;
     branchId: Types.ObjectId;
@@ -102,7 +137,7 @@ export class AvailabilityService {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date))
       throw new BadRequestException('date must be YYYY-MM-DD');
     const windows =
-      input.type === 'CUSTOM_WINDOWS'
+      input.type === 'CUSTOM_WINDOWS' || input.type === 'ADDITIONAL_WINDOWS'
         ? normalizeWindows(input.windows ?? [])
         : [];
 
@@ -150,6 +185,7 @@ export class AvailabilityService {
         date: input.date,
         slotMinutes: defaultSlotMinutes,
         slots: [] as { startAt: string; endAt: string }[],
+        windows: [] as { startAt: string; endAt: string }[],
       };
     }
 
@@ -165,13 +201,29 @@ export class AvailabilityService {
     });
 
     const slotMinutes = rule?.slotMinutes ?? defaultSlotMinutes;
-    const windows =
-      override?.type === 'CUSTOM_WINDOWS'
-        ? (override.windows ?? [])
-        : (rule?.windows ?? []);
+    const baseWindows = rule?.windows ?? [];
+    let windows: { startMinutes: number; endMinutes: number }[];
+    if (override?.type === 'CUSTOM_WINDOWS') {
+      windows = override.windows ?? [];
+    } else if (override?.type === 'ADDITIONAL_WINDOWS') {
+      // Union the override's extra windows on top of the weekly rule.
+      // Keep them sorted; if any overlap, normalizeWindows would catch it on
+      // write — at read time we just merge and let downstream slot iteration
+      // produce overlapping slots if they exist (caller bears the ambiguity).
+      windows = [...baseWindows, ...(override.windows ?? [])].slice().sort(
+        (a, b) => a.startMinutes - b.startMinutes,
+      );
+    } else {
+      windows = baseWindows;
+    }
 
     const slots: { startAt: string; endAt: string }[] = [];
+    const windowsUtc: { startAt: string; endAt: string }[] = [];
     for (const w of windows) {
+      windowsUtc.push({
+        startAt: day.startOf('day').plus({ minutes: w.startMinutes }).toUTC().toISO()!,
+        endAt: day.startOf('day').plus({ minutes: w.endMinutes }).toUTC().toISO()!,
+      });
       for (
         let m = w.startMinutes;
         m + slotMinutes <= w.endMinutes;
@@ -180,13 +232,13 @@ export class AvailabilityService {
         const start = day.startOf('day').plus({ minutes: m });
         const end = start.plus({ minutes: slotMinutes });
         slots.push({
-          startAt: start.toUTC().toISO(),
-          endAt: end.toUTC().toISO(),
+          startAt: start.toUTC().toISO()!,
+          endAt: end.toUTC().toISO()!,
         });
       }
     }
 
-    return { timezone: tz, date: input.date, slotMinutes, slots };
+    return { timezone: tz, date: input.date, slotMinutes, slots, windows: windowsUtc };
   }
 
   async assertTimeSlotAllowed(input: {
@@ -223,12 +275,28 @@ export class AvailabilityService {
     const wantedEndUtc = DateTime.fromJSDate(input.endAt, {
       zone: 'utc',
     }).toISO();
-    const ok = daySlots.slots.some(
-      (s) => s.startAt === wantedStartUtc && s.endAt === wantedEndUtc,
-    );
-    if (!ok)
+
+    // Booking is valid when:
+    // 1) start aligns with a slot boundary (preserves the slot grid), and
+    // 2) [start, end] fits inside one of the doctor's availability windows.
+    // This lets the duration vary (e.g. 15-min consult on a 60-min slot).
+    const startsAtSlot = daySlots.slots.some((s) => s.startAt === wantedStartUtc);
+    if (!startsAtSlot) {
       throw new BadRequestException(
-        'Doctor not available for requested time slot',
+        'Doctor not available at the requested start time',
       );
+    }
+    const fitsWindow = daySlots.windows.some(
+      (w) =>
+        wantedStartUtc !== null &&
+        wantedEndUtc !== null &&
+        w.startAt <= wantedStartUtc &&
+        wantedEndUtc <= w.endAt,
+    );
+    if (!fitsWindow) {
+      throw new BadRequestException(
+        'Appointment exceeds doctor available hours',
+      );
+    }
   }
 }

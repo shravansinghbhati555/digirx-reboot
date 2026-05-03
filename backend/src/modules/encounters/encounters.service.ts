@@ -68,9 +68,16 @@ export class EncountersService {
     return enc;
   }
 
-  async sign(clinicId: Types.ObjectId, id: string) {
+  async sign(
+    clinicId: Types.ObjectId,
+    id: string,
+    actorUserId: Types.ObjectId | undefined,
+  ) {
     const enc = await this.getById(clinicId, id);
+    if (enc.status === EncounterStatus.Signed) return enc;
     enc.status = EncounterStatus.Signed;
+    enc.signedAt = new Date();
+    enc.signedByUserId = actorUserId;
     await enc.save();
     return enc;
   }

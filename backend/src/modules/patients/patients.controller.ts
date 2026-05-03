@@ -1,9 +1,18 @@
-import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
-import { Types } from 'mongoose';
+import {
+  Body,
+  Controller,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
 import { CreatePatientDto } from './dto/create-patient.dto';
+import { UpdatePatientDto } from './dto/update-patient.dto';
 import { PatientsService } from './patients.service';
 
 @Controller('patients')
@@ -40,15 +49,16 @@ export class PatientsController {
   @Get(':id/history')
   @RequirePermissions(Permission.PatientRead)
   async history(@Req() req: AppRequest, @Param('id') id: string) {
-    const clinicId = req.context!.clinicId;
-    await this.patients.getById(clinicId, id);
+    return await this.patients.getHistory(req.context!.clinicId, id);
+  }
 
-    // Placeholder until appointments/encounters/billing are implemented.
-    return {
-      patientId: new Types.ObjectId(id),
-      appointments: [],
-      encounters: [],
-      bills: [],
-    };
+  @Patch(':id')
+  @RequirePermissions(Permission.PatientWrite)
+  async update(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @Body() dto: UpdatePatientDto,
+  ) {
+    return await this.patients.update(req.context!.clinicId, id, dto);
   }
 }

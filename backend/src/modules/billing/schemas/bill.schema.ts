@@ -6,6 +6,7 @@ export type BillDocument = HydratedDocument<Bill>;
 export enum BillStatus {
   Draft = 'DRAFT',
   Issued = 'ISSUED',
+  Paid = 'PAID',
   Void = 'VOID',
 }
 
@@ -63,8 +64,14 @@ export class Bill {
   })
   status!: BillStatus;
 
+  @Prop({ trim: true })
+  notes?: string;
+
   @Prop({ type: Date })
   issuedAt?: Date;
+
+  @Prop({ type: Date })
+  paidAt?: Date;
 
   @Prop({ type: Types.ObjectId })
   pdfDocumentId?: Types.ObjectId;

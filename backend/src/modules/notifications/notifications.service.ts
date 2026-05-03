@@ -12,16 +12,39 @@ import {
   NOTIFICATIONS_JOB_SEND,
   NOTIFICATIONS_QUEUE,
 } from './notifications.queue';
+import { Clinic } from '../tenancy/schemas/clinic.schema';
+import { mergeClinicSettings } from '../tenancy/clinic-settings.types';
 
 @Injectable()
 export class NotificationsService {
   constructor(
     @InjectModel(NotificationLog.name)
     private readonly logModel: Model<NotificationLog>,
+    @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
     @Optional()
     @Inject(getQueueToken(NOTIFICATIONS_QUEUE))
     private readonly queue?: Queue,
   ) {}
+
+  /**
+   * Returns true when the given channel is enabled in the clinic's settings.
+   * Defaults to true when settings are missing/malformed (mergeClinicSettings
+   * fills defaults — both channels default to enabled).
+   */
+  async isChannelEnabled(
+    clinicId: Types.ObjectId,
+    channel: NotificationChannel,
+  ): Promise<boolean> {
+    const clinic = await this.clinicModel.findById(clinicId);
+    const settings = mergeClinicSettings(clinic?.settings);
+    if (channel === NotificationChannel.Sms) {
+      return settings.modules.notifications.sms.enabled;
+    }
+    if (channel === NotificationChannel.WhatsApp) {
+      return settings.modules.notifications.whatsapp.enabled;
+    }
+    return true;
+  }
 
   async enqueueSend(input: {
     clinicId: Types.ObjectId;
@@ -31,6 +54,11 @@ export class NotificationsService {
     body: string;
     dedupeKey?: string;
   }) {
+    const enabled = await this.isChannelEnabled(input.clinicId, input.channel);
+
+    // When the channel is disabled in clinic settings we still write a row for
+    // observability — status=Skipped — but never enqueue, so the worker has no
+    // orphaned jobs to process when the toggle is flipped.
     const log = await this.logModel.create({
       clinicId: input.clinicId,
       branchId: input.branchId,
@@ -38,12 +66,11 @@ export class NotificationsService {
       to: input.to,
       body: input.body,
       dedupeKey: input.dedupeKey,
-      status: NotificationStatus.Queued,
+      status: enabled ? NotificationStatus.Queued : NotificationStatus.Skipped,
       attempts: 0,
     });
 
-    // If queue is not configured/available, we leave it queued; worker will process when enabled.
-    if (this.queue) {
+    if (enabled && this.queue) {
       await this.queue.add(
         NOTIFICATIONS_JOB_SEND,
         { notificationLogId: log._id.toHexString() },

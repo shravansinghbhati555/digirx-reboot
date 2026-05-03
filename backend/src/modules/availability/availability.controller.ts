@@ -36,6 +36,38 @@ export class AvailabilityController {
     });
   }
 
+  @Get('doctors/:doctorUserId/rules')
+  @RequirePermissions(Permission.ClinicRead)
+  async listRules(
+    @Req() req: AppRequest,
+    @Param('doctorUserId') doctorUserId: string,
+    @Query('branchId') branchId: string,
+  ) {
+    return await this.availability.listRules({
+      clinicId: req.context!.clinicId,
+      branchId: new Types.ObjectId(branchId),
+      doctorUserId: new Types.ObjectId(doctorUserId),
+    });
+  }
+
+  @Get('doctors/:doctorUserId/overrides')
+  @RequirePermissions(Permission.ClinicRead)
+  async listOverrides(
+    @Req() req: AppRequest,
+    @Param('doctorUserId') doctorUserId: string,
+    @Query('branchId') branchId: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return await this.availability.listOverrides({
+      clinicId: req.context!.clinicId,
+      branchId: new Types.ObjectId(branchId),
+      doctorUserId: new Types.ObjectId(doctorUserId),
+      from,
+      to,
+    });
+  }
+
   @Put('doctors/:doctorUserId/rules')
   @RequirePermissions(Permission.ClinicWrite)
   async putRules(

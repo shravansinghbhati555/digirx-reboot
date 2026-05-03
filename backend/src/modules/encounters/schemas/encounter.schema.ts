@@ -50,6 +50,12 @@ export class Encounter {
     index: true,
   })
   status!: EncounterStatus;
+
+  @Prop({ type: Date })
+  signedAt?: Date;
+
+  @Prop({ type: Types.ObjectId })
+  signedByUserId?: Types.ObjectId;
 }
 
 export const EncounterSchema = SchemaFactory.createForClass(Encounter);

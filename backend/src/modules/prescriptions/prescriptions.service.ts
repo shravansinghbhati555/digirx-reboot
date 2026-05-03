@@ -71,21 +71,44 @@ export class PrescriptionsService {
     return rx;
   }
 
-  async share(clinicId: Types.ObjectId, id: string) {
+  /**
+   * Create or rotate the share token for a prescription.
+   *
+   * `expiresInSeconds`:
+   *   - omitted → DEFAULT_RX_SHARE_EXPIRY_SECONDS (7 days)
+   *   - positive number → that many seconds from now
+   *   - `null` → no expiry; valid until explicitly revoked
+   */
+  async share(
+    clinicId: Types.ObjectId,
+    id: string,
+    expiresInSeconds?: number | null,
+  ) {
     const rx = await this.rxModel.findOne({ _id: id, clinicId }).exec();
     if (!rx) throw new NotFoundException('Prescription not found');
 
+    let expiresAt: Date | undefined;
+    if (expiresInSeconds === null) {
+      expiresAt = undefined;
+    } else if (
+      typeof expiresInSeconds === 'number' &&
+      Number.isFinite(expiresInSeconds) &&
+      expiresInSeconds > 0
+    ) {
+      expiresAt = new Date(Date.now() + expiresInSeconds * 1000);
+    } else {
+      expiresAt = new Date(Date.now() + DEFAULT_RX_SHARE_EXPIRY_SECONDS * 1000);
+    }
+
     rx.shareToken = randomBytes(24).toString('hex');
-    rx.shareTokenExpiresAt = new Date(
-      Date.now() + DEFAULT_RX_SHARE_EXPIRY_SECONDS * 1000,
-    );
+    rx.shareTokenExpiresAt = expiresAt;
     rx.shareTokenRevokedAt = undefined;
     await rx.save();
 
     return {
       id: rx._id,
       shareToken: rx.shareToken,
-      shareTokenExpiresAt: rx.shareTokenExpiresAt,
+      shareTokenExpiresAt: rx.shareTokenExpiresAt ?? null,
     };
   }
 
@@ -93,6 +116,7 @@ export class PrescriptionsService {
     const rx = await this.rxModel.findOne({ shareToken: token }).exec();
     if (!rx) throw new NotFoundException('Invalid token');
     if (rx.shareTokenRevokedAt) throw new NotFoundException('Invalid token');
+    // No expiry set ⇒ valid until explicit revoke.
     if (
       rx.shareTokenExpiresAt &&
       rx.shareTokenExpiresAt.getTime() <= Date.now()

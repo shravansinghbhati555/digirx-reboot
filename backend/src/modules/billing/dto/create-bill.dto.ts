@@ -37,4 +37,9 @@ export class CreateBillDto {
   @IsNumber()
   @Min(0)
   tax?: number;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 1000)
+  notes?: string;
 }

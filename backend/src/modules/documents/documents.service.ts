@@ -1,4 +1,9 @@
-import { GoneException, Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  GoneException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { randomBytes } from 'crypto';
@@ -53,6 +58,11 @@ export class DocumentsService {
       .findOne({ _id: input.documentId, clinicId: input.clinicId })
       .exec();
     if (!doc) throw new NotFoundException('Document not found');
+    if (doc.access === DocumentAccess.InternalOnly) {
+      throw new BadRequestException(
+        'INTERNAL_ONLY documents cannot be shared',
+      );
+    }
 
     const token = randomBytes(24).toString('hex');
     const seconds =

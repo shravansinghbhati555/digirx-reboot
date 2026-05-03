@@ -1,5 +1,11 @@
 export function normalizeName(name: string): string {
-  return name.trim().toLowerCase().replace(/\s+/g, ' ');
+  // Strip diacritics so 'José García' is searchable as 'jose garcia'.
+  return name
+    .normalize('NFD')
+    .replace(/\p{Diacritic}/gu, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
 }
 
 export function normalizePhone(phone: string): string {

@@ -59,13 +59,17 @@ export class BillingService {
       tax,
       total,
       status: BillStatus.Draft,
+      notes: dto.notes?.trim() || undefined,
       createdBy: actorUserId,
     });
   }
 
   async updateBill(clinicId: Types.ObjectId, id: string, dto: UpdateBillDto) {
     const bill = await this.getBill(clinicId, id);
-    if (bill.status === BillStatus.Issued)
+    if (
+      bill.status === BillStatus.Issued ||
+      bill.status === BillStatus.Paid
+    )
       throw new BadRequestException('Cannot edit an issued bill');
 
     if (dto.status === BillStatus.Void) {
@@ -128,8 +132,10 @@ export class BillingService {
     if (isNaN(paidAt.getTime()))
       throw new BadRequestException('Invalid paidAt');
 
+    let payment: Payment;
+    let replayed = false;
     try {
-      const payment = await this.paymentModel.create({
+      payment = await this.paymentModel.create({
         clinicId,
         branchId: bill.branchId,
         billId: bill._id,
@@ -140,7 +146,6 @@ export class BillingService {
         receivedBy: actorUserId,
         idempotencyKey: dto.idempotencyKey,
       });
-      return { payment, replayed: false };
     } catch (err: any) {
       if (err && err.code === 11000) {
         const original = await this.paymentModel.findOne({
@@ -148,10 +153,36 @@ export class BillingService {
           billId: bill._id,
           idempotencyKey: dto.idempotencyKey,
         });
-        if (original) return { payment: original, replayed: true };
+        if (original) {
+          payment = original;
+          replayed = true;
+        } else {
+          throw err;
+        }
+      } else {
+        throw err;
       }
-      throw err;
     }
+
+    // Recompute paid total and auto-close the bill when fully settled.
+    // We do this even on a replay so concurrent races converge correctly.
+    const sumAgg = await this.paymentModel.aggregate<{ total: number }>([
+      { $match: { clinicId, billId: bill._id } },
+      { $group: { _id: null, total: { $sum: '$amount' } } },
+    ]);
+    const totalPaid = sumAgg[0]?.total ?? 0;
+    if (
+      bill.status === BillStatus.Issued &&
+      totalPaid >= bill.total &&
+      bill.total > 0
+    ) {
+      await this.billModel.updateOne(
+        { _id: bill._id, clinicId, status: BillStatus.Issued },
+        { $set: { status: BillStatus.Paid, paidAt: new Date() } },
+      );
+    }
+
+    return { payment, replayed };
   }
 
   async getBill(clinicId: Types.ObjectId, id: string) {

@@ -9,8 +9,8 @@ import {
 import type { Request, Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/public.decorator';
-import { THROTTLE_AUTH } from '../../common/throttler.config';
 import { AuthService } from './auth.service';
+import { LoginDto } from './dto/login.dto';
 
 const REFRESH_COOKIE = 'digirx_refresh';
 
@@ -20,15 +20,9 @@ export class AuthController {
 
   @Post('login')
   @Public()
-  @Throttle({ [THROTTLE_AUTH]: { limit: 10, ttl: 60_000 } })
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async login(
-    @Body()
-    body: {
-      clinicId: string;
-      email: string;
-      password: string;
-      branchId?: string;
-    },
+    @Body() body: LoginDto,
     @Res({ passthrough: true }) res: Response,
   ) {
     const out = await this.auth.login(body);

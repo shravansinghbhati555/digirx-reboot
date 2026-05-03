@@ -3,14 +3,12 @@ import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
 import { TestNotificationDto } from './dto/test-notification.dto';
+import { UpsertTemplateDto } from './dto/upsert-template.dto';
 import { NotificationsService } from './notifications.service';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { NotificationLog } from './schemas/notification-log.schema';
-import {
-  NotificationTemplate,
-  NotificationChannel,
-} from './schemas/notification-template.schema';
+import { NotificationTemplate } from './schemas/notification-template.schema';
 
 @Controller('notifications')
 export class NotificationsController {
@@ -56,13 +54,7 @@ export class NotificationsController {
   @RequirePermissions(Permission.NotificationWrite)
   async upsertTemplate(
     @Req() req: AppRequest,
-    @Body()
-    body: {
-      channel: NotificationChannel;
-      key: string;
-      body: string;
-      active?: boolean;
-    },
+    @Body() body: UpsertTemplateDto,
   ) {
     const doc = await this.templateModel.findOneAndUpdate(
       { clinicId: req.context!.clinicId, channel: body.channel, key: body.key },

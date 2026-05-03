@@ -31,7 +31,7 @@ export class User {
   @Prop({ required: true, enum: UserStatus, default: UserStatus.Active })
   status!: UserStatus;
 
-  @Prop()
+  @Prop({ select: false })
   passwordHash?: string;
 
   @Prop({ type: [Types.ObjectId], default: [], index: true })

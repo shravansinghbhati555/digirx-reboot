@@ -10,11 +10,17 @@ import {
   Prescription,
   PrescriptionSchema,
 } from './schemas/prescription.schema';
+import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
+import { User, UserSchema } from '../authz/schemas/user.schema';
+import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Prescription.name, schema: PrescriptionSchema },
+      { name: Patient.name, schema: PatientSchema },
+      { name: User.name, schema: UserSchema },
+      { name: Clinic.name, schema: ClinicSchema },
     ]),
     EncountersModule,
     PdfModule,

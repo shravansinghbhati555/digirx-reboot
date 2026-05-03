@@ -78,7 +78,7 @@ export class ReportsService {
         $match: {
           clinicId,
           ...branchFilter,
-          status: BillStatus.Issued,
+          status: { $in: [BillStatus.Issued, BillStatus.Paid] },
           issuedAt: { $gte: start, $lte: end },
         },
       },
@@ -185,7 +185,7 @@ export class ReportsService {
         $match: {
           clinicId,
           ...bFilter,
-          status: BillStatus.Issued,
+          status: { $in: [BillStatus.Issued, BillStatus.Paid] },
         },
       },
       {
