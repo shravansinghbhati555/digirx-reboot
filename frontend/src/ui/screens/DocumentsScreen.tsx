@@ -211,11 +211,11 @@ function DocCard({ doc, onDownload, onShare }: { doc: LocalDoc; onDownload: () =
           borderRadius: 14, opacity: 0, transition: 'opacity 120ms ease-out', pointerEvents: 'auto',
         }}>
         <button onClick={onShare}
-          style={{ height: 34, padding: '0 14px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+          style={{ height: 34, padding: '0 14px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
           <Icon name="send" size={12} /> Share
         </button>
         <button onClick={onDownload}
-          style={{ height: 34, padding: '0 12px', background: 'rgba(255,255,255,0.15)', color: '#fff', border: '1px solid rgba(255,255,255,0.2)', borderRadius: 9, fontSize: 12, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+          style={{ height: 34, padding: '0 12px', background: 'var(--on-brand-soft-bg)', color: 'var(--brand-text)', border: '1px solid var(--on-brand-soft-border)', borderRadius: 9, fontSize: 12, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
           <Icon name="download" size={12} />
         </button>
       </div>
@@ -307,7 +307,7 @@ function ShareDialog({ doc, onClose }: { doc: LocalDoc; onClose: () => void }) {
 
           {!share ? (
             <button onClick={generate} disabled={generating}
-              style={{ height: 40, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: generating ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              style={{ height: 40, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: generating ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
               {generating ? <Spinner /> : <><Icon name="send" size={14} /> Generate share link</>}
             </button>
           ) : (
@@ -318,7 +318,7 @@ function ShareDialog({ doc, onClose }: { doc: LocalDoc; onClose: () => void }) {
                   <span style={{ fontSize: 12, color: 'var(--text-subtle)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', fontFamily: 'monospace' }}>{link}</span>
                 </div>
                 <button onClick={copy}
-                  style={{ height: 38, padding: '0 16px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                  style={{ height: 38, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
                   <Icon name="send" size={13} /> Copy
                 </button>
               </div>

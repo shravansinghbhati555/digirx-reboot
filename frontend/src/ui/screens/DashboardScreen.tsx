@@ -263,7 +263,7 @@ function describeActivity(log: AccessLog): { label: string; icon: IconName } {
   if (m === 'POST' && /^\/documents\/upload-url$/.test(p)) return { label: 'Document uploaded', icon: 'upload' };
   if (m === 'POST' && /\/share\/revoke$/.test(p)) return { label: 'Share link revoked', icon: 'xCircle' };
   if (m === 'POST' && /\/share$/.test(p)) return { label: 'Share link created', icon: 'send' };
-  if (m === 'PATCH' && p.startsWith('/clinic/settings')) return { label: 'Clinic settings updated', icon: 'settings' };
+  if (m === 'PATCH' && /^\/clinics\/[^/]+\/settings$/.test(p)) return { label: 'Clinic settings updated', icon: 'settings' };
   return { label: `${m} ${p}`, icon: 'activity' };
 }
 

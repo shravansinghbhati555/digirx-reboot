@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
-import { Avatar, Field, Spinner, StatusPill, useToast } from '../shared/primitives';
+import { Avatar, Spinner, StatusPill, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
 
 type Encounter = {
@@ -34,6 +34,25 @@ const VITAL_FIELDS: { key: string; label: string; unit: string }[] = [
   { key: 'weight', label: 'Weight', unit: 'kg' },
 ];
 
+function getAge(dob?: string): number | null {
+  if (!dob) return null;
+  const d = new Date(dob);
+  if (isNaN(d.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const md = now.getMonth() - d.getMonth();
+  if (md < 0 || (md === 0 && now.getDate() < d.getDate())) age--;
+  return age;
+}
+
+function genderWord(g?: string): string {
+  const u = (g ?? '').toUpperCase();
+  if (u === 'MALE') return 'Male';
+  if (u === 'FEMALE') return 'Female';
+  if (u === 'OTHER') return 'Other';
+  return '';
+}
+
 export function EncounterScreen() {
   const { ctx, selectedAppointmentId, setSelectedAppointmentId, setScreen } = useApp();
   const [patientId, setPatientId] = useState('');
@@ -43,6 +62,15 @@ export function EncounterScreen() {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+
+  // Patient search (only used while no patient is selected)
+  const [patientQuery, setPatientQuery] = useState('');
+  const [patientResults, setPatientResults] = useState<Patient[]>([]);
+  const [searching, setSearching] = useState(false);
+
+  // Doctor display (locked to current user — backend has no /users list endpoint yet)
+  const doctorName = ctx.fullName ? `Dr. ${ctx.fullName}` : 'Doctor';
+  const doctorSubtitle = ctx.email ?? `User ${doctorId.slice(-6)}`;
 
   // If we arrived from an appointment, pre-load the appointment to get patient/doctor
   useEffect(() => {
@@ -59,6 +87,33 @@ export function EncounterScreen() {
     if (!patientId.trim()) { setPatient(null); return; }
     apiGet<Patient>(ctx, `/patients/${patientId.trim()}`).then(setPatient).catch(() => setPatient(null));
   }, [patientId, ctx]);
+
+  // Debounced search
+  useEffect(() => {
+    if (patient) { setPatientResults([]); return; } // already chosen
+    if (!patientQuery.trim()) { setPatientResults([]); return; }
+    setSearching(true);
+    const t = setTimeout(() => {
+      const qs = new URLSearchParams({ query: patientQuery.trim(), limit: '10' });
+      apiGet<Patient[]>(ctx, `/patients?${qs.toString()}`)
+        .then(setPatientResults)
+        .catch(() => setPatientResults([]))
+        .finally(() => setSearching(false));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [patientQuery, patient, ctx]);
+
+  function pickPatient(p: Patient) {
+    setPatientId(p._id);
+    setPatient(p);
+    setPatientQuery('');
+    setPatientResults([]);
+  }
+
+  function clearPatient() {
+    setPatientId('');
+    setPatient(null);
+  }
 
   async function loadEncounter(id: string) {
     setError(null);
@@ -97,19 +152,104 @@ export function EncounterScreen() {
   }
 
   if (!encounter) {
+    const age = getAge(patient?.dob);
+    const gw = genderWord(patient?.gender);
+    const phone = patient?.phones?.[0];
+    const meta = [gw, age != null ? `${age}y` : null, phone].filter(Boolean).join(' · ');
+
     return (
-      <div style={{ padding: '32px 32px', maxWidth: 720, margin: '0 auto' }}>
+      <div style={{ padding: '32px 32px', maxWidth: 720 }}>
         <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>Encounter</h1>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Start a new encounter or load one by ID.</p>
 
-        <div style={{ marginTop: 24, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
-          <Field label="Patient ID" value={patientId} onChange={setPatientId} placeholder="ObjectId" />
-          {patient && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>→ {patient.fullName}</div>}
-          <Field label="Doctor user ID" value={doctorId} onChange={setDoctorId} placeholder="ObjectId" />
+        <div style={{ marginTop: 24, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {/* Patient picker */}
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>Patient</label>
+
+            {patient ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 12 }}>
+                <Avatar name={patient.fullName} size={40} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--brand-700)' }}>{patient.fullName}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{meta || 'No details on file'}</div>
+                </div>
+                <button onClick={clearPatient}
+                  style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer', padding: '4px 8px' }}>
+                  Change
+                </button>
+              </div>
+            ) : (
+              <div style={{ position: 'relative' }}>
+                <div style={{ position: 'relative' }}>
+                  <Icon name="search" size={15} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
+                  <input value={patientQuery} onChange={(e) => setPatientQuery(e.target.value)}
+                    placeholder="Search by name or phone…"
+                    style={{
+                      width: '100%', height: 42, padding: '0 14px 0 40px',
+                      background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
+                      fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
+                    }}
+                    onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--brand-500)')}
+                    onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+                  />
+                </div>
+                {patientQuery.trim() && (
+                  <div style={{ marginTop: 6, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)', maxHeight: 280, overflowY: 'auto' }}>
+                    {searching && patientResults.length === 0 && (
+                      <div style={{ padding: 14, textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)' }}>Searching…</div>
+                    )}
+                    {!searching && patientResults.length === 0 && (
+                      <div style={{ padding: 14, textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)' }}>No patients match.</div>
+                    )}
+                    {patientResults.map((p) => {
+                      const a = getAge(p.dob);
+                      const gword = genderWord(p.gender);
+                      const ph = p.phones?.[0];
+                      return (
+                        <button key={p._id} onClick={() => pickPatient(p)}
+                          style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
+                          <Avatar name={p.fullName} size={32} />
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.fullName}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
+                              {[gword, a != null ? `${a}y` : null, ph].filter(Boolean).join(' · ') || '—'}
+                            </div>
+                          </div>
+                          <Icon name="chevronRight" size={14} style={{ color: 'var(--text-subtle)', flexShrink: 0 }} />
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Doctor (locked) */}
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>Doctor</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 12 }}>
+              <Avatar name={doctorName} size={36} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{doctorName}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{doctorSubtitle}</div>
+              </div>
+              <span style={{ fontSize: 11, color: 'var(--text-subtle)', padding: '3px 9px', borderRadius: 100, background: 'var(--surface)', border: '1px solid var(--border)' }}>You</span>
+            </div>
+          </div>
+
           {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
+
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={startEncounter} disabled={creating}
-              style={{ flex: 1, height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: creating ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            <button onClick={startEncounter} disabled={creating || !patient}
+              style={{
+                flex: 1, height: 42, border: 'none', borderRadius: 10,
+                background: (creating || !patient) ? 'rgba(99,102,241,0.4)' : 'var(--brand-500)',
+                color: 'var(--brand-text)', fontSize: 14, fontWeight: 600,
+                cursor: creating ? 'wait' : (!patient ? 'not-allowed' : 'pointer'),
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}>
               {creating ? <Spinner /> : <><Icon name="plus" size={14} strokeWidth={2.5} /> Start encounter</>}
             </button>
             <button onClick={() => setScreen('appointments')}
@@ -120,7 +260,8 @@ export function EncounterScreen() {
         </div>
 
         <div style={{ marginTop: 24, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 10 }}>Load existing encounter</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>Load existing encounter</div>
+          <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginBottom: 10 }}>Paste an encounter ID to reopen it.</div>
           <div style={{ display: 'flex', gap: 8 }}>
             <input value={encounterId ?? ''} onChange={(e) => setEncounterId(e.target.value)} placeholder="Encounter ID"
               style={{ flex: 1, height: 38, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none', fontFamily: 'monospace' }} />
@@ -432,7 +573,7 @@ function EncounterEditor({
               {savingDraft ? 'Saving…' : 'Save draft'}
             </button>
             <button onClick={() => setShowSign(true)}
-              style={{ height: 40, padding: '0 24px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              style={{ height: 40, padding: '0 24px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
               <Icon name="lock" size={14} /> Sign encounter
             </button>
           </div>
@@ -456,7 +597,7 @@ function EncounterEditor({
                 Cancel
               </button>
               <button onClick={sign} disabled={signing}
-                style={{ flex: 2, height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: signing ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                style={{ flex: 2, height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: signing ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 {signing ? <Spinner /> : <><Icon name="lock" size={14} /> Sign encounter</>}
               </button>
             </div>

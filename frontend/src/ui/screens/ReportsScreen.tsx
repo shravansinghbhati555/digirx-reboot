@@ -130,7 +130,7 @@ function RevenueTab() {
         <div style={{ flex: 1 }}><Field label="From" value={from} onChange={setFrom} placeholder="YYYY-MM-DD" /></div>
         <div style={{ flex: 1 }}><Field label="To" value={to} onChange={setTo} placeholder="YYYY-MM-DD" /></div>
         <button onClick={load} disabled={loading}
-          style={{ height: 40, padding: '0 20px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
+          style={{ height: 40, padding: '0 20px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
           {loading ? 'Loading…' : 'Reload'}
         </button>
       </div>
@@ -233,7 +233,7 @@ function UtilizationTab() {
         <div style={{ flex: 1 }}><Field label="Date" value={date} onChange={setDate} placeholder="YYYY-MM-DD" /></div>
         <div style={{ flex: 1 }}><Field label="Branch ID" value={branchId} onChange={setBranchId} placeholder="ObjectId" /></div>
         <button onClick={load} disabled={loading} className="press-scale"
-          style={{ height: 40, padding: '0 20px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
+          style={{ height: 40, padding: '0 20px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
           {loading ? 'Loading…' : 'Reload'}
         </button>
       </div>
@@ -344,7 +344,7 @@ function ScheduleTab() {
         <div style={{ flex: 1 }}><Field label="Date" value={date} onChange={setDate} placeholder="YYYY-MM-DD" /></div>
         <div style={{ flex: 1 }}><Field label="Branch ID" value={branchId} onChange={setBranchId} placeholder="ObjectId" /></div>
         <button onClick={load} disabled={loading}
-          style={{ height: 40, padding: '0 20px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
+          style={{ height: 40, padding: '0 20px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
           {loading ? 'Loading…' : 'Reload'}
         </button>
       </div>

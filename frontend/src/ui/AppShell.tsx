@@ -129,7 +129,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         {/* Logo */}
         <div style={{ height: 56, display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-start', padding: collapsed ? 0 : '0 12px 0 16px', gap: 10, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           <div style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--brand-500)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <Icon name="cross" size={14} style={{ color: '#fff' }} strokeWidth={2.5} />
+            <Icon name="cross" size={14} style={{ color: 'var(--brand-text)' }} strokeWidth={2.5} />
           </div>
           {!collapsed && (
             <>
@@ -218,7 +218,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           <div style={{ flex: 1 }} />
 
           <button onClick={() => setScreen('patients')}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 14px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'background 120ms, transform 120ms' }}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 14px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'background 120ms, transform 120ms' }}
             onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.97)')}
             onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
             onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}>

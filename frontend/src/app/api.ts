@@ -1,5 +1,7 @@
 import type { DevContext } from './context';
-import { saveContext } from './context';
+import { clearContext, saveContext } from './context';
+
+export const AUTH_EXPIRED_EVENT = 'digirx:auth-expired';
 
 export async function apiGet<T>(ctx: DevContext, path: string): Promise<T> {
   return await apiFetch<T>(ctx, path, { method: 'GET' });
@@ -47,11 +49,17 @@ async function apiFetch<T>(
   });
 
   if (res.status === 401 && attempt === 0) {
-    const next = await refreshAccessToken(ctx);
+    const next = await sharedRefresh(ctx);
     if (next) {
       ctx.accessToken = next;
       saveContext(ctx);
       return await apiFetch<T>(ctx, path, init, 1);
+    }
+    // Refresh failed — only treat this as an expired session for JWT users.
+    // Dev-header callers (x-user-id only) get a normal 401 error instead.
+    if (ctx.accessToken) {
+      clearContext();
+      window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
     }
   }
 
@@ -75,6 +83,19 @@ async function apiFetch<T>(
   const ct = res.headers.get('content-type') ?? '';
   if (!ct.includes('application/json')) return undefined as T;
   return (await res.json()) as T;
+}
+
+// Concurrent 401s should produce one refresh round-trip, not N.
+// Every caller awaits the same in-flight promise; once it resolves, the
+// next 401 will start a fresh refresh.
+let inFlightRefresh: Promise<string | null> | null = null;
+
+function sharedRefresh(ctx: DevContext): Promise<string | null> {
+  if (inFlightRefresh) return inFlightRefresh;
+  inFlightRefresh = refreshAccessToken(ctx).finally(() => {
+    inFlightRefresh = null;
+  });
+  return inFlightRefresh;
 }
 
 async function refreshAccessToken(ctx: DevContext): Promise<string | null> {

@@ -27,9 +27,9 @@ type Template = {
 };
 
 const CHANNELS: Record<string, { label: string; color: string; bg: string; icon: IconName }> = {
-  EMAIL:    { label: 'Email',    color: '#3B82F6', bg: 'rgba(59,130,246,0.1)', icon: 'mail' },
-  SMS:      { label: 'SMS',      color: '#8B5CF6', bg: 'rgba(139,92,246,0.1)', icon: 'smartphone' },
-  WHATSAPP: { label: 'WhatsApp', color: '#10B981', bg: 'rgba(16,185,129,0.1)', icon: 'send' },
+  EMAIL:    { label: 'Email',    color: 'var(--brand-500)',   bg: 'var(--brand-bg-soft)', icon: 'mail' },
+  SMS:      { label: 'SMS',      color: 'var(--purple-500)',  bg: 'var(--purple-bg)',     icon: 'smartphone' },
+  WHATSAPP: { label: 'WhatsApp', color: 'var(--success-500)', bg: 'var(--success-bg)',    icon: 'send' },
 };
 
 const NOTIF_STATUS_COLORS: Record<string, string> = {
@@ -282,7 +282,7 @@ function TemplatesTab() {
               Active
             </label>
             <button onClick={save} disabled={saving}
-              style={{ height: 36, padding: '0 20px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: saving ? 'wait' : 'pointer' }}>
+              style={{ height: 36, padding: '0 20px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: saving ? 'wait' : 'pointer' }}>
               {saving ? 'Saving…' : 'Save template'}
             </button>
           </div>

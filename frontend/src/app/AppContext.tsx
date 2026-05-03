@@ -1,5 +1,5 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { apiGet, apiPost } from './api';
+import { apiGet, apiPost, AUTH_EXPIRED_EVENT } from './api';
 import { clearContext, isLoggedIn, loadContext, saveContext, type DevContext } from './context';
 
 export type ScreenKey =
@@ -53,7 +53,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const saved = localStorage.getItem('digirx.theme');
     return saved === 'dark' ? 'dark' : 'light';
   });
-  const [meData, setMeData] = useState<{ permissions: string[]; user?: { fullName?: string; email?: string } } | null>(null);
+  const [meData, setMeData] = useState<{ permissions: string[]; user?: { name?: string; fullName?: string; email?: string } } | null>(null);
   const [loadingMe, setLoadingMe] = useState(false);
   const [meError, setMeError] = useState<string | null>(null);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | undefined>();
@@ -77,6 +77,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     document.documentElement.setAttribute('data-theme', theme);
   }, [theme]);
 
+  useEffect(() => {
+    function onAuthExpired() {
+      setCtxState(loadContext());
+      setMeData(null);
+      setMeError(null);
+      setScreen('dashboard');
+    }
+    window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
+    return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
+  }, []);
+
   const loggedIn = isLoggedIn(ctx);
 
   async function refreshMe() {
@@ -87,13 +98,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLoadingMe(true);
     setMeError(null);
     try {
-      const data = await apiGet<{ permissions: string[]; user?: { fullName?: string; email?: string } }>(ctx, '/me');
+      const data = await apiGet<{ permissions: string[]; user?: { name?: string; fullName?: string; email?: string } }>(ctx, '/me');
       setMeData(data);
       // Persist email/fullName/permissions for header display.
+      // The User schema uses `name`; keep `fullName` as a fallback for older clients.
       const next: DevContext = {
         ...ctx,
         email: data.user?.email,
-        fullName: data.user?.fullName,
+        fullName: data.user?.fullName ?? data.user?.name,
         permissions: data.permissions,
       };
       saveContext(next);

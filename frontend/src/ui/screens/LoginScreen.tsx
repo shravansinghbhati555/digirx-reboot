@@ -102,20 +102,20 @@ function BrandPanel() {
   return (
     <div style={{
       flex: '0 0 45%',
-      background: 'linear-gradient(155deg, #1D4ED8 0%, #2563EB 45%, #3B82F6 100%)',
+      background: 'linear-gradient(155deg, var(--brand-700) 0%, var(--brand-600) 45%, var(--brand-500) 100%)',
       display: 'flex', flexDirection: 'column', padding: 48, position: 'relative', overflow: 'hidden',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, animation: 'fadeIn 320ms var(--ease-out)' }}>
         <div style={{ width: 36, height: 36, background: 'rgba(255,255,255,0.18)', borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Icon name="cross" size={18} style={{ color: '#fff' }} strokeWidth={2.5} />
+          <Icon name="cross" size={18} style={{ color: 'var(--brand-text)' }} strokeWidth={2.5} />
         </div>
-        <span style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 800, color: '#fff', letterSpacing: '-0.5px' }}>
+        <span style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 800, color: 'var(--brand-text)', letterSpacing: '-0.5px' }}>
           Digi<span style={{ opacity: 0.7, fontWeight: 600 }}>Rx</span>
         </span>
       </div>
 
       <div style={{ marginTop: 'auto', animation: 'slideUp 400ms var(--ease-out) 100ms both' }}>
-        <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 32, fontWeight: 700, color: '#fff', lineHeight: 1.25, letterSpacing: '-0.5px', marginBottom: 12 }}>
+        <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 32, fontWeight: 700, color: 'var(--brand-text)', lineHeight: 1.25, letterSpacing: '-0.5px', marginBottom: 12 }}>
           Healthcare,<br />simplified.
         </h2>
         <p style={{ fontSize: 15, color: 'rgba(255,255,255,0.65)', lineHeight: 1.6, maxWidth: 320 }}>
@@ -281,7 +281,7 @@ function SignInStep({
           style={{
             width: '100%', height: 48,
             background: btnState === 'success' ? 'var(--success-500)' : 'var(--brand-500)',
-            color: '#fff', border: 'none', borderRadius: 12, fontSize: 15, fontWeight: 600,
+            color: 'var(--brand-text)', border: 'none', borderRadius: 12, fontSize: 15, fontWeight: 600,
             cursor: btnState === 'loading' || btnState === 'success' ? 'not-allowed' : 'pointer',
             display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
             opacity: btnState === 'loading' ? 0.85 : 1, transition: 'background 200ms',
@@ -418,7 +418,7 @@ function BranchPickerStep({
 
       <button onClick={handleContinue} disabled={continuing || (branches !== null && branches.length > 0 && !selected)}
         style={{
-          width: '100%', height: 48, background: 'var(--brand-500)', color: '#fff', border: 'none',
+          width: '100%', height: 48, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none',
           borderRadius: 12, fontSize: 15, fontWeight: 600,
           cursor: continuing ? 'wait' : (branches && branches.length > 0 && !selected ? 'not-allowed' : 'pointer'),
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
@@ -484,7 +484,7 @@ function WelcomeStep({ auth, branch, onFinish }: { auth: PendingAuth; branch: Br
 
       <button onClick={onFinish}
         style={{
-          width: '100%', height: 48, background: 'var(--brand-500)', color: '#fff', border: 'none',
+          width: '100%', height: 48, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none',
           borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: 'pointer',
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
           animation: 'slideUp 200ms var(--ease-out) 100ms both',

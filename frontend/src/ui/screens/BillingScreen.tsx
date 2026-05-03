@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiGet, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
-import { Avatar, EmptyState, Field, Spinner, StatusPill, formatINR, labelStyle, useToast } from '../shared/primitives';
+import { Avatar, EmptyState, Spinner, StatusPill, formatINR, labelStyle, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
 import { Skeleton } from '../shared/Skeleton';
 import { useShake } from '../shared/useShake';
@@ -122,7 +122,7 @@ export function BillingScreen() {
             Load
           </button>
           <button onClick={() => setShowCreate(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
             <Icon name="plus" size={13} strokeWidth={2.5} /> New bill
           </button>
         </div>
@@ -267,8 +267,8 @@ function BillDetail({ bill, onClose, onChanged }: { bill: Bill; onClose: () => v
           <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>{bill.patientId.slice(-12)} · {bill.currency}</div>
         </div>
         <StatusPill status={bill.status.toLowerCase()} />
-        {isDraft && <button onClick={issue} disabled={busy} style={{ height: 36, padding: '0 16px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: busy ? 'wait' : 'pointer' }}>Issue bill</button>}
-        {isIssued && balance > 0 && <button onClick={() => setShowPay(true)} style={{ height: 36, padding: '0 16px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Record payment</button>}
+        {isDraft && <button onClick={issue} disabled={busy} style={{ height: 36, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: busy ? 'wait' : 'pointer' }}>Issue bill</button>}
+        {isIssued && balance > 0 && <button onClick={() => setShowPay(true)} style={{ height: 36, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Record payment</button>}
         <button onClick={downloadPdf} title="PDF" style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 9, cursor: 'pointer', color: 'var(--text-muted)' }}>
           <Icon name="download" size={14} />
         </button>
@@ -383,7 +383,7 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
     setLoading(true); setError(null);
     try {
       await apiPost(ctx, `/bills/${bill._id}/payments`, {
-        method, amount: Number(amount), reference: reference.trim() || undefined, idempotencyKey,
+        method, amount: Number(amount), providerRef: reference.trim() || undefined, idempotencyKey,
       });
       toast(`Payment of ${formatINR(Number(amount))} recorded`, 'success');
       onSuccess();
@@ -453,7 +453,7 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
 
         <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
           <button onClick={submit} disabled={loading || !amount || Number(amount) <= 0}
-            style={{ width: '100%', height: 46, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: loading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: loading ? 0.8 : 1 }}>
+            style={{ width: '100%', height: 46, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: loading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: loading ? 0.8 : 1 }}>
             {loading ? <Spinner /> : <><Icon name="check" size={16} strokeWidth={2.5} />Record {formatINR(Number(amount) || 0)}</>}
           </button>
         </div>
@@ -462,31 +462,56 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
   );
 }
 
+type PatientHit = { _id: string; fullName: string; phones?: string[]; gender?: string; dob?: string };
+
+type DraftItem = { name: string; serviceId?: string; qty: number; price: number };
+
 function CreateBillSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (b: Bill) => void }) {
   const { ctx } = useApp();
   const toast = useToast();
   const [services, setServices] = useState<Service[]>([]);
-  const [patientId, setPatientId] = useState('');
-  const [items, setItems] = useState<{ name: string; serviceId?: string; qty: number; price: number }[]>([
-    { name: 'Consultation', qty: 1, price: 500 },
-  ]);
+
+  // Patient picker
+  const [patient, setPatient] = useState<PatientHit | null>(null);
+  const [patientQuery, setPatientQuery] = useState('');
+  const [patientHits, setPatientHits] = useState<PatientHit[]>([]);
+  const [patientFocused, setPatientFocused] = useState(false);
+
+  const [items, setItems] = useState<DraftItem[]>([{ name: 'Consultation', qty: 1, price: 800 }]);
   const [discount, setDiscount] = useState('0');
-  const [tax, setTax] = useState('0');
-  const [saving, setSaving] = useState(false);
+  const [notes, setNotes] = useState('');
+  const [savingDraft, setSavingDraft] = useState(false);
+  const [issuing, setIssuing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { shakeProps, shake } = useShake();
+
+  const subtitle = [ctx.clinicName, formatHeaderDate(new Date())].filter(Boolean).join(' · ');
 
   useEffect(() => {
     apiGet<Service[]>(ctx, '/catalog/services').then(setServices).catch(() => setServices([]));
   }, [ctx]);
 
+  // Patient search
+  useEffect(() => {
+    if (patient) { setPatientHits([]); return; }
+    if (!patientQuery.trim()) { setPatientHits([]); return; }
+    const t = setTimeout(() => {
+      const qs = new URLSearchParams({ query: patientQuery.trim(), limit: '10' });
+      apiGet<PatientHit[]>(ctx, `/patients?${qs.toString()}`)
+        .then(setPatientHits)
+        .catch(() => setPatientHits([]));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [patientQuery, patient, ctx]);
+
   const subtotal = items.reduce((s, i) => s + i.qty * i.price, 0);
-  const total = Math.max(0, subtotal - Number(discount || 0) + Number(tax || 0));
+  const discountNum = Math.max(0, Number(discount || 0));
+  const total = Math.max(0, subtotal - discountNum);
 
   function addItem() {
     setItems((rows) => [...rows, { name: '', qty: 1, price: 0 }]);
   }
-  function updateItem(i: number, patch: Partial<typeof items[number]>) {
+  function updateItem(i: number, patch: Partial<DraftItem>) {
     setItems((rows) => rows.map((r, idx) => idx === i ? { ...r, ...patch } : r));
   }
   function removeItem(i: number) {
@@ -497,110 +522,255 @@ function CreateBillSheet({ onClose, onCreated }: { onClose: () => void; onCreate
     if (s) updateItem(i, { name: s.name, serviceId: s._id, price: s.defaultPrice });
   }
 
-  async function submit() {
-    if (!ctx.branchId) { setError('Set a branch ID (sign in to a branch).'); shake(); return; }
-    if (!patientId.trim()) { setError('Patient ID is required.'); shake(); return; }
+  function validate(): boolean {
+    if (!ctx.branchId) { setError('Set a branch (sign in to a branch).'); shake(); return false; }
+    if (!patient) { setError('Pick a patient.'); shake(); return false; }
     if (items.length === 0 || items.some((i) => !i.name.trim() || i.qty <= 0)) {
-      setError('All items need a name and a quantity > 0.');
+      setError('Each item needs a description and a quantity > 0.');
       shake();
-      return;
+      return false;
     }
-    setSaving(true); setError(null);
+    setError(null);
+    return true;
+  }
+
+  async function postDraft(): Promise<Bill | null> {
+    const body = {
+      branchId: ctx.branchId,
+      patientId: patient!._id,
+      currency: 'INR',
+      items: items.map((i) => ({
+        serviceCatalogItemId: i.serviceId,
+        customName: i.serviceId ? undefined : i.name,
+        quantity: i.qty,
+        unitPrice: i.price,
+      })),
+      discount: discountNum,
+      tax: 0,
+      notes: notes.trim() || undefined,
+    };
+    return await apiPost<Bill>(ctx, '/bills', body);
+  }
+
+  async function saveDraft() {
+    if (!validate()) return;
+    setSavingDraft(true);
     try {
-      const body = {
-        branchId: ctx.branchId,
-        patientId: patientId.trim(),
-        currency: 'INR',
-        items: items.map((i) => ({
-          serviceCatalogItemId: i.serviceId,
-          customName: i.serviceId ? undefined : i.name,
-          quantity: i.qty,
-          unitPrice: i.price,
-        })),
-        discount: Number(discount || 0),
-        tax: Number(tax || 0),
-      };
-      const created = await apiPost<Bill>(ctx, '/bills', body);
-      toast('Draft bill created', 'success');
-      onCreated(created);
+      const created = await postDraft();
+      toast('Draft bill saved', 'success');
+      if (created) onCreated(created);
     } catch (e) {
       shake();
       setError(e instanceof Error ? e.message : String(e));
     } finally {
-      setSaving(false);
+      setSavingDraft(false);
+    }
+  }
+
+  async function issueBill() {
+    if (!validate()) return;
+    setIssuing(true);
+    try {
+      const draft = await postDraft();
+      if (!draft) throw new Error('Could not create draft');
+      const issued = await apiPost<Bill>(ctx, `/bills/${draft._id}/issue`, {});
+      toast(`Bill ${issued.billNo ?? ''} issued`, 'success');
+      onCreated(issued);
+    } catch (e) {
+      shake();
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setIssuing(false);
     }
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', background: 'rgba(15,23,42,0.3)', backdropFilter: 'blur(2px)' }} onClick={onClose}>
       <div {...shakeProps}
-        style={{ background: 'var(--surface)', borderRadius: 18, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 640, maxHeight: '92vh', display: 'flex', flexDirection: 'column', ...shakeProps.style }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>New bill</div>
-          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}><Icon name="x" size={18} /></button>
+        style={{
+          width: 560, maxWidth: '100%', height: '100%', background: 'var(--surface)',
+          borderLeft: '1px solid var(--border)', boxShadow: '-8px 0 32px rgba(15,23,42,0.12)',
+          display: 'flex', flexDirection: 'column',
+          animation: 'slideInRight 240ms ease-out',
+          ...shakeProps.style,
+        }}
+        onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 17, fontWeight: 700, color: 'var(--text)' }}>New bill</div>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{subtitle || '—'}</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}>
+            <Icon name="x" size={18} />
+          </button>
         </div>
 
-        <div style={{ padding: 24, display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
-          <Field label="Patient ID" value={patientId} onChange={setPatientId} placeholder="ObjectId" />
-
+        {/* Body */}
+        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+          {/* Patient */}
           <div>
-            <label style={labelStyle}>Items</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <label style={labelStyle}>Patient</label>
+            {patient ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 10 }}>
+                <Avatar name={patient.fullName} size={36} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--brand-700)' }}>{patient.fullName}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{patient.phones?.[0] ?? '—'}</div>
+                </div>
+                <button onClick={() => { setPatient(null); setPatientQuery(''); }}
+                  style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                  Change
+                </button>
+              </div>
+            ) : (
+              <div style={{ position: 'relative' }}>
+                <Icon name="search" size={15} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
+                <input value={patientQuery}
+                  onChange={(e) => setPatientQuery(e.target.value)}
+                  onFocus={() => setPatientFocused(true)}
+                  onBlur={() => setTimeout(() => setPatientFocused(false), 150)}
+                  placeholder="Search patient by name or phone…"
+                  style={{
+                    width: '100%', height: 42, padding: '0 14px 0 40px',
+                    background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
+                    fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
+                  }}
+                  onFocusCapture={(e) => (e.currentTarget.style.borderColor = 'var(--brand-500)')}
+                  onBlurCapture={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+                />
+                {patientFocused && patientQuery.trim() && patientHits.length > 0 && (
+                  <div style={{ position: 'absolute', top: 46, left: 0, right: 0, zIndex: 10, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, maxHeight: 240, overflowY: 'auto', boxShadow: '0 8px 24px rgba(15,23,42,0.08)' }}>
+                    {patientHits.map((p) => (
+                      <button key={p._id} onMouseDown={() => { setPatient(p); setPatientHits([]); setPatientQuery(''); }}
+                        style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 14px', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
+                        <Avatar name={p.fullName} size={30} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{p.fullName}</div>
+                          <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{p.phones?.[0] ?? '—'}</div>
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Items */}
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+              <span style={{ ...labelStyle, marginBottom: 0 }}>Bill items</span>
+              <button onClick={addItem}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 10px', background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+                <Icon name="plus" size={13} strokeWidth={2.5} /> Add item
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 100px 30px', gap: 8, padding: '0 4px 6px', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+              <span>Description</span>
+              <span style={{ textAlign: 'center' }}>Qty</span>
+              <span style={{ textAlign: 'right' }}>Rate (₹)</span>
+              <span />
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {items.map((it, i) => (
-                <div key={i} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  {services.length > 0 ? (
-                    <select value={it.serviceId ?? ''} onChange={(e) => e.target.value ? pickService(i, e.target.value) : updateItem(i, { serviceId: undefined })}
-                      style={{ flex: 2, height: 36, padding: '0 10px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 12, color: 'var(--text)', outline: 'none', cursor: 'pointer' }}>
-                      <option value="">— Custom —</option>
-                      {services.map((s) => <option key={s._id} value={s._id}>{s.name} (₹{s.defaultPrice})</option>)}
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 100px 30px', gap: 8, alignItems: 'center' }}>
+                  {services.length > 0 && !it.name && !it.serviceId ? (
+                    <select value={it.serviceId ?? ''}
+                      onChange={(e) => e.target.value ? pickService(i, e.target.value) : updateItem(i, { serviceId: undefined })}
+                      style={inlineInputStyle}>
+                      <option value="">— pick service or type —</option>
+                      {services.map((s) => <option key={s._id} value={s._id}>{s.name}</option>)}
                     </select>
-                  ) : null}
-                  <input value={it.name} onChange={(e) => updateItem(i, { name: e.target.value, serviceId: undefined })} placeholder="Description"
-                    style={{ flex: 3, height: 36, padding: '0 10px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 12, color: 'var(--text)', outline: 'none' }} />
-                  <input type="number" value={it.qty} onChange={(e) => updateItem(i, { qty: Number(e.target.value) || 1 })} placeholder="Qty"
-                    style={{ width: 60, height: 36, padding: '0 10px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 12, color: 'var(--text)', outline: 'none', textAlign: 'right' }} />
-                  <input type="number" value={it.price} onChange={(e) => updateItem(i, { price: Number(e.target.value) || 0 })} placeholder="Price"
-                    style={{ width: 90, height: 36, padding: '0 10px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 12, color: 'var(--text)', outline: 'none', textAlign: 'right' }} />
+                  ) : (
+                    <input value={it.name}
+                      onChange={(e) => updateItem(i, { name: e.target.value, serviceId: undefined })}
+                      placeholder="Description" style={inlineInputStyle} />
+                  )}
+                  <input type="number" min={1} value={it.qty}
+                    onChange={(e) => updateItem(i, { qty: Number(e.target.value) || 1 })}
+                    style={{ ...inlineInputStyle, textAlign: 'center' }} />
+                  <input type="number" min={0} value={it.price}
+                    onChange={(e) => updateItem(i, { price: Number(e.target.value) || 0 })}
+                    style={{ ...inlineInputStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }} />
                   <button onClick={() => removeItem(i)} disabled={items.length === 1}
-                    style={{ width: 36, height: 36, background: 'none', border: '1px solid var(--border)', borderRadius: 9, cursor: items.length === 1 ? 'not-allowed' : 'pointer', color: 'var(--danger-500)', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: items.length === 1 ? 0.4 : 1 }}>
+                    style={{ width: 30, height: 38, background: 'none', border: 'none', cursor: items.length === 1 ? 'not-allowed' : 'pointer', color: 'var(--danger-500)', display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: items.length === 1 ? 0.3 : 1 }}>
                     <Icon name="trash" size={14} />
                   </button>
                 </div>
               ))}
             </div>
+
             <button onClick={addItem}
-              style={{ marginTop: 8, padding: '6px 12px', border: '1.5px dashed var(--border)', borderRadius: 9, background: 'none', color: 'var(--text-muted)', fontSize: 12, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Icon name="plus" size={12} strokeWidth={2.5} /> Add item
+              style={{ marginTop: 8, width: '100%', padding: '8px 12px', border: '1.5px dashed var(--border)', borderRadius: 9, background: 'none', color: 'var(--text-muted)', fontSize: 12, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <Icon name="plus" size={12} strokeWidth={2.5} /> Add another item
             </button>
           </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
-            <div style={{ flex: 1 }}><Field label="Discount" value={discount} onChange={setDiscount} /></div>
-            <div style={{ flex: 1 }}><Field label="Tax" value={tax} onChange={setTax} /></div>
+          {/* Totals card */}
+          <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0', fontSize: 13, color: 'var(--text-muted)' }}>
+              <span>Subtotal</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: 'var(--text)' }}>
+                <Counter value={subtotal} duration={280} format={(n) => formatINR(n)} />
+              </span>
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '6px 0', fontSize: 13, color: 'var(--text-muted)' }}>
+              <span>Discount <span style={{ color: 'var(--text-subtle)' }}>(₹)</span></span>
+              <input type="number" min={0} value={discount} onChange={(e) => setDiscount(e.target.value)}
+                style={{ width: 96, height: 32, padding: '0 10px', background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: 8, fontSize: 13, color: 'var(--text)', outline: 'none', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }} />
+            </div>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '8px 0 4px', borderTop: '1px solid var(--border)', marginTop: 4, fontSize: 14, fontWeight: 700 }}>
+              <span style={{ color: 'var(--text)' }}>Total</span>
+              <span style={{ fontVariantNumeric: 'tabular-nums', color: 'var(--brand-600)' }}>
+                <Counter value={total} duration={280} format={(n) => formatINR(n)} />
+              </span>
+            </div>
           </div>
 
-          <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 16px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: 'var(--text-muted)', marginBottom: 4 }}>
-              <span>Subtotal</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums' }}><Counter value={subtotal} duration={280} format={(n) => formatINR(n)} /></span>
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 700, color: 'var(--text)', marginTop: 6, paddingTop: 8, borderTop: '1px solid var(--border)' }}>
-              <span>Total</span>
-              <span style={{ fontVariantNumeric: 'tabular-nums' }}><Counter value={total} duration={280} format={(n) => formatINR(n)} /></span>
-            </div>
+          {/* Notes */}
+          <div>
+            <label style={labelStyle}>
+              Notes <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>(optional)</span>
+            </label>
+            <textarea value={notes} onChange={(e) => setNotes(e.target.value)}
+              placeholder="Any billing notes or instructions…"
+              style={{
+                width: '100%', minHeight: 64, padding: '10px 12px',
+                background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
+                fontSize: 13, color: 'var(--text)', outline: 'none', resize: 'vertical', boxSizing: 'border-box',
+                fontFamily: 'inherit',
+              }} />
           </div>
 
           {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
         </div>
 
-        <div style={{ padding: '16px 24px', borderTop: '1px solid var(--border)', display: 'flex', gap: 10 }}>
-          <button onClick={onClose} style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
-          <button onClick={submit} disabled={saving}
-            style={{ flex: 2, height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: saving ? 'wait' : 'pointer' }}>
-            {saving ? 'Saving…' : 'Create draft bill'}
+        {/* Footer — two equal-weight buttons */}
+        <div style={{ padding: '16px 24px 20px', borderTop: '1px solid var(--border)', display: 'flex', gap: 10 }}>
+          <button onClick={saveDraft} disabled={savingDraft || issuing}
+            style={{ flex: 1, height: 46, background: 'none', border: '1.5px solid var(--border)', borderRadius: 12, fontSize: 13, fontWeight: 600, color: 'var(--text)', cursor: (savingDraft || issuing) ? 'wait' : 'pointer' }}>
+            {savingDraft ? 'Saving…' : 'Save draft'}
+          </button>
+          <button onClick={issueBill} disabled={savingDraft || issuing}
+            style={{ flex: 1, height: 46, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 12, fontSize: 13, fontWeight: 600, cursor: (savingDraft || issuing) ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            {issuing ? <Spinner /> : <><Icon name="receipt" size={14} /> Issue bill</>}
           </button>
         </div>
       </div>
     </div>
   );
 }
+
+function formatHeaderDate(d: Date): string {
+  return d.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+}
+
+const inlineInputStyle: React.CSSProperties = {
+  width: '100%', height: 38, padding: '0 10px',
+  background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9,
+  fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
+  fontFamily: 'inherit',
+};

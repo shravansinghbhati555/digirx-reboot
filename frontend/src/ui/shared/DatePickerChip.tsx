@@ -110,7 +110,7 @@ export function DatePickerChip({ value, onChange }: { value: string; onChange: (
                     border: 'none', borderRadius: 8, cursor: 'pointer', fontSize: 12,
                     fontWeight: isSelected || isToday ? 700 : 400,
                     background: isSelected ? 'var(--brand-500)' : isToday ? 'var(--brand-50)' : 'transparent',
-                    color: isSelected ? '#fff' : isToday ? 'var(--brand-600)' : isWeekend ? 'var(--text-subtle)' : 'var(--text)',
+                    color: isSelected ? 'var(--brand-text)' : isToday ? 'var(--brand-600)' : isWeekend ? 'var(--text-subtle)' : 'var(--text)',
                     transition: 'background 80ms',
                   }}
                   onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLButtonElement).style.background = 'var(--surface-muted)'; }}

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
-import { Avatar, EmptyState, Field, Spinner, StatusPill, labelStyle, useToast } from '../shared/primitives';
+import { Avatar, EmptyState, Spinner, StatusPill, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
+import { ListItemSkeleton, Skeleton } from '../shared/Skeleton';
 
 type AppointmentType = 'TIME' | 'QUEUE';
 
@@ -19,18 +20,25 @@ type Appointment = {
   notes?: string;
 };
 
-type PatientLite = { _id: string; fullName: string; phones?: string[] };
+type PatientLite = {
+  _id: string;
+  fullName: string;
+  phones?: string[];
+  gender?: 'MALE' | 'FEMALE' | 'OTHER' | string;
+  dob?: string;
+  tags?: string[];
+};
 
 const HOURS = Array.from({ length: 12 }, (_, i) => i + 8);
 const HOUR_H = 72;
 
 const STATUS_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  DONE:        { bg: 'rgba(16,185,129,0.12)', border: '#10B981', text: '#065F46' },
-  CHECKED_IN:  { bg: 'rgba(20,184,166,0.14)', border: '#14B8A6', text: '#0F766E' },
-  IN_PROGRESS: { bg: 'rgba(99,102,241,0.12)', border: '#6366F1', text: '#4338CA' },
-  BOOKED:      { bg: 'rgba(59,130,246,0.12)', border: '#3B82F6', text: '#1E40AF' },
-  CANCELLED:   { bg: 'rgba(239,68,68,0.08)',  border: '#EF4444', text: '#991B1B' },
-  NO_SHOW:     { bg: 'rgba(245,158,11,0.1)',  border: '#F59E0B', text: '#92400E' },
+  DONE:        { bg: 'var(--success-bg)',   border: 'var(--success-500)', text: 'var(--success-text)' },
+  CHECKED_IN:  { bg: 'var(--teal-bg)',      border: 'var(--accent-500)',  text: 'var(--teal-text)' },
+  IN_PROGRESS: { bg: 'var(--info-bg)',      border: 'var(--info-500)',    text: 'var(--info-text)' },
+  BOOKED:      { bg: 'var(--brand-bg-soft)',border: 'var(--brand-500)',   text: 'var(--brand-text-strong)' },
+  CANCELLED:   { bg: 'var(--danger-bg)',    border: 'var(--danger-500)',  text: 'var(--danger-text)' },
+  NO_SHOW:     { bg: 'var(--warning-bg)',   border: 'var(--warning-500)', text: 'var(--warning-text)' },
 };
 
 function statusKey(s: string): string {
@@ -92,7 +100,7 @@ function WeekView({
                   width: 26, height: 26, borderRadius: '50%',
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
                   background: isToday ? 'var(--brand-500)' : 'transparent',
-                  color: isToday ? '#fff' : 'var(--text)',
+                  color: isToday ? 'var(--brand-text)' : 'var(--text)',
                 }}>
                   {dd}
                 </span>
@@ -127,7 +135,11 @@ function WeekView({
                   );
                 })}
                 {loading && (weekItems.get(d) ?? []).length === 0 && (
-                  <div style={{ position: 'absolute', top: 8, left: 0, right: 0, textAlign: 'center', fontSize: 10, color: 'var(--text-subtle)' }}>Loading…</div>
+                  <>
+                    <Skeleton style={{ position: 'absolute', top: 1 * HOUR_H + 4, left: 3, right: 3, height: HOUR_H * 0.5 - 4 }} radius={6} />
+                    <Skeleton style={{ position: 'absolute', top: 3 * HOUR_H + 8, left: 3, right: 3, height: HOUR_H * 0.75 - 4 }} radius={6} />
+                    <Skeleton style={{ position: 'absolute', top: 5 * HOUR_H + 12, left: 3, right: 3, height: HOUR_H * 0.5 - 4 }} radius={6} />
+                  </>
                 )}
               </div>
             );
@@ -286,7 +298,7 @@ export function AppointmentsScreen() {
         </div>
 
         <button onClick={() => setShowBook(true)}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 14px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+          style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 14px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
           <Icon name="plus" size={14} strokeWidth={2.5} /> Book
         </button>
       </div>
@@ -298,9 +310,7 @@ export function AppointmentsScreen() {
       )}
 
       <div style={{ flex: 1, overflow: 'hidden', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
-        {loading && <div style={{ padding: 24, color: 'var(--text-subtle)', fontSize: 13 }}>Loading…</div>}
-
-        {!loading && view === 'day' && (
+        {view === 'day' && (
           <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
             <div style={{ width: 60, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', overflowY: 'auto' }}>
               {HOURS.map((h) => (
@@ -313,12 +323,26 @@ export function AppointmentsScreen() {
               {HOURS.map((h) => (
                 <div key={h} style={{ position: 'absolute', left: 0, right: 0, top: (h - 8) * HOUR_H, height: HOUR_H, borderBottom: '1px solid var(--border)', boxSizing: 'border-box' }} />
               ))}
-              {dayAppts.length === 0 && !error && (
+              {loading && (
+                <>
+                  {[
+                    { hh: 1, dur: 0.5 },
+                    { hh: 2.5, dur: 0.75 },
+                    { hh: 4, dur: 1 },
+                    { hh: 6, dur: 0.5 },
+                    { hh: 8.5, dur: 0.75 },
+                  ].map((s, i) => (
+                    <Skeleton key={i} radius={8}
+                      style={{ position: 'absolute', left: 6, right: 6, top: s.hh * HOUR_H + 2, height: s.dur * HOUR_H - 4 }} />
+                  ))}
+                </>
+              )}
+              {!loading && dayAppts.length === 0 && !error && (
                 <div style={{ padding: '60px 24px', textAlign: 'center', color: 'var(--text-subtle)' }}>
                   <EmptyState icon="calendar" title="No time-based appointments" hint="Use the Book button to create one." />
                 </div>
               )}
-              {dayAppts.map((a) => {
+              {!loading && dayAppts.map((a) => {
                 const startMin = isoToMin(a.startAt);
                 const endMin = isoToMin(a.endAt);
                 const dur = Math.max(endMin - startMin, 15);
@@ -349,15 +373,19 @@ export function AppointmentsScreen() {
           />
         )}
 
-        {!loading && view === 'queue' && (
+        {view === 'queue' && (
           <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, maxWidth: 720 }}>
               <div>
                 <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Walk-in queue</h2>
-                <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{queueAppts.filter((a) => statusKey(a.status) === 'BOOKED').length} waiting</p>
+                <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{loading ? '—' : queueAppts.filter((a) => statusKey(a.status) === 'BOOKED').length} waiting</p>
               </div>
             </div>
-            {queueAppts.length === 0 ? <EmptyState icon="users" title="No queue tokens for this date" /> : (
+            {loading ? (
+              <div style={{ maxWidth: 720, background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+                {Array.from({ length: 5 }).map((_, i) => <ListItemSkeleton key={i} />)}
+              </div>
+            ) : queueAppts.length === 0 ? <EmptyState icon="users" title="No queue tokens for this date" /> : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 720 }}>
                 {queueAppts.map((a) => (
                   <div key={a._id} onClick={() => setSelected(a)}
@@ -468,21 +496,21 @@ function ApptSheet({ appt, patientName, onClose, onChanged }: { appt: Appointmen
         <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {status === 'BOOKED' && (
             <button onClick={checkIn} disabled={busy} className="press-scale"
-              style={{ height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              style={{ height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: busy ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
               <Icon name="checkCircle" size={14} strokeWidth={2.5} />
               {busy ? 'Checking in…' : 'Check in patient'}
             </button>
           )}
           {status === 'CHECKED_IN' && (
             <button onClick={startEncounter} className="press-scale"
-              style={{ height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              style={{ height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
               <Icon name="stethoscope" size={14} />
               Start encounter
             </button>
           )}
           {status === 'IN_PROGRESS' && (
             <button onClick={startEncounter} className="press-scale"
-              style={{ height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              style={{ height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
               <Icon name="clipboard" size={14} />
               Continue encounter
             </button>
@@ -508,6 +536,46 @@ function Cell({ label, value }: { label: string; value: string }) {
   );
 }
 
+// ---------- Book appointment (3-step wizard) ----------
+
+const APPT_TYPES = ['Consultation', 'Follow-up', 'Procedure', 'Telemedicine'] as const;
+const ROOMS = ['Room 1', 'Room 2', 'Room 3'] as const;
+const DURATIONS = [15, 20, 30, 45, 60] as const;
+
+type SlotChoice = { startAt: string; endAt: string; label: string };
+
+function getAge(dob?: string): number | null {
+  if (!dob) return null;
+  const d = new Date(dob);
+  if (isNaN(d.getTime())) return null;
+  const now = new Date();
+  let age = now.getFullYear() - d.getFullYear();
+  const md = now.getMonth() - d.getMonth();
+  if (md < 0 || (md === 0 && now.getDate() < d.getDate())) age--;
+  return age;
+}
+
+function genderInitial(g?: string): string {
+  const u = (g ?? '').toUpperCase();
+  if (u === 'MALE') return 'M';
+  if (u === 'FEMALE') return 'F';
+  if (u === 'OTHER') return 'O';
+  return u.slice(0, 1);
+}
+
+function combineToIso(d: string, hm: string): Date {
+  const [h, m] = hm.split(':').map(Number);
+  const dt = new Date(`${d}T00:00:00`);
+  dt.setHours(h, m, 0, 0);
+  return dt;
+}
+
+function fmtSlotLabel(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
 function BookSheet({
   defaultDate, defaultPatientId, onClose, onCreated,
 }: {
@@ -517,73 +585,125 @@ function BookSheet({
   onCreated: () => void;
 }) {
   const { ctx } = useApp();
-  const [type, setType] = useState<AppointmentType>('TIME');
-  const [doctorId, setDoctorId] = useState('');
-  const [patientId, setPatientId] = useState(defaultPatientId ?? '');
-  const [patientLabel, setPatientLabel] = useState<string | null>(null);
+  const [step, setStep] = useState<1 | 2 | 3>(defaultPatientId ? 2 : 1);
+
+  // Step 1
   const [patientQuery, setPatientQuery] = useState('');
-  const [patientHits, setPatientHits] = useState<PatientLite[]>([]);
-  const [searching, setSearching] = useState(false);
+  const [patients, setPatients] = useState<PatientLite[]>([]);
+  const [patientsLoading, setPatientsLoading] = useState(false);
+  const [selectedPatient, setSelectedPatient] = useState<PatientLite | null>(null);
+
+  // Step 2
   const [date, setDate] = useState(defaultDate);
-  const [startTime, setStartTime] = useState('10:00');
-  const [endTime, setEndTime] = useState('10:15');
+  const [slotStart, setSlotStart] = useState(''); // 'HH:MM' local
+  const [slots, setSlots] = useState<SlotChoice[]>([]);
+  const [slotsLoading, setSlotsLoading] = useState(false);
+  const [slotMinutes, setSlotMinutes] = useState<number>(15);
+  const [apptType, setApptType] = useState<typeof APPT_TYPES[number]>('Consultation');
+  const [duration, setDuration] = useState<number>(30);
+  const [doctorId] = useState(ctx.userId);
+  const [doctorName, setDoctorName] = useState(ctx.fullName ? `Dr. ${ctx.fullName}` : 'Doctor');
+  const [room, setRoom] = useState<typeof ROOMS[number]>('Room 1');
+  const [notes, setNotes] = useState('');
+
+  // Submit
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Load patient list (step 1) — refetch on query change
+  useEffect(() => {
+    if (step !== 1) return;
+    setPatientsLoading(true);
+    const qs = new URLSearchParams();
+    if (patientQuery.trim()) qs.set('query', patientQuery.trim());
+    qs.set('limit', '50');
+    const t = setTimeout(() => {
+      apiGet<PatientLite[]>(ctx, `/patients?${qs.toString()}`)
+        .then(setPatients)
+        .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+        .finally(() => setPatientsLoading(false));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [step, patientQuery, ctx]);
+
+  // Pre-load patient when referred from another screen
   useEffect(() => {
     if (!defaultPatientId) return;
     apiGet<PatientLite>(ctx, `/patients/${defaultPatientId}`)
-      .then((p) => setPatientLabel(p.fullName))
-      .catch(() => setPatientLabel(defaultPatientId));
+      .then((p) => setSelectedPatient(p))
+      .catch(() => undefined);
   }, [defaultPatientId, ctx]);
 
-  async function searchPatients() {
-    setSearching(true);
-    setError(null);
-    try {
-      const qs = new URLSearchParams();
-      if (patientQuery.trim()) qs.set('query', patientQuery.trim());
-      qs.set('limit', '15');
-      const data = await apiGet<PatientLite[]>(ctx, `/patients?${qs.toString()}`);
-      setPatientHits(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setSearching(false);
+  // Load doctor name (best effort) — /me wraps the user under .user
+  useEffect(() => {
+    if (!doctorId.trim() || ctx.fullName) return;
+    apiGet<{ user?: { name?: string; fullName?: string } }>(ctx, `/me`).then((res) => {
+      const n = res.user?.fullName ?? res.user?.name;
+      if (n) setDoctorName(`Dr. ${n}`);
+    }).catch(() => undefined);
+  }, [doctorId, ctx]);
+
+  // Whenever ctx.fullName becomes available (e.g., after /me lands), update label
+  useEffect(() => {
+    if (ctx.fullName) setDoctorName(`Dr. ${ctx.fullName}`);
+  }, [ctx.fullName]);
+
+  // Load available slots (step 2) when doctor / date changes
+  useEffect(() => {
+    if (step !== 2 || !doctorId.trim() || !date || !ctx.branchId) {
+      setSlots([]);
+      return;
     }
+    setSlotsLoading(true);
+    const qs = new URLSearchParams({ branchId: ctx.branchId, date });
+    apiGet<{ slotMinutes?: number; slots: { startAt: string; endAt: string }[] }>(
+      ctx,
+      `/availability/doctors/${doctorId.trim()}/day?${qs.toString()}`,
+    )
+      .then((r) => {
+        const labeled = (r.slots ?? []).map((s) => ({ ...s, label: fmtSlotLabel(s.startAt) }));
+        setSlots(labeled);
+        if (typeof r.slotMinutes === 'number' && r.slotMinutes > 0) setSlotMinutes(r.slotMinutes);
+        if (labeled.length && !labeled.find((s) => s.label === slotStart)) {
+          setSlotStart(labeled[0].label);
+        }
+      })
+      .catch(() => setSlots([]))
+      .finally(() => setSlotsLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step, doctorId, date, ctx.branchId]);
+
+  function continueFromStep1() {
+    if (!selectedPatient) return;
+    setStep(2);
   }
 
-  function pickPatient(p: PatientLite) {
-    setPatientId(p._id);
-    setPatientLabel(p.fullName);
-    setPatientHits([]);
-  }
-
-  function combineToIso(d: string, hm: string): string {
-    const [h, m] = hm.split(':').map(Number);
-    const date = new Date(d);
-    date.setHours(h, m, 0, 0);
-    return date.toISOString();
+  function continueFromStep2() {
+    if (!slotStart) { setError('Pick a time slot.'); return; }
+    if (!doctorId.trim()) { setError('Doctor is required.'); return; }
+    setError(null);
+    setStep(3);
   }
 
   async function submit() {
     if (!ctx.branchId) { setError('Branch ID is required (sign in to a branch).'); return; }
-    if (!doctorId.trim() || !patientId.trim()) { setError('Doctor and patient are required.'); return; }
+    if (!selectedPatient) { setError('Patient is required.'); return; }
+    if (!doctorId.trim()) { setError('Doctor is required.'); return; }
+    if (!slotStart) { setError('Time slot is required.'); return; }
     setSaving(true); setError(null);
     try {
-      const body: Record<string, unknown> = {
-        type,
+      const start = combineToIso(date, slotStart);
+      const end = new Date(start.getTime() + duration * 60_000);
+      const composedNotes = [apptType, room, notes.trim()].filter(Boolean).join(' · ');
+      await apiPost(ctx, '/appointments', {
+        type: 'TIME',
         branchId: ctx.branchId,
         doctorId: doctorId.trim(),
-        patientId: patientId.trim(),
-      };
-      if (type === 'TIME') {
-        body.startAt = combineToIso(date, startTime);
-        body.endAt = combineToIso(date, endTime);
-      } else {
-        body.queueDate = date;
-      }
-      await apiPost(ctx, '/appointments', body);
+        patientId: selectedPatient._id,
+        startAt: start.toISOString(),
+        endAt: end.toISOString(),
+        notes: composedNotes,
+      });
       onCreated();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -592,89 +712,397 @@ function BookSheet({
     }
   }
 
+  const stepLabel = step === 1 ? 'Patient' : step === 2 ? 'Details' : 'Confirm';
+
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
-      <div style={{ background: 'var(--surface)', borderRadius: 18, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 460, animation: 'slideUp 200ms ease-out', maxHeight: '90vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-          <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Book appointment</div>
+      <div style={{ background: 'var(--surface)', borderRadius: 18, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 540, animation: 'slideUp 200ms ease-out', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 17, fontWeight: 700, color: 'var(--text)' }}>Book appointment</div>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>Step {step} of 3 — {stepLabel}</div>
+          </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}>
             <Icon name="x" size={18} />
           </button>
         </div>
 
-        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto' }}>
-          <div>
-            <label style={labelStyle}>Type</label>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {(['TIME', 'QUEUE'] as const).map((t) => (
-                <button key={t} onClick={() => setType(t)}
-                  style={{ flex: 1, padding: '8px 0', border: `1.5px solid ${type === t ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 10, background: type === t ? 'var(--brand-50)' : 'var(--surface-muted)', color: type === t ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
-                  {t}
-                </button>
-              ))}
-            </div>
-          </div>
+        {/* Step indicator */}
+        <div style={{ padding: '12px 24px 0', display: 'flex', gap: 6 }}>
+          {[1, 2, 3].map((n) => (
+            <div key={n} style={{
+              flex: 1, height: 3, borderRadius: 2,
+              background: n <= step ? 'var(--brand-500)' : 'var(--border)',
+              transition: 'background 200ms ease-out',
+            }} />
+          ))}
+        </div>
 
-          <Field label="Doctor user ID" value={doctorId} onChange={setDoctorId} placeholder="ObjectId" />
+        {/* Body */}
+        <div style={{ padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 14, overflowY: 'auto', flex: 1 }}>
+          {step === 1 && (
+            <PatientStep
+              query={patientQuery} onQuery={setPatientQuery}
+              patients={patients} loading={patientsLoading}
+              selected={selectedPatient} onPick={setSelectedPatient}
+            />
+          )}
 
-          <div>
-            <label style={labelStyle}>Patient</label>
-            {patientLabel ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 12px', background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 10 }}>
-                <Avatar name={patientLabel} size={28} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--brand-700)' }}>{patientLabel}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-subtle)', fontFamily: 'monospace' }}>{patientId.slice(-12)}</div>
-                </div>
-                <button onClick={() => { setPatientId(''); setPatientLabel(null); }}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 4 }}>
-                  <Icon name="x" size={14} />
-                </button>
-              </div>
-            ) : (
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input value={patientQuery} onChange={(e) => setPatientQuery(e.target.value)} placeholder="Search by name or phone…"
-                  onKeyDown={(e) => e.key === 'Enter' && searchPatients()}
-                  style={{ flex: 1, height: 40, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none' }} />
-                <button onClick={searchPatients} disabled={searching}
-                  style={{ height: 40, padding: '0 14px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 10, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-                  {searching ? '…' : 'Find'}
-                </button>
-              </div>
-            )}
-            {patientHits.length > 0 && (
-              <div style={{ marginTop: 6, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', maxHeight: 160, overflowY: 'auto' }}>
-                {patientHits.map((p) => (
-                  <button key={p._id} onClick={() => pickPatient(p)}
-                    style={{ width: '100%', padding: '8px 12px', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{p.fullName}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{p.phones?.[0] ?? p._id.slice(-12)}</div>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+          {step === 2 && (
+            <DetailsStep
+              patient={selectedPatient}
+              onChangePatient={() => setStep(1)}
+              date={date} setDate={setDate}
+              slotStart={slotStart} setSlotStart={setSlotStart}
+              slots={slots} slotsLoading={slotsLoading} slotMinutes={slotMinutes}
+              apptType={apptType} setApptType={setApptType}
+              duration={duration} setDuration={setDuration}
+              doctorName={doctorName}
+              room={room} setRoom={setRoom}
+              notes={notes} setNotes={setNotes}
+            />
+          )}
 
-          <Field label="Date" value={date} onChange={setDate} placeholder="YYYY-MM-DD" />
-
-          {type === 'TIME' && (
-            <div style={{ display: 'flex', gap: 8 }}>
-              <div style={{ flex: 1 }}><Field label="Start time" value={startTime} onChange={setStartTime} placeholder="HH:MM" /></div>
-              <div style={{ flex: 1 }}><Field label="End time" value={endTime} onChange={setEndTime} placeholder="HH:MM" /></div>
-            </div>
+          {step === 3 && (
+            <ConfirmStep
+              patient={selectedPatient}
+              date={date} time={slotStart} duration={duration}
+              apptType={apptType} doctorName={doctorName} room={room}
+            />
           )}
 
           {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
         </div>
 
-        <div style={{ padding: '0 24px 20px', display: 'flex', gap: 10, borderTop: '1px solid var(--border)', paddingTop: 16 }}>
-          <button onClick={onClose} style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
-          <button onClick={submit} disabled={saving}
-            style={{ flex: 2, height: 42, background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-            {saving ? <Spinner /> : 'Book appointment'}
-          </button>
+        {/* Footer */}
+        <div style={{ padding: '16px 24px 20px', display: 'flex', gap: 10, borderTop: '1px solid var(--border)' }}>
+          {step === 1 ? (
+            <button onClick={continueFromStep1} disabled={!selectedPatient}
+              style={{
+                flex: 1, height: 44, border: 'none', borderRadius: 10,
+                background: selectedPatient ? 'var(--brand-500)' : 'rgba(99,102,241,0.4)',
+                color: 'var(--brand-text)', fontSize: 14, fontWeight: 600,
+                cursor: selectedPatient ? 'pointer' : 'not-allowed',
+                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              }}>
+              Continue <Icon name="chevronRight" size={14} strokeWidth={2.5} />
+            </button>
+          ) : (
+            <>
+              <button onClick={() => setStep((s) => (s === 3 ? 2 : 1))}
+                style={{ flex: 1, height: 44, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                Back
+              </button>
+              {step === 2 ? (
+                <button onClick={continueFromStep2} disabled={!slotStart || !doctorId.trim()}
+                  style={{
+                    flex: 2, height: 44, border: 'none', borderRadius: 10,
+                    background: (slotStart && doctorId.trim()) ? 'var(--brand-500)' : 'rgba(99,102,241,0.4)',
+                    color: 'var(--brand-text)', fontSize: 14, fontWeight: 600,
+                    cursor: (slotStart && doctorId.trim()) ? 'pointer' : 'not-allowed',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  }}>
+                  Continue <Icon name="chevronRight" size={14} strokeWidth={2.5} />
+                </button>
+              ) : (
+                <button onClick={submit} disabled={saving}
+                  style={{ flex: 2, height: 44, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+                  {saving ? <Spinner /> : <><Icon name="check" size={14} strokeWidth={2.5} /> Confirm booking</>}
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
     </div>
   );
 }
+
+function PatientStep({
+  query, onQuery, patients, loading, selected, onPick,
+}: {
+  query: string; onQuery: (v: string) => void;
+  patients: PatientLite[]; loading: boolean;
+  selected: PatientLite | null; onPick: (p: PatientLite) => void;
+}) {
+  return (
+    <>
+      <div style={{ position: 'relative' }}>
+        <Icon name="search" size={15} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
+        <input value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Search by name or phone…"
+          style={{
+            width: '100%', height: 44, padding: '0 14px 0 40px',
+            background: 'var(--surface-muted)', border: '1.5px solid var(--brand-500)', borderRadius: 10,
+            fontSize: 14, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
+          }} />
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 380, overflowY: 'auto' }}>
+        {loading && patients.length === 0 && (
+          <div style={{ padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--text-subtle)' }}>Searching…</div>
+        )}
+        {!loading && patients.length === 0 && (
+          <div style={{ padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--text-subtle)' }}>No patients match.</div>
+        )}
+        {patients.map((p) => {
+          const age = getAge(p.dob);
+          const phone = p.phones?.[0] ?? '';
+          const tag = p.tags?.[0];
+          const isSel = selected?._id === p._id;
+          return (
+            <button key={p._id} onClick={() => onPick(p)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 12, width: '100%',
+                padding: '12px 14px', textAlign: 'left',
+                background: isSel ? 'var(--brand-50)' : 'var(--surface-muted)',
+                border: `1.5px solid ${isSel ? 'var(--brand-500)' : 'var(--border)'}`,
+                borderRadius: 12, cursor: 'pointer', transition: 'all 120ms',
+              }}>
+              <Avatar name={p.fullName} size={40} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.fullName}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>
+                  {[genderInitial(p.gender), age != null ? `${age}y` : null, phone].filter(Boolean).join(' · ')}
+                </div>
+              </div>
+              {tag && (
+                <span style={{ padding: '3px 10px', borderRadius: 100, fontSize: 11, fontWeight: 600, background: 'var(--warning-bg)', color: 'var(--warning-text)' }}>
+                  {tag}
+                </span>
+              )}
+              <Icon name="chevronRight" size={16} style={{ color: 'var(--text-subtle)', flexShrink: 0 }} />
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function DetailsStep({
+  patient, onChangePatient,
+  date, setDate, slotStart, setSlotStart, slots, slotsLoading, slotMinutes,
+  apptType, setApptType, duration, setDuration,
+  doctorName, room, setRoom, notes, setNotes,
+}: {
+  patient: PatientLite | null;
+  onChangePatient: () => void;
+  date: string; setDate: (v: string) => void;
+  slotStart: string; setSlotStart: (v: string) => void;
+  slots: SlotChoice[]; slotsLoading: boolean; slotMinutes: number;
+  apptType: typeof APPT_TYPES[number]; setApptType: (v: typeof APPT_TYPES[number]) => void;
+  duration: number; setDuration: (v: number) => void;
+  doctorName: string;
+  room: typeof ROOMS[number]; setRoom: (v: typeof ROOMS[number]) => void;
+  notes: string; setNotes: (v: string) => void;
+}) {
+  const meta = patient ? [genderInitial(patient.gender) === 'M' ? 'Male' : genderInitial(patient.gender) === 'F' ? 'Female' : 'Other', getAge(patient.dob) != null ? `${getAge(patient.dob)}y` : null].filter(Boolean).join(' · ') : '';
+
+  return (
+    <>
+      {/* Selected patient pill */}
+      {patient && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 10 }}>
+          <Avatar name={patient.fullName} size={36} />
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--brand-700)' }}>{patient.fullName}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{meta}</div>
+          </div>
+          <button onClick={onChangePatient} style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+            Change
+          </button>
+        </div>
+      )}
+
+      <div>
+        <label style={labelStyle}>Date</label>
+        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={selectStyle} />
+      </div>
+
+      <div>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+          <label style={{ ...labelStyle, marginBottom: 0 }}>Time slot</label>
+          <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
+            {slotsLoading ? 'Loading…' : `${slots.length} available`}
+          </span>
+        </div>
+        <TimeSlotGrid
+          slotMinutes={slotMinutes}
+          available={slots}
+          value={slotStart}
+          onChange={setSlotStart}
+        />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 16, alignItems: 'flex-start' }}>
+        <div>
+          <label style={labelStyle}>Type</label>
+          <select value={apptType} onChange={(e) => setApptType(e.target.value as typeof APPT_TYPES[number])} style={selectStyle}>
+            {APPT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Duration</label>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
+            {DURATIONS.map((d) => (
+              <button key={d} onClick={() => setDuration(d)}
+                style={{
+                  padding: '6px 14px', minWidth: 56,
+                  border: `1.5px solid ${duration === d ? 'var(--brand-500)' : 'var(--border)'}`,
+                  borderRadius: 8, background: duration === d ? 'var(--brand-50)' : 'var(--surface)',
+                  color: duration === d ? 'var(--brand-600)' : 'var(--text-muted)',
+                  fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                }}>
+                {d}m
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div>
+          <label style={labelStyle}>Doctor</label>
+          <select value={doctorName} disabled style={{ ...selectStyle, opacity: 0.85 }}>
+            <option>{doctorName}</option>
+          </select>
+        </div>
+        <div>
+          <label style={labelStyle}>Room</label>
+          <select value={room} onChange={(e) => setRoom(e.target.value as typeof ROOMS[number])} style={selectStyle}>
+            {ROOMS.map((r) => <option key={r} value={r}>{r}</option>)}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label style={labelStyle}>
+          Notes <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>(optional)</span>
+        </label>
+        <textarea value={notes} onChange={(e) => setNotes(e.target.value)}
+          placeholder="Reason for visit, special instructions…"
+          style={{
+            width: '100%', minHeight: 72, padding: '10px 12px',
+            background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
+            fontSize: 13, color: 'var(--text)', outline: 'none', resize: 'vertical', boxSizing: 'border-box',
+            fontFamily: 'inherit',
+          }} />
+      </div>
+    </>
+  );
+}
+
+function TimeSlotGrid({
+  slotMinutes, available, value, onChange,
+}: {
+  slotMinutes: number;
+  available: SlotChoice[];
+  value: string;
+  onChange: (v: string) => void;
+}) {
+  // Day window: 08:00–20:00 in `slotMinutes` increments. Wide enough for typical
+  // clinic hours; ones outside the doctor's rules render faded/disabled.
+  const startMin = 8 * 60;
+  const endMin = 20 * 60;
+  const step = Math.max(5, Math.min(180, slotMinutes || 15));
+  const grid: string[] = [];
+  for (let m = startMin; m + step <= endMin; m += step) {
+    grid.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+  }
+  // Make sure any backend-returned slots that fall outside the default window still appear.
+  for (const s of available) if (!grid.includes(s.label)) grid.push(s.label);
+  grid.sort();
+
+  const availSet = new Set(available.map((s) => s.label));
+
+  return (
+    <div style={{
+      display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 6,
+      maxHeight: 240, overflowY: 'auto',
+      padding: 8, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
+    }}>
+      {grid.map((t) => {
+        const isAvail = availSet.has(t);
+        const isSelected = isAvail && t === value;
+        return (
+          <button
+            key={t}
+            type="button"
+            disabled={!isAvail}
+            onClick={() => isAvail && onChange(t)}
+            style={{
+              padding: '7px 4px',
+              border: `1.5px solid ${isSelected ? 'var(--brand-500)' : (isAvail ? 'var(--border)' : 'transparent')}`,
+              borderRadius: 8,
+              background: isSelected ? 'var(--brand-50)' : 'var(--surface)',
+              color: isSelected ? 'var(--brand-600)' : 'var(--text)',
+              opacity: isAvail ? 1 : 0.32,
+              fontSize: 12,
+              fontFamily: 'monospace',
+              fontWeight: isSelected ? 700 : 600,
+              cursor: isAvail ? 'pointer' : 'not-allowed',
+              transition: 'all 120ms',
+            }}>
+            {t}
+          </button>
+        );
+      })}
+      {grid.length === 0 && (
+        <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 12, fontSize: 12, color: 'var(--text-subtle)' }}>
+          No slots configured.
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ConfirmStep({
+  patient, date, time, duration, apptType, doctorName, room,
+}: {
+  patient: PatientLite | null;
+  date: string; time: string; duration: number;
+  apptType: string; doctorName: string; room: string;
+}) {
+  const rows: { label: string; value: string; icon: 'user' | 'calendar' | 'clock' | 'clipboard' | 'stethoscope' | 'mapPin' }[] = [
+    { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
+    { label: 'Date',    value: date || '—',                icon: 'calendar' },
+    { label: 'Time',    value: `${time || '—'} · ${duration} min`, icon: 'clock' },
+    { label: 'Type',    value: apptType,                   icon: 'clipboard' },
+    { label: 'Doctor',  value: doctorName,                 icon: 'stethoscope' },
+    { label: 'Room',    value: room,                       icon: 'mapPin' },
+  ];
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+      <div style={{ width: 64, height: 64, borderRadius: 16, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>
+        <Icon name="calendar" size={26} style={{ color: 'var(--brand-500)' }} />
+      </div>
+      <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--text)', marginTop: 4 }}>Confirm appointment</div>
+      <div style={{ fontSize: 13, color: 'var(--text-subtle)', marginBottom: 10 }}>Please review the details below</div>
+
+      <div style={{ width: '100%', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+        {rows.map((r, i) => (
+          <div key={r.label} style={{
+            display: 'grid', gridTemplateColumns: '120px 1fr', alignItems: 'center', gap: 12,
+            padding: '12px 16px',
+            borderBottom: i < rows.length - 1 ? '1px solid var(--border)' : 'none',
+            background: i % 2 === 0 ? 'var(--surface-muted)' : 'var(--surface)',
+          }}>
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: 'var(--text-subtle)' }}>
+              <Icon name={r.icon} size={14} style={{ color: 'var(--brand-500)' }} />
+              {r.label}
+            </span>
+            <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{r.value}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+const selectStyle: React.CSSProperties = {
+  width: '100%', height: 40, padding: '0 12px',
+  background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
+  fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
+  fontFamily: 'inherit',
+};

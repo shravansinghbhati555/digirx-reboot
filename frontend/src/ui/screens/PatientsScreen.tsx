@@ -129,7 +129,7 @@ export function PatientsScreen() {
           </div>
           <button onClick={() => setShowNew(true)}
             title="New patient"
-            style={{ width: 36, height: 36, background: 'var(--brand-500)', border: 'none', borderRadius: 9, cursor: 'pointer', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            style={{ width: 36, height: 36, background: 'var(--brand-500)', border: 'none', borderRadius: 9, cursor: 'pointer', color: 'var(--brand-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
             <Icon name="plus" size={16} strokeWidth={2.5} />
           </button>
         </div>
@@ -261,7 +261,7 @@ function PatientDetail({ patient }: { patient: Patient }) {
             </div>
           </div>
           <button onClick={bookForPatient}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 16px', background: 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}>
+            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}>
             <Icon name="plus" size={14} strokeWidth={2.5} /> Book
           </button>
         </div>
@@ -442,14 +442,14 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
             <>
               <Field label="Phone number" value={form.phone} onChange={(v) => set('phone', v)} placeholder="98765 43210" prefix="+91" />
               {duplicate && (
-                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)', fontSize: 12, color: '#92400e' }}>
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'var(--warning-bg-soft)', border: '1px solid var(--warning-border-soft)', fontSize: 12, color: 'var(--warning-text)' }}>
                   <Icon name="alertTriangle" size={14} style={{ flexShrink: 0, marginTop: 1 }} />
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontWeight: 600 }}>Possible duplicate</div>
                     <div style={{ marginTop: 2 }}>{duplicate.fullName} already has this phone. Open existing instead?</div>
                   </div>
                   <button onClick={() => { onCreated(duplicate); onClose(); }}
-                    style={{ height: 28, padding: '0 10px', background: 'var(--surface)', border: '1px solid rgba(245,158,11,0.4)', borderRadius: 7, fontSize: 11, fontWeight: 600, color: '#92400e', cursor: 'pointer', flexShrink: 0 }}>
+                    style={{ height: 28, padding: '0 10px', background: 'var(--surface)', border: '1px solid var(--warning-border-strong)', borderRadius: 7, fontSize: 11, fontWeight: 600, color: 'var(--warning-text)', cursor: 'pointer', flexShrink: 0 }}>
                     Open
                   </button>
                 </div>
@@ -481,7 +481,7 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
           <button
             onClick={step < steps.length - 1 ? () => setStep((s) => s + 1) : submit}
             disabled={saving || (step === 0 && !form.fullName.trim())}
-            style={{ flex: 2, height: 42, background: saving ? 'var(--brand-600)' : 'var(--brand-500)', color: '#fff', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, opacity: (step === 0 && !form.fullName.trim()) ? 0.6 : 1 }}>
+            style={{ flex: 2, height: 42, background: saving ? 'var(--brand-600)' : 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, opacity: (step === 0 && !form.fullName.trim()) ? 0.6 : 1 }}>
             {saving ? <Spinner /> : (step < steps.length - 1 ? <>Continue <Icon name="chevronRight" size={14} /></> : 'Register patient')}
           </button>
         </div>

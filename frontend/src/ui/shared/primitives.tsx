@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useState, type CSSProperties, t
 import { Icon, type IconName } from './Icon';
 import { EmptyIllustration } from './EmptyIllustration';
 
+// Fixed JS palette consumed by Avatar's name-hash. CSS variables don't fit
+// here — JS would have to read computed styles to pick a swatch.
 const AVATAR_COLORS = ['#3B82F6','#14B8A6','#8B5CF6','#EC4899','#F59E0B','#10B981','#6366F1','#EF4444'];
 
 export function Avatar({ name = '?', size = 36, style }: { name?: string; size?: number; style?: CSSProperties }) {
@@ -25,21 +27,21 @@ type StatusKey =
   | 'done' | 'cancelled' | 'no-show' | 'signed' | 'pending' | 'sent' | 'failed' | 'queued';
 
 const STATUS_CONFIG: Record<string, { label: string; bg: string; color: string; icon: IconName }> = {
-  draft:        { label: 'Draft',       bg: 'rgba(245,158,11,0.1)',  color: '#92400e', icon: 'edit' },
-  issued:       { label: 'Issued',      bg: 'rgba(99,102,241,0.1)',  color: '#4338CA', icon: 'fileText' },
-  paid:         { label: 'Paid',        bg: 'rgba(16,185,129,0.1)',  color: '#065F46', icon: 'checkCircle' },
-  void:         { label: 'Void',        bg: 'rgba(107,114,128,0.1)', color: '#374151', icon: 'xCircle' },
-  booked:       { label: 'Booked',      bg: 'rgba(59,130,246,0.1)',  color: '#1E40AF', icon: 'calendar' },
-  'checked-in': { label: 'Checked in',  bg: 'rgba(20,184,166,0.1)',  color: '#0F766E', icon: 'checkCircle' },
-  'in-progress':{ label: 'In progress', bg: 'rgba(99,102,241,0.1)',  color: '#4338CA', icon: 'activity' },
-  done:         { label: 'Done',        bg: 'rgba(16,185,129,0.1)',  color: '#065F46', icon: 'check' },
-  cancelled:    { label: 'Cancelled',   bg: 'rgba(239,68,68,0.1)',   color: '#991B1B', icon: 'x' },
-  'no-show':    { label: 'No show',     bg: 'rgba(245,158,11,0.1)',  color: '#92400e', icon: 'alertTriangle' },
-  signed:       { label: 'Signed',      bg: 'rgba(16,185,129,0.1)',  color: '#065F46', icon: 'lock' },
-  pending:      { label: 'Pending',     bg: 'rgba(245,158,11,0.1)',  color: '#92400e', icon: 'clock' },
-  sent:         { label: 'Sent',        bg: 'rgba(16,185,129,0.1)',  color: '#065F46', icon: 'checkCircle' },
-  failed:       { label: 'Failed',      bg: 'rgba(239,68,68,0.1)',   color: '#991B1B', icon: 'xCircle' },
-  queued:       { label: 'Queued',      bg: 'rgba(107,114,128,0.1)', color: '#374151', icon: 'clock' },
+  draft:        { label: 'Draft',       bg: 'var(--warning-bg)', color: 'var(--warning-text)',      icon: 'edit' },
+  issued:       { label: 'Issued',      bg: 'var(--info-bg)',    color: 'var(--info-text)',         icon: 'fileText' },
+  paid:         { label: 'Paid',        bg: 'var(--success-bg)', color: 'var(--success-text)',      icon: 'checkCircle' },
+  void:         { label: 'Void',        bg: 'var(--neutral-bg)', color: 'var(--neutral-text)',      icon: 'xCircle' },
+  booked:       { label: 'Booked',      bg: 'var(--brand-bg-soft)', color: 'var(--brand-text-strong)', icon: 'calendar' },
+  'checked-in': { label: 'Checked in',  bg: 'var(--teal-bg)',    color: 'var(--teal-text)',         icon: 'checkCircle' },
+  'in-progress':{ label: 'In progress', bg: 'var(--info-bg)',    color: 'var(--info-text)',         icon: 'activity' },
+  done:         { label: 'Done',        bg: 'var(--success-bg)', color: 'var(--success-text)',      icon: 'check' },
+  cancelled:    { label: 'Cancelled',   bg: 'var(--danger-bg)',  color: 'var(--danger-text)',       icon: 'x' },
+  'no-show':    { label: 'No show',     bg: 'var(--warning-bg)', color: 'var(--warning-text)',      icon: 'alertTriangle' },
+  signed:       { label: 'Signed',      bg: 'var(--success-bg)', color: 'var(--success-text)',      icon: 'lock' },
+  pending:      { label: 'Pending',     bg: 'var(--warning-bg)', color: 'var(--warning-text)',      icon: 'clock' },
+  sent:         { label: 'Sent',        bg: 'var(--success-bg)', color: 'var(--success-text)',      icon: 'checkCircle' },
+  failed:       { label: 'Failed',      bg: 'var(--danger-bg)',  color: 'var(--danger-text)',       icon: 'xCircle' },
+  queued:       { label: 'Queued',      bg: 'var(--neutral-bg)', color: 'var(--neutral-text)',      icon: 'clock' },
 };
 
 export function StatusPill({ status, small }: { status: string; small?: boolean }) {
@@ -204,7 +206,7 @@ export function PrimaryButton({
       style={{
         height: 40, padding: '0 20px',
         background: disabled ? 'var(--border)' : 'var(--brand-500)',
-        color: '#fff', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600,
+        color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600,
         cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: "'Inter',sans-serif",
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
         transition: 'background 120ms, transform 120ms var(--ease-out)', opacity: disabled ? 0.6 : 1,
@@ -240,7 +242,7 @@ export function Spinner({ size = 16 }: { size?: number }) {
   return (
     <div style={{
       width: size, height: size,
-      border: `2px solid rgba(255,255,255,0.3)`, borderTopColor: '#fff',
+      border: '2px solid var(--on-brand-spinner-track)', borderTopColor: 'var(--brand-text)',
       borderRadius: '50%', animation: 'spin 600ms linear infinite',
     }} />
   );
