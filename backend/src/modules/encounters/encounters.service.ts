@@ -8,12 +8,18 @@ import { Model, Types } from 'mongoose';
 import { CreateEncounterDto } from './dto/create-encounter.dto';
 import { UpdateEncounterDto } from './dto/update-encounter.dto';
 import { Encounter, EncounterStatus } from './schemas/encounter.schema';
+import {
+  Appointment,
+  AppointmentStatus,
+} from '../appointments/schemas/appointment.schema';
 
 @Injectable()
 export class EncountersService {
   constructor(
     @InjectModel(Encounter.name)
     private readonly encounterModel: Model<Encounter>,
+    @InjectModel(Appointment.name)
+    private readonly apptModel: Model<Appointment>,
   ) {}
 
   async create(clinicId: Types.ObjectId, dto: CreateEncounterDto) {
@@ -27,6 +33,31 @@ export class EncountersService {
     const visitedAt = dto.visitedAt ? new Date(dto.visitedAt) : new Date();
     if (isNaN(visitedAt.getTime()))
       throw new BadRequestException('Invalid visitedAt');
+
+    if (appointmentId) {
+      const appt = await this.apptModel.findOne({
+        _id: appointmentId,
+        clinicId,
+      });
+      // eslint-disable-next-line no-console
+      console.log('[encounters.create] appointment lookup', {
+        appointmentId: appointmentId.toHexString(),
+        found: !!appt,
+        currentStatus: appt?.status,
+      });
+      if (!appt) throw new NotFoundException('Appointment not found');
+
+      if (appt.status === AppointmentStatus.CheckedIn) {
+        appt.status = AppointmentStatus.InProgress;
+        await appt.save();
+        // eslint-disable-next-line no-console
+        console.log('[encounters.create] flipped appointment to IN_PROGRESS');
+      } else if (appt.status !== AppointmentStatus.InProgress) {
+        throw new BadRequestException(
+          `Cannot start an encounter for an appointment in status ${appt.status}; the appointment must be CHECKED_IN first`,
+        );
+      }
+    }
 
     return await this.encounterModel.create({
       clinicId,
@@ -79,6 +110,26 @@ export class EncountersService {
     enc.signedAt = new Date();
     enc.signedByUserId = actorUserId;
     await enc.save();
+
+    if (enc.appointmentId) {
+      const appt = await this.apptModel.findOne({
+        _id: enc.appointmentId,
+        clinicId,
+      });
+      // eslint-disable-next-line no-console
+      console.log('[encounters.sign] appointment lookup', {
+        appointmentId: enc.appointmentId.toHexString(),
+        found: !!appt,
+        currentStatus: appt?.status,
+      });
+      if (appt && appt.status === AppointmentStatus.InProgress) {
+        appt.status = AppointmentStatus.Done;
+        await appt.save();
+        // eslint-disable-next-line no-console
+        console.log('[encounters.sign] flipped appointment to DONE');
+      }
+    }
+
     return enc;
   }
 }

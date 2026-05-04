@@ -59,6 +59,33 @@ function assertAllowedTransition(
   }
 }
 
+function assertCanCheckIn(appt: Appointment, clinic: Clinic) {
+  const tz = clinic.timezone || 'UTC';
+  const today = DateTime.now().setZone(tz).toISODate();
+  if (!today) throw new BadRequestException('Invalid clinic timezone');
+
+  let apptDate: string | null = null;
+  if (appt.type === AppointmentType.Queue) {
+    apptDate = appt.queueDate ?? null;
+  } else if (appt.type === AppointmentType.Time && appt.startAt) {
+    apptDate = DateTime.fromJSDate(appt.startAt).setZone(tz).toISODate();
+  }
+  if (!apptDate) {
+    throw new BadRequestException('Appointment has no scheduled date');
+  }
+
+  if (apptDate > today) {
+    throw new BadRequestException(
+      `Cannot check in before the appointment date (${apptDate})`,
+    );
+  }
+  if (apptDate < today) {
+    throw new BadRequestException(
+      `Cannot check in after the appointment date (${apptDate}); mark as no-show instead`,
+    );
+  }
+}
+
 @Injectable()
 export class AppointmentsService {
   constructor(
@@ -404,6 +431,11 @@ export class AppointmentsService {
     }
 
     if (dto.status) {
+      if (dto.status === AppointmentStatus.CheckedIn) {
+        const clinic = await this.clinicModel.findById(clinicId);
+        if (!clinic) throw new NotFoundException('Clinic not found');
+        assertCanCheckIn(appt, clinic);
+      }
       assertAllowedTransition(appt.status, dto.status);
       appt.status = dto.status;
     }
@@ -418,6 +450,9 @@ export class AppointmentsService {
   async checkin(clinicId: Types.ObjectId, id: string) {
     const appt = await this.apptModel.findOne({ _id: id, clinicId });
     if (!appt) throw new NotFoundException('Appointment not found');
+    const clinic = await this.clinicModel.findById(clinicId);
+    if (!clinic) throw new NotFoundException('Clinic not found');
+    assertCanCheckIn(appt, clinic);
     assertAllowedTransition(appt.status, AppointmentStatus.CheckedIn);
     appt.status = AppointmentStatus.CheckedIn;
     await appt.save();
