@@ -80,8 +80,8 @@ function WeekView({
         ))}
       </div>
 
-      <div style={{ flex: 1, overflowX: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--surface)', flexShrink: 0, height: 40 }}>
+      <div style={{ flex: 1, overflowX: 'auto', overflowY: 'hidden', display: 'flex', flexDirection: 'column' }}>
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--surface)', flexShrink: 0, height: 40, minWidth: COL_W * 7 }}>
           {days.map((d) => {
             const [, mm, dd] = d.split('-');
             const dt = new Date(Number(d.slice(0, 4)), Number(mm) - 1, Number(dd));
@@ -109,7 +109,7 @@ function WeekView({
           })}
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto', position: 'relative', display: 'flex' }}>
+        <div style={{ flex: 1, overflowY: 'auto', position: 'relative', display: 'flex', minWidth: COL_W * 7 }}>
           {days.map((d) => {
             const dayAppts = (weekItems.get(d) ?? []).filter((a) => a.type === 'TIME');
             const isToday = d === todayIso;
@@ -277,13 +277,15 @@ export function AppointmentsScreen() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
       <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '12px 24px', display: 'flex', alignItems: 'center', gap: 12 }}>
-        <button onClick={() => shiftDate(-1)}
+        <button onClick={() => shiftDate(view === 'week' ? -7 : -1)}
+          aria-label={view === 'week' ? 'Previous week' : 'Previous day'}
           style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
           <Icon name="chevronLeft" size={16} />
         </button>
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
           style={{ height: 32, padding: '0 10px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13, color: 'var(--text)', outline: 'none' }} />
-        <button onClick={() => shiftDate(1)}
+        <button onClick={() => shiftDate(view === 'week' ? 7 : 1)}
+          aria-label={view === 'week' ? 'Next week' : 'Next day'}
           style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
           <Icon name="chevronRight" size={16} />
         </button>
