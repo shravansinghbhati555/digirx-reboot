@@ -594,6 +594,7 @@ function BookSheet({
   const [selectedPatient, setSelectedPatient] = useState<PatientLite | null>(null);
 
   // Step 2
+  const [apptKind, setApptKind] = useState<AppointmentType>('TIME');
   const [date, setDate] = useState(defaultDate);
   const [slotStart, setSlotStart] = useState(''); // 'HH:MM' local
   const [slots, setSlots] = useState<SlotChoice[]>([]);
@@ -648,9 +649,9 @@ function BookSheet({
     if (ctx.fullName) setDoctorName(`Dr. ${ctx.fullName}`);
   }, [ctx.fullName]);
 
-  // Load available slots (step 2) when doctor / date changes
+  // Load available slots (step 2) when doctor / date changes (TIME only)
   useEffect(() => {
-    if (step !== 2 || !doctorId.trim() || !date || !ctx.branchId) {
+    if (step !== 2 || apptKind !== 'TIME' || !doctorId.trim() || !date || !ctx.branchId) {
       setSlots([]);
       return;
     }
@@ -671,7 +672,7 @@ function BookSheet({
       .catch(() => setSlots([]))
       .finally(() => setSlotsLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, doctorId, date, ctx.branchId]);
+  }, [step, apptKind, doctorId, date, ctx.branchId]);
 
   function continueFromStep1() {
     if (!selectedPatient) return;
@@ -679,8 +680,8 @@ function BookSheet({
   }
 
   function continueFromStep2() {
-    if (!slotStart) { setError('Pick a time slot.'); return; }
     if (!doctorId.trim()) { setError('Doctor is required.'); return; }
+    if (apptKind === 'TIME' && !slotStart) { setError('Pick a time slot.'); return; }
     setError(null);
     setStep(3);
   }
@@ -689,21 +690,32 @@ function BookSheet({
     if (!ctx.branchId) { setError('Branch ID is required (sign in to a branch).'); return; }
     if (!selectedPatient) { setError('Patient is required.'); return; }
     if (!doctorId.trim()) { setError('Doctor is required.'); return; }
-    if (!slotStart) { setError('Time slot is required.'); return; }
     setSaving(true); setError(null);
     try {
-      const start = combineToIso(date, slotStart);
-      const end = new Date(start.getTime() + duration * 60_000);
-      const composedNotes = [apptType, room, notes.trim()].filter(Boolean).join(' · ');
-      await apiPost(ctx, '/appointments', {
-        type: 'TIME',
-        branchId: ctx.branchId,
-        doctorId: doctorId.trim(),
-        patientId: selectedPatient._id,
-        startAt: start.toISOString(),
-        endAt: end.toISOString(),
-        notes: composedNotes,
-      });
+      if (apptKind === 'QUEUE') {
+        await apiPost(ctx, '/appointments', {
+          type: 'QUEUE',
+          branchId: ctx.branchId,
+          doctorId: doctorId.trim(),
+          patientId: selectedPatient._id,
+          queueDate: date,
+          notes: notes.trim() || undefined,
+        });
+      } else {
+        if (!slotStart) { setError('Time slot is required.'); setSaving(false); return; }
+        const start = combineToIso(date, slotStart);
+        const end = new Date(start.getTime() + duration * 60_000);
+        const composedNotes = [apptType, room, notes.trim()].filter(Boolean).join(' · ');
+        await apiPost(ctx, '/appointments', {
+          type: 'TIME',
+          branchId: ctx.branchId,
+          doctorId: doctorId.trim(),
+          patientId: selectedPatient._id,
+          startAt: start.toISOString(),
+          endAt: end.toISOString(),
+          notes: composedNotes,
+        });
+      }
       onCreated();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -753,6 +765,7 @@ function BookSheet({
             <DetailsStep
               patient={selectedPatient}
               onChangePatient={() => setStep(1)}
+              apptKind={apptKind} setApptKind={setApptKind}
               date={date} setDate={setDate}
               slotStart={slotStart} setSlotStart={setSlotStart}
               slots={slots} slotsLoading={slotsLoading} slotMinutes={slotMinutes}
@@ -767,6 +780,7 @@ function BookSheet({
           {step === 3 && (
             <ConfirmStep
               patient={selectedPatient}
+              apptKind={apptKind}
               date={date} time={slotStart} duration={duration}
               apptType={apptType} doctorName={doctorName} room={room}
             />
@@ -795,12 +809,13 @@ function BookSheet({
                 Back
               </button>
               {step === 2 ? (
-                <button onClick={continueFromStep2} disabled={!slotStart || !doctorId.trim()}
+                <button onClick={continueFromStep2}
+                  disabled={!doctorId.trim() || (apptKind === 'TIME' && !slotStart)}
                   style={{
                     flex: 2, height: 44, border: 'none', borderRadius: 10,
-                    background: (slotStart && doctorId.trim()) ? 'var(--brand-500)' : 'rgba(99,102,241,0.4)',
+                    background: (doctorId.trim() && (apptKind === 'QUEUE' || slotStart)) ? 'var(--brand-500)' : 'rgba(99,102,241,0.4)',
                     color: 'var(--brand-text)', fontSize: 14, fontWeight: 600,
-                    cursor: (slotStart && doctorId.trim()) ? 'pointer' : 'not-allowed',
+                    cursor: (doctorId.trim() && (apptKind === 'QUEUE' || slotStart)) ? 'pointer' : 'not-allowed',
                     display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                   }}>
                   Continue <Icon name="chevronRight" size={14} strokeWidth={2.5} />
@@ -882,12 +897,14 @@ function PatientStep({
 
 function DetailsStep({
   patient, onChangePatient,
+  apptKind, setApptKind,
   date, setDate, slotStart, setSlotStart, slots, slotsLoading, slotMinutes,
   apptType, setApptType, duration, setDuration,
   doctorName, room, setRoom, notes, setNotes,
 }: {
   patient: PatientLite | null;
   onChangePatient: () => void;
+  apptKind: AppointmentType; setApptKind: (v: AppointmentType) => void;
   date: string; setDate: (v: string) => void;
   slotStart: string; setSlotStart: (v: string) => void;
   slots: SlotChoice[]; slotsLoading: boolean; slotMinutes: number;
@@ -915,66 +932,106 @@ function DetailsStep({
         </div>
       )}
 
+      {/* Appointment kind toggle */}
+      <div>
+        <label style={labelStyle}>Appointment type</label>
+        <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10 }}>
+          {(['TIME', 'QUEUE'] as const).map((k) => {
+            const active = apptKind === k;
+            return (
+              <button key={k} type="button" onClick={() => setApptKind(k)}
+                style={{
+                  flex: 1, height: 36, border: 'none', borderRadius: 8,
+                  background: active ? 'var(--surface)' : 'transparent',
+                  color: active ? 'var(--text)' : 'var(--text-muted)',
+                  fontSize: 12, fontWeight: active ? 700 : 500, cursor: 'pointer',
+                  boxShadow: active ? '0 1px 2px rgba(15,23,42,0.06)' : 'none',
+                }}>
+                {k === 'TIME' ? 'Time slot' : 'Walk-in queue'}
+              </button>
+            );
+          })}
+        </div>
+        {apptKind === 'QUEUE' && (
+          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-subtle)' }}>
+            A token number will be assigned automatically.
+          </div>
+        )}
+      </div>
+
       <div>
         <label style={labelStyle}>Date</label>
         <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={selectStyle} />
       </div>
 
-      <div>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
-          <label style={{ ...labelStyle, marginBottom: 0 }}>Time slot</label>
-          <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
-            {slotsLoading ? 'Loading…' : `${slots.length} available`}
-          </span>
-        </div>
-        <TimeSlotGrid
-          slotMinutes={slotMinutes}
-          available={slots}
-          value={slotStart}
-          onChange={setSlotStart}
-        />
-      </div>
+      {apptKind === 'TIME' && (
+        <>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
+              <label style={{ ...labelStyle, marginBottom: 0 }}>Time slot</label>
+              <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
+                {slotsLoading ? 'Loading…' : `${slots.length} available`}
+              </span>
+            </div>
+            <TimeSlotGrid
+              slotMinutes={slotMinutes}
+              available={slots}
+              value={slotStart}
+              onChange={setSlotStart}
+            />
+          </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 16, alignItems: 'flex-start' }}>
-        <div>
-          <label style={labelStyle}>Type</label>
-          <select value={apptType} onChange={(e) => setApptType(e.target.value as typeof APPT_TYPES[number])} style={selectStyle}>
-            {APPT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-          </select>
-        </div>
-        <div>
-          <label style={labelStyle}>Duration</label>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
-            {DURATIONS.map((d) => (
-              <button key={d} onClick={() => setDuration(d)}
-                style={{
-                  padding: '6px 14px', minWidth: 56,
-                  border: `1.5px solid ${duration === d ? 'var(--brand-500)' : 'var(--border)'}`,
-                  borderRadius: 8, background: duration === d ? 'var(--brand-50)' : 'var(--surface)',
-                  color: duration === d ? 'var(--brand-600)' : 'var(--text-muted)',
-                  fontSize: 12, fontWeight: 600, cursor: 'pointer',
-                }}>
-                {d}m
-              </button>
-            ))}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 16, alignItems: 'flex-start' }}>
+            <div>
+              <label style={labelStyle}>Type</label>
+              <select value={apptType} onChange={(e) => setApptType(e.target.value as typeof APPT_TYPES[number])} style={selectStyle}>
+                {APPT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+              </select>
+            </div>
+            <div>
+              <label style={labelStyle}>Duration</label>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
+                {DURATIONS.map((d) => (
+                  <button key={d} onClick={() => setDuration(d)}
+                    style={{
+                      padding: '6px 14px', minWidth: 56,
+                      border: `1.5px solid ${duration === d ? 'var(--brand-500)' : 'var(--border)'}`,
+                      borderRadius: 8, background: duration === d ? 'var(--brand-50)' : 'var(--surface)',
+                      color: duration === d ? 'var(--brand-600)' : 'var(--text-muted)',
+                      fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                    }}>
+                    {d}m
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+
+      {apptKind === 'TIME' ? (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+          <div>
+            <label style={labelStyle}>Doctor</label>
+            <select value={doctorName} disabled style={{ ...selectStyle, opacity: 0.85 }}>
+              <option>{doctorName}</option>
+            </select>
+          </div>
+          <div>
+            <label style={labelStyle}>Room</label>
+            <select value={room} onChange={(e) => setRoom(e.target.value as typeof ROOMS[number])} style={selectStyle}>
+              {ROOMS.map((r) => <option key={r} value={r}>{r}</option>)}
+            </select>
           </div>
         </div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+      ) : (
         <div>
           <label style={labelStyle}>Doctor</label>
           <select value={doctorName} disabled style={{ ...selectStyle, opacity: 0.85 }}>
             <option>{doctorName}</option>
           </select>
         </div>
-        <div>
-          <label style={labelStyle}>Room</label>
-          <select value={room} onChange={(e) => setRoom(e.target.value as typeof ROOMS[number])} style={selectStyle}>
-            {ROOMS.map((r) => <option key={r} value={r}>{r}</option>)}
-          </select>
-        </div>
-      </div>
+      )}
 
       <div>
         <label style={labelStyle}>
@@ -1058,20 +1115,28 @@ function TimeSlotGrid({
 }
 
 function ConfirmStep({
-  patient, date, time, duration, apptType, doctorName, room,
+  patient, apptKind, date, time, duration, apptType, doctorName, room,
 }: {
   patient: PatientLite | null;
+  apptKind: AppointmentType;
   date: string; time: string; duration: number;
   apptType: string; doctorName: string; room: string;
 }) {
-  const rows: { label: string; value: string; icon: 'user' | 'calendar' | 'clock' | 'clipboard' | 'stethoscope' | 'mapPin' }[] = [
-    { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
-    { label: 'Date',    value: date || '—',                icon: 'calendar' },
-    { label: 'Time',    value: `${time || '—'} · ${duration} min`, icon: 'clock' },
-    { label: 'Type',    value: apptType,                   icon: 'clipboard' },
-    { label: 'Doctor',  value: doctorName,                 icon: 'stethoscope' },
-    { label: 'Room',    value: room,                       icon: 'mapPin' },
-  ];
+  const rows: { label: string; value: string; icon: 'user' | 'calendar' | 'clock' | 'clipboard' | 'stethoscope' | 'mapPin' }[] = apptKind === 'QUEUE'
+    ? [
+        { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
+        { label: 'Date',    value: date || '—',              icon: 'calendar' },
+        { label: 'Type',    value: 'Walk-in queue',          icon: 'clipboard' },
+        { label: 'Doctor',  value: doctorName,               icon: 'stethoscope' },
+      ]
+    : [
+        { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
+        { label: 'Date',    value: date || '—',                icon: 'calendar' },
+        { label: 'Time',    value: `${time || '—'} · ${duration} min`, icon: 'clock' },
+        { label: 'Type',    value: apptType,                   icon: 'clipboard' },
+        { label: 'Doctor',  value: doctorName,                 icon: 'stethoscope' },
+        { label: 'Room',    value: room,                       icon: 'mapPin' },
+      ];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
       <div style={{ width: 64, height: 64, borderRadius: 16, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>
