@@ -33,14 +33,34 @@ export class AuditInterceptor implements NestInterceptor {
     }
 
     const entityType = req.route?.path ? String(req.route.path) : req.path;
-    const entityId =
+    const paramId =
       typeof req.params?.id === 'string' && req.params.id.length > 0
         ? req.params.id
-        : 'n/a';
+        : null;
 
     return next.handle().pipe(
       tap({
-        next: () => {
+        next: (value) => {
+          // For routes with `:id` in the URL we use that as the entityId.
+          // For creates (POST without :id) we look at the response body for
+          // the new doc's _id — Mongoose returns hydrated documents whose
+          // `_id` is on the top-level object.
+          let entityId = paramId ?? 'n/a';
+          if (entityId === 'n/a' && value && typeof value === 'object') {
+            const v = value as Record<string, unknown>;
+            const candidate =
+              (v._id as { toString?: () => string } | string | undefined) ??
+              (v.id as string | undefined);
+            if (candidate) {
+              entityId =
+                typeof candidate === 'string'
+                  ? candidate
+                  : typeof candidate.toString === 'function'
+                    ? candidate.toString()
+                    : 'n/a';
+            }
+          }
+
           // Fire-and-forget; audit failures should not break API requests.
           void this.audit.write({
             clinicId: req.context!.clinicId,

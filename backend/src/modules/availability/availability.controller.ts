@@ -69,7 +69,7 @@ export class AvailabilityController {
   }
 
   @Put('doctors/:doctorUserId/rules')
-  @RequirePermissions(Permission.ClinicWrite)
+  @RequirePermissions(Permission.ClinicRead)
   async putRules(
     @Req() req: AppRequest,
     @Param('doctorUserId') doctorUserId: string,
@@ -78,6 +78,7 @@ export class AvailabilityController {
   ) {
     return await this.availability.replaceWeeklyRules({
       clinicId: req.context!.clinicId,
+      actorUserId: req.context!.actorUserId,
       branchId: new Types.ObjectId(branchId),
       doctorUserId: new Types.ObjectId(doctorUserId),
       rules: body.rules,
@@ -85,7 +86,7 @@ export class AvailabilityController {
   }
 
   @Put('doctors/:doctorUserId/overrides/:date')
-  @RequirePermissions(Permission.ClinicWrite)
+  @RequirePermissions(Permission.ClinicRead)
   async putOverride(
     @Req() req: AppRequest,
     @Param('doctorUserId') doctorUserId: string,
@@ -95,6 +96,7 @@ export class AvailabilityController {
   ) {
     return await this.availability.upsertOverride({
       clinicId: req.context!.clinicId,
+      actorUserId: req.context!.actorUserId,
       branchId: new Types.ObjectId(branchId),
       doctorUserId: new Types.ObjectId(doctorUserId),
       date,
@@ -106,7 +108,7 @@ export class AvailabilityController {
 
   // Convenience: close for a day
   @Patch('doctors/:doctorUserId/overrides/:date/close')
-  @RequirePermissions(Permission.ClinicWrite)
+  @RequirePermissions(Permission.ClinicRead)
   async closeDay(
     @Req() req: AppRequest,
     @Param('doctorUserId') doctorUserId: string,
@@ -115,6 +117,7 @@ export class AvailabilityController {
   ) {
     return await this.availability.upsertOverride({
       clinicId: req.context!.clinicId,
+      actorUserId: req.context!.actorUserId,
       branchId: new Types.ObjectId(branchId),
       doctorUserId: new Types.ObjectId(doctorUserId),
       date,

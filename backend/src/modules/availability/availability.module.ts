@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
+import { AuthzModule } from '../authz/authz.module';
 import { AvailabilityController } from './availability.controller';
 import { AvailabilityService } from './availability.service';
 import {
@@ -25,6 +26,7 @@ import {
       },
       { name: Clinic.name, schema: ClinicSchema },
     ]),
+    AuthzModule,
   ],
   controllers: [AvailabilityController],
   providers: [AvailabilityService],
