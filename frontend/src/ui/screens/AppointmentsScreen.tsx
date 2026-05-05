@@ -33,12 +33,12 @@ const HOURS = Array.from({ length: 12 }, (_, i) => i + 8);
 const HOUR_H = 72;
 
 const STATUS_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  DONE:        { bg: 'var(--success-bg)',   border: 'var(--success-500)', text: 'var(--success-text)' },
-  CHECKED_IN:  { bg: 'var(--teal-bg)',      border: 'var(--accent-500)',  text: 'var(--teal-text)' },
-  IN_PROGRESS: { bg: 'var(--info-bg)',      border: 'var(--info-500)',    text: 'var(--info-text)' },
-  BOOKED:      { bg: 'var(--brand-bg-soft)',border: 'var(--brand-500)',   text: 'var(--brand-text-strong)' },
-  CANCELLED:   { bg: 'var(--danger-bg)',    border: 'var(--danger-500)',  text: 'var(--danger-text)' },
-  NO_SHOW:     { bg: 'var(--warning-bg)',   border: 'var(--warning-500)', text: 'var(--warning-text)' },
+  DONE: { bg: 'var(--success-bg)', border: 'var(--success-500)', text: 'var(--success-text)' },
+  CHECKED_IN: { bg: 'var(--teal-bg)', border: 'var(--accent-500)', text: 'var(--teal-text)' },
+  IN_PROGRESS: { bg: 'var(--info-bg)', border: 'var(--info-500)', text: 'var(--info-text)' },
+  BOOKED: { bg: 'var(--brand-bg-soft)', border: 'var(--brand-500)', text: 'var(--brand-text-strong)' },
+  CANCELLED: { bg: 'var(--danger-bg)', border: 'var(--danger-500)', text: 'var(--danger-text)' },
+  NO_SHOW: { bg: 'var(--warning-bg)', border: 'var(--warning-500)', text: 'var(--warning-text)' },
 };
 
 function statusKey(s: string): string {
@@ -57,7 +57,7 @@ function isoToTime(iso: string | undefined): string {
 }
 
 function WeekView({
-  date, weekItems, loading, getName, onSelect, onPickDay,
+  date, weekItems, loading, getName, onSelect, onPickDay, showCancelled,
 }: {
   date: string;
   weekItems: Map<string, Appointment[]>;
@@ -65,6 +65,7 @@ function WeekView({
   getName: (id: string) => string;
   onSelect: (a: Appointment) => void;
   onPickDay: (iso: string) => void;
+  showCancelled: boolean;
 }) {
   const days = weekDates(date);
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -111,29 +112,67 @@ function WeekView({
 
         <div style={{ flex: 1, overflowY: 'auto', position: 'relative', display: 'flex', minWidth: COL_W * 7 }}>
           {days.map((d) => {
-            const dayAppts = (weekItems.get(d) ?? []).filter((a) => a.type === 'TIME');
+            let dayAppts = (weekItems.get(d) ?? []).filter((a) => a.type === 'TIME');
+            if (showCancelled) {
+              dayAppts = dayAppts.filter(a => statusKey(a.status) === 'CANCELLED');
+            } else {
+              dayAppts = dayAppts.filter(a => statusKey(a.status) !== 'CANCELLED');
+            }
             const isToday = d === todayIso;
             return (
               <div key={d} style={{ flex: 1, minWidth: COL_W, borderRight: '1px solid var(--border)', position: 'relative', background: isToday ? 'rgba(59,130,246,0.015)' : 'transparent' }}>
                 {HOURS.map((h) => (
                   <div key={h} style={{ position: 'absolute', left: 0, right: 0, top: (h - 8) * HOUR_H, height: HOUR_H, borderBottom: '1px solid var(--border)', boxSizing: 'border-box' }} />
                 ))}
-                {dayAppts.map((a) => {
-                  const startMin = isoToMin(a.startAt);
-                  const endMin = isoToMin(a.endAt);
-                  const dur = Math.max(endMin - startMin, 15);
-                  const top = ((startMin - 8 * 60) / 60) * HOUR_H;
-                  if (top < 0) return null;
-                  const height = Math.max((dur / 60) * HOUR_H - 2, 20);
-                  const col = STATUS_COLORS[statusKey(a.status)] ?? STATUS_COLORS.BOOKED;
-                  return (
-                    <div key={a._id} onClick={() => onSelect(a)}
-                      style={{ position: 'absolute', left: 2, right: 2, top, height, background: col.bg, border: `1px solid ${col.border}`, borderRadius: 6, padding: '3px 6px', cursor: 'pointer', overflow: 'hidden', zIndex: 1 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: col.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3 }}>{getName(a.patientId)}</div>
-                      {height > 28 && <div style={{ fontSize: 9, color: col.text, opacity: 0.8 }}>{isoToTime(a.startAt)}</div>}
-                    </div>
-                  );
-                })}
+                {(() => {
+                  const dayLayout = computeDayLayout(dayAppts);
+                  return dayAppts.map((a) => {
+                    const startMin = isoToMin(a.startAt);
+                    const endMin = isoToMin(a.endAt);
+                    const dur = Math.max(endMin - startMin, 15);
+                    const top = ((startMin - 8 * 60) / 60) * HOUR_H;
+                    if (top < 0) return null;
+                    const height = Math.max((dur / 60) * HOUR_H - 2, 20);
+                    const col = STATUS_COLORS[statusKey(a.status)] ?? STATUS_COLORS.BOOKED;
+                    const layout = dayLayout.get(a._id) ?? { left: '2px', width: 'calc(100% - 4px)', zIndex: 1, opacity: 1 };
+                    const isCancelled = statusKey(a.status) === 'CANCELLED';
+
+                    return (
+                      <div key={a._id} onClick={() => onSelect(a)}
+                        style={{
+                          position: 'absolute',
+                          left: layout.left,
+                          width: layout.width,
+                          top,
+                          height,
+                          background: col.bg,
+                          border: `1px solid ${col.border}`,
+                          borderStyle: isCancelled ? 'dashed' : 'solid',
+                          borderRadius: 6,
+                          padding: '3px 6px',
+                          cursor: 'pointer',
+                          overflow: 'hidden',
+                          zIndex: layout.zIndex,
+                          opacity: layout.opacity,
+                        }}>
+                        <div style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color: col.text,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          lineHeight: 1.3,
+                          textDecoration: isCancelled ? 'line-through' : 'none',
+                        }}>
+                          {getName(a.patientId)}
+                          {isCancelled && <span style={{ marginLeft: 2, opacity: 0.6, fontSize: 8 }}>[C]</span>}
+                        </div>
+                        {height > 28 && <div style={{ fontSize: 9, color: col.text, opacity: 0.8 }}>{isoToTime(a.startAt)}</div>}
+                      </div>
+                    );
+                  });
+                })()}
                 {loading && (weekItems.get(d) ?? []).length === 0 && (
                   <>
                     <Skeleton style={{ position: 'absolute', top: 1 * HOUR_H + 4, left: 3, right: 3, height: HOUR_H * 0.5 - 4 }} radius={6} />
@@ -175,6 +214,72 @@ function isoToMin(iso: string | undefined): number {
   return d.getHours() * 60 + d.getMinutes();
 }
 
+type ApptLayout = { left: string; width: string; zIndex: number; opacity: number };
+
+function isOverlapping(a: Appointment, b: Appointment) {
+  const aStart = isoToMin(a.startAt);
+  const aEnd = isoToMin(a.endAt) || (aStart + 30);
+  const bStart = isoToMin(b.startAt);
+  const bEnd = isoToMin(b.endAt) || (bStart + 30);
+  return aStart < bEnd && bStart < aEnd;
+}
+
+function computeDayLayout(appts: Appointment[]) {
+  const active = appts.filter((a) => statusKey(a.status) !== 'CANCELLED');
+  const cancelled = appts.filter((a) => statusKey(a.status) === 'CANCELLED');
+
+  const layout = new Map<string, ApptLayout>();
+
+  // 1. Layout active appointments using a multi-column algorithm
+  const activeCols: Appointment[][] = [];
+  [...active].sort((a, b) => isoToMin(a.startAt) - isoToMin(b.startAt)).forEach((a) => {
+    let placed = false;
+    for (const col of activeCols) {
+      if (isoToMin(a.startAt) >= (isoToMin(col[col.length - 1].endAt) || isoToMin(col[col.length - 1].startAt) + 30)) {
+        col.push(a);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) activeCols.push([a]);
+  });
+
+  activeCols.forEach((col, colIdx) => {
+    col.forEach((a) => {
+      layout.set(a._id, {
+        left: `calc(${(colIdx / activeCols.length) * 100}% + 4px)`,
+        width: `calc(${(1 / activeCols.length) * 100}% - 8px)`,
+        zIndex: 2,
+        opacity: 1,
+      });
+    });
+  });
+
+  // 2. Layout cancelled appointments
+  cancelled.forEach((a) => {
+    const overlapsWithActive = active.some((other) => isOverlapping(a, other));
+    if (overlapsWithActive) {
+      // Small ghosted slice on the right
+      layout.set(a._id, {
+        left: '70%',
+        width: 'calc(30% - 8px)',
+        zIndex: 1,
+        opacity: 0.4,
+      });
+    } else {
+      layout.set(a._id, {
+        left: '4px',
+        width: 'calc(100% - 8px)',
+        zIndex: 1,
+        opacity: 0.4,
+      });
+    }
+  });
+
+  return layout;
+}
+
+
 export function AppointmentsScreen() {
   const { ctx, selectedPatientId, setSelectedPatientId } = useApp();
   const toast = useToast();
@@ -182,6 +287,7 @@ export function AppointmentsScreen() {
   const [view, setView] = useState<'day' | 'week' | 'queue'>('day');
   const [weekItems, setWeekItems] = useState<Map<string, Appointment[]>>(new Map());
   const [weekLoading, setWeekLoading] = useState(false);
+  const [showCancelled, setShowCancelled] = useState(false);
   const [items, setItems] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -261,8 +367,24 @@ export function AppointmentsScreen() {
     if (selectedPatientId) setShowBook(true);
   }, [selectedPatientId]);
 
-  const dayAppts = useMemo(() => items.filter((a) => a.type === 'TIME'), [items]);
-  const queueAppts = useMemo(() => items.filter((a) => a.type === 'QUEUE').sort((a, b) => (a.queueNumber ?? 0) - (b.queueNumber ?? 0)), [items]);
+  const dayAppts = useMemo(() => {
+    let filtered = items.filter((a) => a.type === 'TIME');
+    if (showCancelled) {
+      filtered = filtered.filter(a => statusKey(a.status) === 'CANCELLED');
+    } else {
+      filtered = filtered.filter(a => statusKey(a.status) !== 'CANCELLED');
+    }
+    return filtered;
+  }, [items, showCancelled]);
+  const queueAppts = useMemo(() => {
+    let filtered = items.filter((a) => a.type === 'QUEUE');
+    if (showCancelled) {
+      filtered = filtered.filter(a => statusKey(a.status) === 'CANCELLED');
+    } else {
+      filtered = filtered.filter(a => statusKey(a.status) !== 'CANCELLED');
+    }
+    return filtered.sort((a, b) => (a.queueNumber ?? 0) - (b.queueNumber ?? 0));
+  }, [items, showCancelled]);
 
   function shiftDate(deltaDays: number) {
     const d = new Date(date);
@@ -290,13 +412,28 @@ export function AppointmentsScreen() {
           <Icon name="chevronRight" size={16} />
         </button>
 
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 2, background: 'var(--surface-muted)', borderRadius: 10, padding: 3, border: '1px solid var(--border)' }}>
-          {(['day', 'week', 'queue'] as const).map((v) => (
-            <button key={v} onClick={() => setView(v)}
-              style={{ padding: '5px 14px', borderRadius: 8, border: 'none', background: view === v ? 'var(--surface)' : 'transparent', color: view === v ? 'var(--text)' : 'var(--text-muted)', fontSize: 12, fontWeight: view === v ? 600 : 400, cursor: 'pointer', textTransform: 'capitalize' }}>
-              {v}
-            </button>
-          ))}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button onClick={() => setShowCancelled(!showCancelled)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, height: 32, padding: '0 12px',
+              background: showCancelled ? 'var(--danger-bg)' : 'var(--surface-muted)',
+              border: `1px solid ${showCancelled ? 'var(--danger-500)' : 'var(--border)'}`,
+              borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: 'pointer',
+              color: showCancelled ? 'var(--danger-text)' : 'var(--text-subtle)',
+              transition: 'all 0.2s'
+            }}>
+            <Icon name={showCancelled ? 'eye' : 'eyeOff'} size={14} />
+            {showCancelled ? 'Showing Cancelled' : 'Show Cancelled'}
+          </button>
+
+          <div style={{ display: 'flex', gap: 2, background: 'var(--surface-muted)', borderRadius: 10, padding: 3, border: '1px solid var(--border)' }}>
+            {(['day', 'week', 'queue'] as const).map((v) => (
+              <button key={v} onClick={() => setView(v)}
+                style={{ padding: '5px 14px', borderRadius: 8, border: 'none', background: view === v ? 'var(--surface)' : 'transparent', color: view === v ? 'var(--text)' : 'var(--text-muted)', fontSize: 12, fontWeight: view === v ? 600 : 400, cursor: 'pointer', textTransform: 'capitalize' }}>
+                {v}
+              </button>
+            ))}
+          </div>
         </div>
 
         <button onClick={() => setShowBook(true)}
@@ -372,6 +509,7 @@ export function AppointmentsScreen() {
             getName={getName}
             onSelect={setSelected}
             onPickDay={(d) => { setDate(d); setView('day'); }}
+            showCancelled={showCancelled}
           />
         )}
 
@@ -1126,19 +1264,19 @@ function ConfirmStep({
 }) {
   const rows: { label: string; value: string; icon: 'user' | 'calendar' | 'clock' | 'clipboard' | 'stethoscope' | 'mapPin' }[] = apptKind === 'QUEUE'
     ? [
-        { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
-        { label: 'Date',    value: date || '—',              icon: 'calendar' },
-        { label: 'Type',    value: 'Walk-in queue',          icon: 'clipboard' },
-        { label: 'Doctor',  value: doctorName,               icon: 'stethoscope' },
-      ]
+      { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
+      { label: 'Date', value: date || '—', icon: 'calendar' },
+      { label: 'Type', value: 'Walk-in queue', icon: 'clipboard' },
+      { label: 'Doctor', value: doctorName, icon: 'stethoscope' },
+    ]
     : [
-        { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
-        { label: 'Date',    value: date || '—',                icon: 'calendar' },
-        { label: 'Time',    value: `${time || '—'} · ${duration} min`, icon: 'clock' },
-        { label: 'Type',    value: apptType,                   icon: 'clipboard' },
-        { label: 'Doctor',  value: doctorName,                 icon: 'stethoscope' },
-        { label: 'Room',    value: room,                       icon: 'mapPin' },
-      ];
+      { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
+      { label: 'Date', value: date || '—', icon: 'calendar' },
+      { label: 'Time', value: `${time || '—'} · ${duration} min`, icon: 'clock' },
+      { label: 'Type', value: apptType, icon: 'clipboard' },
+      { label: 'Doctor', value: doctorName, icon: 'stethoscope' },
+      { label: 'Room', value: room, icon: 'mapPin' },
+    ];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
       <div style={{ width: 64, height: 64, borderRadius: 16, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>

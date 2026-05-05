@@ -81,6 +81,16 @@ export function EncounterScreen() {
         setDoctorId(appt.doctorId);
       })
       .catch(() => undefined);
+
+    // Also check if an encounter already exists for this appointment
+    apiGet<Encounter | null>(ctx, `/encounters/by-appointment/${selectedAppointmentId}`)
+      .then((enc) => {
+        if (enc) {
+          setEncounter(enc);
+          setEncounterId(enc._id);
+        }
+      })
+      .catch(() => undefined);
   }, [selectedAppointmentId, ctx]);
 
   useEffect(() => {
@@ -396,7 +406,10 @@ function EncounterEditor({
         </div>
 
         <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Current vitals</div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Current vitals</div>
+            <span style={{ fontSize: 9, color: 'var(--text-subtle)', background: 'var(--surface-muted)', padding: '2px 6px', borderRadius: 6, fontWeight: 600 }}>READ-ONLY</span>
+          </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
             {[
               { l: 'BP', v: vitals.bp, u: 'mmHg' },
@@ -463,7 +476,11 @@ function EncounterEditor({
 
         <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <Section title="Vitals" icon="activity" defaultOpen>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(6,1fr)', gap: 10 }}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
+              gap: 12
+            }}>
               {VITAL_FIELDS.map((f) => (
                 <VitalInput key={f.key} label={f.label} unit={f.unit}
                   value={vitals[f.key] ?? ''}
@@ -643,13 +660,43 @@ function formatSignedAt(iso: string | undefined): string {
 }
 
 function VitalInput({ label, unit, value, onChange, disabled }: { label: string; unit: string; value: string; onChange: (v: string) => void; disabled?: boolean }) {
+  const [isFocused, setIsFocused] = useState(false);
+
   return (
     <div>
       <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>{label}</label>
       <div style={{ position: 'relative' }}>
-        <input value={value} onChange={(e) => onChange(e.target.value)} disabled={disabled} placeholder="—"
-          style={{ width: '100%', height: 38, padding: '0 36px 0 10px', background: 'var(--surface-muted)', border: `1.5px solid ${disabled ? 'transparent' : 'var(--border)'}`, borderRadius: 9, fontSize: 14, fontWeight: 600, color: 'var(--text)', outline: 'none', boxSizing: 'border-box', textAlign: 'center', fontVariantNumeric: 'tabular-nums' }} />
-        <span style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', fontSize: 10, color: 'var(--text-subtle)', pointerEvents: 'none' }}>{unit}</span>
+        <input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          disabled={disabled}
+          placeholder="—"
+          onFocus={() => setIsFocused(true)}
+          onBlur={() => setIsFocused(false)}
+          style={{
+            width: '100%', height: 40,
+            padding: '0 32px 0 12px',
+            background: isFocused ? 'var(--surface)' : 'var(--surface-muted)',
+            border: `1.5px solid ${disabled ? 'transparent' : (isFocused ? 'var(--brand-500)' : 'var(--border)')}`,
+            borderRadius: 10,
+            fontSize: 14, fontWeight: 600,
+            color: 'var(--text)',
+            outline: 'none',
+            boxSizing: 'border-box',
+            textAlign: 'left', // Switched to left for better cursor visibility
+            fontVariantNumeric: 'tabular-nums',
+            cursor: disabled ? 'not-allowed' : 'text',
+            transition: 'all 0.2s ease',
+            boxShadow: isFocused ? '0 0 0 3px rgba(99,102,241,0.1)' : 'none',
+          }}
+        />
+        <span style={{
+          position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
+          fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)',
+          pointerEvents: 'none', opacity: 0.8
+        }}>
+          {unit}
+        </span>
       </div>
     </div>
   );

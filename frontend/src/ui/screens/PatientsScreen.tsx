@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiGet, apiPost } from '../../app/api';
+import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Avatar, EmptyState, Field, Spinner, StatusPill, formatDate, formatINR, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
 import { AnimatedTabs } from '../shared/AnimatedTabs';
-import { ListItemSkeleton } from '../shared/Skeleton';
+import { Skeleton, ListItemSkeleton } from '../shared/Skeleton';
 import { useShake } from '../shared/useShake';
 
 type Patient = {
@@ -27,6 +27,32 @@ type Bill = {
   paidAmount?: number;
   createdAt?: string;
   patientId: string;
+  appointmentId?: string;
+};
+
+type Encounter = {
+  _id: string;
+  appointmentId?: string;
+  visitedAt: string;
+  chiefComplaint?: string;
+  notes?: string;
+  diagnosis?: string;
+  status: string;
+};
+
+type Appointment = {
+  _id: string;
+  startAt: string;
+  status: string;
+  doctorName?: string;
+  branchName?: string;
+};
+
+type HistoryResponse = {
+  patientId: string;
+  appointments: Appointment[];
+  encounters: Encounter[];
+  bills: Bill[];
 };
 
 function ageFromDob(dob?: string): string {
@@ -64,6 +90,7 @@ export function PatientsScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [editing, setEditing] = useState<Patient | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [genderFilter, setGenderFilter] = useState<'ALL' | 'MALE' | 'FEMALE' | 'OTHER'>('ALL');
   const [tagFilter, setTagFilter] = useState<string>('');
@@ -160,41 +187,44 @@ export function PatientsScreen() {
         </div>
 
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          {loading && (
+          {loading ? (
             <div>
-              {Array.from({ length: 6 }).map((_, i) => <ListItemSkeleton key={i} />)}
+              {Array.from({ length: 10 }).map((_, i) => <ListItemSkeleton key={i} />)}
             </div>
-          )}
-          {error && <div style={{ padding: 16, color: 'var(--danger-500)', fontSize: 12 }}>{error}</div>}
-          {!loading && !error && visibleItems.length === 0 && (
-            <EmptyState illustration="patients" title="No patients found" hint={query || genderFilter !== 'ALL' || tagFilter ? 'Try clearing the filters.' : 'Register a new patient to get started.'} />
-          )}
-          {groups.map(([letter, patients]) => (
-            <div key={letter}>
-              <div style={{ padding: '6px 14px 3px', fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', position: 'sticky', top: 0, background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>{letter}</div>
-              {patients.map((p) => (
-                <div key={p._id} onClick={() => setSelected(p)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: 'pointer', background: selected?._id === p._id ? 'var(--brand-50)' : 'transparent', borderLeft: selected?._id === p._id ? '3px solid var(--brand-500)' : '3px solid transparent', transition: 'background 80ms' }}>
-                  <Avatar name={p.fullName} size={32} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: selected?._id === p._id ? 'var(--brand-700)' : 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.fullName}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {genderLabel(p.gender)} · {ageFromDob(p.dob)} · {p.phones?.[0] ?? '—'}
+          ) : (
+            <>
+              {error && <div style={{ padding: 16, color: 'var(--danger-500)', fontSize: 12 }}>{error}</div>}
+              {!error && visibleItems.length === 0 && (
+                <EmptyState illustration="patients" title="No patients found" hint={query || genderFilter !== 'ALL' || tagFilter ? 'Try clearing the filters.' : 'Register a new patient to get started.'} />
+              )}
+              {groups.map(([letter, patients]) => (
+                <div key={letter}>
+                  <div style={{ padding: '6px 14px 3px', fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', position: 'sticky', top: 0, background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>{letter}</div>
+                  {patients.map((p) => (
+                    <div key={p._id} onClick={() => setSelected(p)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: 'pointer', background: selected?._id === p._id ? 'var(--brand-50)' : 'transparent', borderLeft: selected?._id === p._id ? '3px solid var(--brand-500)' : '3px solid transparent', transition: 'background 80ms' }}>
+                      <Avatar name={p.fullName} size={32} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, color: selected?._id === p._id ? 'var(--brand-700)' : 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.fullName}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {genderLabel(p.gender)} · {ageFromDob(p.dob)} · {p.phones?.[0] ?? '—'}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
               ))}
-            </div>
-          ))}
+            </>
+          )}
         </div>
       </div>
 
       {/* Detail */}
       {selected ? (
-        <PatientDetail key={selected._id} patient={selected} />
+        <PatientDetail key={selected._id} patient={selected} onEdit={() => setEditing(selected)} />
       ) : (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-subtle)', fontSize: 14 }}>
-          Select a patient to view details
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <EmptyState illustration="patients" title="No patient selected" hint="Select a patient from the list on the left to view their profile, history, and billing." />
         </div>
       )}
 
@@ -209,19 +239,31 @@ export function PatientsScreen() {
           }}
         />
       )}
+      {editing && (
+        <EditPatientModal
+          patient={editing}
+          onClose={() => setEditing(null)}
+          onUpdated={(updated) => {
+            setEditing(null);
+            toast('Patient details updated', 'success');
+            setRefreshKey((k) => k + 1);
+            setSelected(updated);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function PatientDetail({ patient }: { patient: Patient }) {
+function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => void }) {
   const { ctx, setScreen, setSelectedPatientId } = useApp();
   const [tab, setTab] = useState<'overview' | 'history' | 'documents' | 'bills'>('overview');
   const [bills, setBills] = useState<Bill[] | null>(null);
-  const [history, setHistory] = useState<unknown>(null);
+  const [history, setHistory] = useState<HistoryResponse | null>(null);
 
   useEffect(() => {
     if (tab !== 'history' || history) return;
-    apiGet<unknown>(ctx, `/patients/${patient._id}/history`).then(setHistory).catch(() => setHistory({ error: true }));
+    apiGet<HistoryResponse>(ctx, `/patients/${patient._id}/history`).then(setHistory).catch(() => setHistory(null));
   }, [tab, ctx, patient._id, history]);
 
   useEffect(() => {
@@ -260,10 +302,16 @@ function PatientDetail({ patient }: { patient: Patient }) {
               ))}
             </div>
           </div>
-          <button onClick={bookForPatient}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}>
-            <Icon name="plus" size={14} strokeWidth={2.5} /> Book
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <button onClick={onEdit}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 16px', background: 'var(--surface-muted)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              <Icon name="edit" size={14} /> Edit
+            </button>
+            <button onClick={bookForPatient}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              <Icon name="plus" size={14} strokeWidth={2.5} /> Book
+            </button>
+          </div>
         </div>
 
         <div style={{ marginTop: 16 }}>
@@ -311,11 +359,15 @@ function PatientDetail({ patient }: { patient: Patient }) {
         )}
 
         {tab === 'history' && (
-          <div>
-            {!history ? <div style={{ padding: 24, color: 'var(--text-subtle)', fontSize: 13 }}>Loading history…</div> : (
-              <pre style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 16, fontSize: 11, overflow: 'auto', color: 'var(--text-muted)' }}>
-                {JSON.stringify(history, null, 2)}
-              </pre>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {!history ? (
+              <>
+                <Skeleton height={20} width="40%" />
+                <Skeleton height={100} />
+                <Skeleton height={80} />
+              </>
+            ) : (
+              <PatientTimeline history={history} />
             )}
           </div>
         )}
@@ -327,21 +379,30 @@ function PatientDetail({ patient }: { patient: Patient }) {
 
         {tab === 'bills' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {bills === null && <div style={{ padding: 24, color: 'var(--text-subtle)', fontSize: 13 }}>Loading bills…</div>}
-            {bills && bills.length === 0 && <EmptyState icon="receipt" title="No bills yet" />}
-            {bills?.map((b) => (
-              <div key={b._id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', fontFamily: 'monospace' }}>{b.billNo ?? b._id.slice(-6)}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1 }}>{formatDate(b.createdAt)}</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{formatINR(b.total)}</div>
-                  {(b.paidAmount ?? 0) < b.total && <div style={{ fontSize: 11, color: 'var(--danger-500)' }}>Balance: {formatINR(b.total - (b.paidAmount ?? 0))}</div>}
-                </div>
-                <StatusPill status={b.status?.toLowerCase()} small />
-              </div>
-            ))}
+            {bills === null ? (
+              <>
+                <BillSkeleton />
+                <BillSkeleton />
+                <BillSkeleton />
+              </>
+            ) : (
+              <>
+                {bills.length === 0 && <EmptyState icon="receipt" title="No bills yet" />}
+                {bills.map((b) => (
+                  <div key={b._id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', fontFamily: 'monospace' }}>{b.billNo ?? b._id.slice(-6)}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1 }}>{formatDate(b.createdAt)}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{formatINR(b.total)}</div>
+                      {(b.paidAmount ?? 0) < b.total && <div style={{ fontSize: 11, color: 'var(--danger-500)' }}>Balance: {formatINR(b.total - (b.paidAmount ?? 0))}</div>}
+                    </div>
+                    <StatusPill status={b.status?.toLowerCase()} small />
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -486,6 +547,214 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
           </button>
         </div>
       </div>
+    </div>
+  );
+}
+function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; onClose: () => void; onUpdated: (p: Patient) => void }) {
+  const { ctx } = useApp();
+  const [form, setForm] = useState({
+    fullName: patient.fullName,
+    dob: patient.dob ? patient.dob.slice(0, 10) : '',
+    gender: patient.gender ?? '',
+    phone: patient.phones?.[0] ?? '',
+    email: patient.emails?.[0] ?? '',
+    tags: (patient.tags ?? []).join(', '),
+    notes: patient.notes ?? '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { shakeProps, shake } = useShake();
+  const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  async function submit() {
+    if (!form.fullName.trim()) { shake(); setError('Full name is required.'); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      const body: Record<string, unknown> = { fullName: form.fullName.trim() };
+      body.dob = form.dob || null;
+      body.gender = form.gender ? form.gender.toUpperCase() : null;
+      body.phones = form.phone.trim() ? [form.phone.trim()] : [];
+      body.emails = form.email.trim() ? [form.email.trim()] : [];
+      body.tags = form.tags.split(',').map((t) => t.trim()).filter(Boolean);
+      body.notes = form.notes.trim() || null;
+
+      const updated = await apiPatch<Patient>(ctx, `/patients/${patient._id}`, body);
+      onUpdated(updated);
+    } catch (e) {
+      shake();
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)', animation: 'fadeIn 150ms ease-out' }} onClick={onClose}>
+      <div {...shakeProps}
+        style={{ background: 'var(--surface)', borderRadius: 20, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 500, overflow: 'hidden', animation: 'slideUp 200ms ease-out', ...shakeProps.style }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Edit patient</div>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{patient.fullName} · {patient._id}</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}>
+            <Icon name="x" size={18} />
+          </button>
+        </div>
+
+        <div style={{ padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14, maxHeight: '70vh', overflowY: 'auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div style={{ gridColumn: 'span 2' }}>
+              <Field label="Full name" value={form.fullName} onChange={(v) => set('fullName', v)} />
+            </div>
+            <Field label="Date of birth" value={form.dob} onChange={(v) => set('dob', v)} placeholder="YYYY-MM-DD" />
+            <div>
+              <label style={labelStyle}>Gender</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {['MALE', 'FEMALE', 'OTHER'].map((g) => (
+                  <button key={g} onClick={() => set('gender', g)}
+                    style={{ flex: 1, height: 36, border: `1.5px solid ${form.gender === g ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 9, background: form.gender === g ? 'var(--brand-50)' : 'var(--surface-muted)', color: form.gender === g ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                    {g[0] + g.slice(1).toLowerCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Field label="Phone number" value={form.phone} onChange={(v) => set('phone', v)} prefix="+91" />
+            <Field label="Email address" value={form.email} onChange={(v) => set('email', v)} />
+            <div style={{ gridColumn: 'span 2' }}>
+              <Field label="Tags" value={form.tags} onChange={(v) => set('tags', v)} placeholder="comma-separated" />
+            </div>
+            <div style={{ gridColumn: 'span 2' }}>
+              <label style={labelStyle}>Notes</label>
+              <textarea value={form.notes} onChange={(e) => set('notes', e.target.value)}
+                style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+          </div>
+          {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
+        </div>
+
+        <div style={{ padding: '0 24px 20px', display: 'flex', gap: 10 }}>
+          <button onClick={onClose}
+            style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
+            Cancel
+          </button>
+          <button onClick={submit} disabled={saving}
+            style={{ flex: 2, height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            {saving ? <Spinner /> : 'Save changes'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function BillSkeleton() {
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <Skeleton width="40%" height={12} />
+        <Skeleton width="25%" height={10} />
+      </div>
+      <div style={{ width: 60, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+        <Skeleton width="100%" height={14} />
+        <Skeleton width="70%" height={10} />
+      </div>
+      <Skeleton width={50} height={20} radius={100} />
+    </div>
+  );
+}
+
+function PatientTimeline({ history }: { history: HistoryResponse }) {
+  // Combine into visits
+  const visits = useMemo(() => {
+    const map = new Map<string, { appt?: Appointment; encounter?: Encounter; bill?: Bill; date: string }>();
+
+    // Add appointments
+    history.appointments.forEach((a) => {
+      map.set(a._id, { appt: a, date: a.startAt });
+    });
+
+    // Link encounters
+    history.encounters.forEach((e) => {
+      if (e.appointmentId && map.has(e.appointmentId)) {
+        map.get(e.appointmentId)!.encounter = e;
+      } else {
+        map.set(e._id, { encounter: e, date: e.visitedAt });
+      }
+    });
+
+    // Link bills
+    history.bills.forEach((b) => {
+      if (b.appointmentId && map.has(b.appointmentId)) {
+        map.get(b.appointmentId)!.bill = b;
+      } else if (!map.has(b._id)) {
+        map.set(b._id, { bill: b, date: b.createdAt ?? new Date().toISOString() });
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+  }, [history]);
+
+  if (visits.length === 0) return <EmptyState illustration="calendar" title="No clinical history" hint="Once this patient has appointments or encounters, they will show up here." />;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 20, position: 'relative', paddingLeft: 16 }}>
+      <div style={{ position: 'absolute', left: 23, top: 10, bottom: 10, width: 2, background: 'var(--border)', borderRadius: 1 }} />
+      {visits.map((v, i) => (
+        <div key={i} style={{ display: 'flex', gap: 16, position: 'relative' }}>
+          {/* Dot */}
+          <div style={{ width: 16, height: 16, borderRadius: '50%', background: 'var(--brand-500)', border: '4px solid var(--bg)', flexShrink: 0, marginTop: 4, zIndex: 1 }} />
+          
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{formatDate(v.date)}</div>
+            <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginBottom: 8 }}>{new Date(v.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</div>
+            
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              {/* Appointment row */}
+              {v.appt && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                  <Icon name="calendar" size={14} style={{ color: 'var(--brand-500)' }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>Appointment</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{v.appt.doctorName ?? 'General'} · {v.appt.branchName ?? 'Main'}</div>
+                  </div>
+                  <StatusPill status={v.appt.status} small />
+                </div>
+              )}
+
+              {/* Encounter row */}
+              {v.encounter && (
+                <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', background: 'var(--surface-muted)', borderRadius: 10, border: '1px solid var(--border)' }}>
+                  <Icon name="activity" size={14} style={{ color: 'var(--teal-500)', marginTop: 2 }} />
+                  <div style={{ flex: 1 }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                      <span style={{ fontSize: 12, fontWeight: 700 }}>Clinical Encounter</span>
+                      <StatusPill status={v.encounter.status} small />
+                    </div>
+                    {v.encounter.chiefComplaint && (
+                      <div style={{ fontSize: 11, color: 'var(--text)', marginBottom: 4 }}><b style={{ color: 'var(--text-subtle)' }}>Complaint:</b> {v.encounter.chiefComplaint}</div>
+                    )}
+                    {v.encounter.diagnosis && (
+                      <div style={{ fontSize: 11, color: 'var(--text)' }}><b style={{ color: 'var(--text-subtle)' }}>Diagnosis:</b> {v.encounter.diagnosis}</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              {/* Bill row */}
+              {v.bill && (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', border: '1px dashed var(--border)', borderRadius: 10 }}>
+                  <Icon name="receipt" size={14} style={{ color: 'var(--warning-500)' }} />
+                  <div style={{ flex: 1, fontSize: 12, fontWeight: 600 }}>Bill {v.bill.billNo ?? v.bill._id.slice(-6)}</div>
+                  <div style={{ fontSize: 13, fontWeight: 700 }}>{formatINR(v.bill.total)}</div>
+                  <StatusPill status={v.bill.status} small />
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

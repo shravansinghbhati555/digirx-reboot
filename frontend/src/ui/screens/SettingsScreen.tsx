@@ -147,7 +147,22 @@ function ClinicTab() {
 
   useEffect(() => { if (canRead) void load(); }, [canRead, ctx.clinicId]);
 
+  const isDirty = useMemo(() => {
+    if (!data) return false;
+    return (
+      name.trim() !== (data.clinic.name ?? '') ||
+      timezone !== (data.clinic.timezone ?? '') ||
+      currency.toUpperCase() !== (data.clinic.currency ?? '') ||
+      apptMode !== (data.settings.appointments?.mode ?? 'BOTH') ||
+      slotMinutes !== String(data.settings.appointments?.slotMinutesDefault ?? 15) ||
+      displayName.trim() !== (data.settings.branding?.displayName ?? '') ||
+      logoUrl.trim() !== (data.settings.branding?.logoUrl ?? '') ||
+      primaryColor.trim() !== (data.settings.branding?.primaryColor ?? '')
+    );
+  }, [data, name, timezone, currency, apptMode, slotMinutes, displayName, logoUrl, primaryColor]);
+
   async function save() {
+    if (!isDirty) return;
     setSaving(true); setError(null);
     try {
       const body: Record<string, unknown> = {
@@ -253,8 +268,13 @@ function ClinicTab() {
 
           {canWrite ? (
             <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-              <button onClick={save} disabled={saving}
-                style={{ height: 40, padding: '0 28px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button onClick={save} disabled={saving || !isDirty}
+                style={{
+                  height: 40, padding: '0 28px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                  cursor: (saving || !isDirty) ? (saving ? 'wait' : 'not-allowed') : 'pointer',
+                  opacity: (saving || !isDirty) ? 0.6 : 1,
+                  display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s'
+                }}>
                 {saving ? <Spinner /> : 'Save all changes'}
               </button>
             </div>
@@ -322,6 +342,7 @@ function AvailabilityTab() {
 
   const [doctorId, setDoctorId] = useState(ctx.userId);
   const [rules, setRules] = useState<WeeklyRule[]>(() => Array.from({ length: 7 }, (_, i) => emptyRule(i)));
+  const [originalRules, setOriginalRules] = useState<WeeklyRule[] | null>(null);
   const [overrides, setOverrides] = useState<DoctorOverride[]>([]);
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -363,6 +384,7 @@ function AvailabilityTab() {
         }
       }
       setRules(next);
+      setOriginalRules(JSON.parse(JSON.stringify(next))); // Deep copy for dirty check
       setOverrides(overridesResp);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -376,6 +398,11 @@ function AvailabilityTab() {
   function updateRule(weekday: number, patch: Partial<WeeklyRule>) {
     setRules((rs) => rs.map((r) => (r.weekday === weekday ? { ...r, ...patch } : r)));
   }
+
+  const rulesDirty = useMemo(() => {
+    if (!originalRules) return false;
+    return JSON.stringify(rules) !== JSON.stringify(originalRules);
+  }, [rules, originalRules]);
 
   async function saveRules() {
     setSaving(true); setError(null);
@@ -466,8 +493,13 @@ function AvailabilityTab() {
         </div>
         {canWrite && (
           <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
-            <button onClick={saveRules} disabled={saving || !doctorId.trim() || !ctx.branchId}
-              style={{ height: 38, padding: '0 22px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button onClick={saveRules} disabled={saving || !rulesDirty || !doctorId.trim() || !ctx.branchId}
+              style={{
+                height: 38, padding: '0 22px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 600,
+                cursor: (saving || !rulesDirty) ? (saving ? 'wait' : 'not-allowed') : 'pointer',
+                opacity: (saving || !rulesDirty) ? 0.6 : 1,
+                display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s'
+              }}>
               {saving ? <Spinner /> : 'Save weekly rules'}
             </button>
           </div>
@@ -505,7 +537,12 @@ function AvailabilityTab() {
         {canWrite && (
           <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
             <button onClick={saveOverride} disabled={savingOverride || !overrideDate}
-              style={{ height: 38, padding: '0 22px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: savingOverride ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              style={{
+                height: 38, padding: '0 22px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 600,
+                cursor: (savingOverride || !overrideDate) ? (savingOverride ? 'wait' : 'not-allowed') : 'pointer',
+                opacity: (savingOverride || !overrideDate) ? 0.6 : 1,
+                display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.2s'
+              }}>
               {savingOverride ? <Spinner /> : 'Save override'}
             </button>
           </div>
@@ -538,7 +575,12 @@ function AvailabilityTab() {
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, alignItems: 'flex-end' }}>
           <Field label="Date" value={previewDate} onChange={setPreviewDate} placeholder="YYYY-MM-DD" type="date" />
           <button onClick={() => void runPreview()} disabled={previewing || !previewDate || !doctorId.trim() || !ctx.branchId}
-            style={{ height: 40, padding: '0 22px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: previewing ? 'wait' : 'pointer' }}>
+            style={{
+              height: 40, padding: '0 22px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600,
+              cursor: (previewing || !previewDate || !doctorId.trim() || !ctx.branchId) ? (previewing ? 'wait' : 'not-allowed') : 'pointer',
+              opacity: (previewing || !previewDate || !doctorId.trim() || !ctx.branchId) ? 0.6 : 1,
+              transition: 'all 0.2s'
+            }}>
             {previewing ? 'Loading…' : 'Show slots'}
           </button>
         </div>
@@ -645,7 +687,18 @@ function ContextTab() {
   const [token, setToken] = useState(ctx.accessToken ?? '');
   const toast = useToast();
 
+  const isDirty = useMemo(() => {
+    return (
+      api.trim() !== ctx.apiBaseUrl ||
+      clinicId.trim() !== ctx.clinicId ||
+      branchId.trim() !== (ctx.branchId ?? '') ||
+      userId.trim() !== ctx.userId ||
+      token.trim() !== (ctx.accessToken ?? '')
+    );
+  }, [api, clinicId, branchId, userId, token, ctx]);
+
   function save() {
+    if (!isDirty) return;
     setCtx({
       ...ctx,
       apiBaseUrl: api.trim(),
@@ -666,8 +719,13 @@ function ContextTab() {
         <Field label="User ID (dev fallback)" value={userId} onChange={setUserId} />
         <Field label="Access token (JWT)" value={token} onChange={setToken} />
         <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-          <button onClick={save}
-            style={{ height: 38, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+          <button onClick={save} disabled={!isDirty}
+            style={{
+              height: 38, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 600,
+              cursor: !isDirty ? 'not-allowed' : 'pointer',
+              opacity: !isDirty ? 0.6 : 1,
+              transition: 'all 0.2s'
+            }}>
             Save context
           </button>
           <button onClick={() => void refreshMe()}
@@ -1007,6 +1065,18 @@ function BranchSheet({ mode, initial, onClose, onSaved }: {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isDirty = useMemo(() => {
+    if (mode === 'create') return true; // Always allow save for new ones
+    return (
+      name.trim() !== (initial?.name ?? '') ||
+      addressLine.trim() !== (initial?.addressLine ?? '') ||
+      phone.trim() !== (initial?.phone ?? '') ||
+      open !== (initial?.open ?? '09:00') ||
+      close !== (initial?.close ?? '18:00') ||
+      Number(slotsPerDay) !== (initial?.slotsPerDay ?? 20)
+    );
+  }, [mode, initial, name, addressLine, phone, open, close, slotsPerDay]);
+
   async function submit() {
     if (!name.trim()) { setError('Branch name is required.'); return; }
     setSaving(true); setError(null);
@@ -1071,8 +1141,13 @@ function BranchSheet({ mode, initial, onClose, onSaved }: {
             style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
             Cancel
           </button>
-          <button onClick={submit} disabled={saving}
-            style={{ flex: 2, height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+          <button onClick={submit} disabled={saving || !isDirty}
+            style={{
+              flex: 2, height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600,
+              cursor: (saving || !isDirty) ? (saving ? 'wait' : 'not-allowed') : 'pointer',
+              opacity: (saving || !isDirty) ? 0.6 : 1,
+              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, transition: 'all 0.2s'
+            }}>
             {saving ? <Spinner /> : (mode === 'create' ? 'Add branch' : 'Save changes')}
           </button>
         </div>
