@@ -35,7 +35,7 @@ const COMMON_TIMEZONES = [
   'UTC',
 ];
 
-type SettingsTab = 'clinic' | 'branches' | 'availability' | 'users' | 'permissions' | 'notif_cfg' | 'security' | 'audit' | 'context' | 'about';
+type SettingsTab = 'clinic' | 'branches' | 'availability' | 'users' | 'permissions' | 'notif_cfg' | 'audit' | 'about';
 
 // `perm` of `null` = visible to any signed-in user.
 type NavItem = { id: SettingsTab; label: string; icon: IconName; perm: PermName | null };
@@ -47,9 +47,7 @@ const NAV: NavItem[] = [
   { id: 'users',        label: 'Users',               icon: 'users',    perm: Perm.UserWrite },
   { id: 'permissions',  label: 'Roles & Permissions', icon: 'shield',   perm: Perm.ClinicWrite },
   { id: 'notif_cfg',    label: 'Notifications',       icon: 'bell',     perm: Perm.NotificationRead },
-  { id: 'security',     label: 'Security',            icon: 'lock',     perm: Perm.ClinicWrite },
   { id: 'audit',        label: 'Audit log',           icon: 'scroll',   perm: Perm.ClinicWrite },
-  { id: 'context',      label: 'My context',          icon: 'user',     perm: Perm.ClinicWrite },
   { id: 'about',        label: 'About',               icon: 'info',     perm: null },
 ];
 
@@ -105,9 +103,7 @@ export function SettingsScreen() {
           {activeAllowed && tab === 'users' && <UsersTab />}
           {activeAllowed && tab === 'permissions' && <PermissionsTab />}
           {activeAllowed && tab === 'notif_cfg' && <NotifConfigTab />}
-          {activeAllowed && tab === 'security' && <SecurityTab />}
           {activeAllowed && tab === 'audit' && <AuditTab />}
-          {activeAllowed && tab === 'context' && <ContextTab />}
           {activeAllowed && tab === 'about' && <AboutTab />}
         </div>
       </div>
@@ -702,53 +698,6 @@ function WindowsEditor({ value, onChange, disabled, compact }: { value: Availabi
   );
 }
 
-function ContextTab() {
-  const { ctx, setCtx, refreshMe, logout } = useApp();
-  const [api, setApi] = useState(ctx.apiBaseUrl);
-  const [clinicId, setClinicId] = useState(ctx.clinicId);
-  const [branchId, setBranchId] = useState(ctx.branchId ?? '');
-  const [userId, setUserId] = useState(ctx.userId);
-  const [token, setToken] = useState(ctx.accessToken ?? '');
-  const toast = useToast();
-
-  function save() {
-    setCtx({
-      ...ctx,
-      apiBaseUrl: api.trim(),
-      clinicId: clinicId.trim(),
-      branchId: branchId.trim() || undefined,
-      userId: userId.trim(),
-      accessToken: token.trim() || undefined,
-    });
-    toast('Context saved', 'success');
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Field label="API base URL" value={api} onChange={setApi} />
-        <Field label="Clinic ID" value={clinicId} onChange={setClinicId} />
-        <Field label="Branch ID (optional)" value={branchId} onChange={setBranchId} />
-        <Field label="User ID (dev fallback)" value={userId} onChange={setUserId} />
-        <Field label="Access token (JWT)" value={token} onChange={setToken} />
-        <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-          <button onClick={save}
-            style={{ height: 38, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
-            Save context
-          </button>
-          <button onClick={() => void refreshMe()}
-            style={{ height: 38, padding: '0 16px', background: 'none', border: '1.5px solid var(--border)', borderRadius: 9, color: 'var(--text-muted)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
-            Refresh /me
-          </button>
-          <button onClick={() => void logout()}
-            style={{ height: 38, padding: '0 16px', background: 'none', border: '1.5px solid var(--danger-500)', color: 'var(--danger-500)', borderRadius: 9, fontSize: 13, fontWeight: 500, cursor: 'pointer', marginLeft: 'auto' }}>
-            Sign out
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
 
 const PERMISSION_GROUPS: { group: string; items: string[] }[] = [
   { group: 'Clinic',        items: ['clinic:read', 'clinic:write'] },
@@ -1163,21 +1112,6 @@ function NotifConfigTab() {
     hint="Provider keys (Twilio/WhatsApp Business), quiet hours, and reminder windows will live here. Templates are already editable on the Notifications page." />;
 }
 
-function SecurityTab() {
-  const { ctx } = useApp();
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>Session</div>
-        <Row label="User">{ctx.fullName ?? ctx.email ?? ctx.userId.slice(-8)}</Row>
-        <Row label="Token">{ctx.accessToken ? <code style={{ fontFamily: 'monospace', fontSize: 11 }}>{ctx.accessToken.slice(0, 18)}…</code> : 'dev headers'}</Row>
-        <Row label="Refresh">httpOnly cookie <code style={{ fontFamily: 'monospace', fontSize: 11 }}>digirx_refresh</code></Row>
-      </div>
-      <StubTab icon="lock" title="Audit retention & 2FA"
-        hint="Per-clinic 2FA enforcement, session timeouts, and audit log retention will live here. Audit writes are already happening server-side via the global AuditInterceptor." />
-    </div>
-  );
-}
 
 function PermissionGate({ perm }: { perm: string }) {
   return (
