@@ -1,4 +1,5 @@
 import { AppProvider, useApp } from './app/AppContext';
+import { canAccessScreen } from './app/permissions';
 import { ToastProvider } from './ui/shared/primitives';
 import { AppShell } from './ui/AppShell';
 import { LoginScreen } from './ui/screens/LoginScreen';
@@ -11,23 +12,31 @@ import { DocumentsScreen } from './ui/screens/DocumentsScreen';
 import { ReportsScreen } from './ui/screens/ReportsScreen';
 import { NotificationsScreen } from './ui/screens/NotificationsScreen';
 import { SettingsScreen } from './ui/screens/SettingsScreen';
+import { RolesScreen } from './ui/screens/RolesScreen';
+import { UsersScreen } from './ui/screens/UsersScreen';
 
 function Router() {
-  const { loggedIn, screen } = useApp();
+  const { loggedIn, screen, permissions } = useApp();
 
   if (!loggedIn) return <LoginScreen />;
 
+  // If the current screen is gated by a permission the user lacks, render
+  // nothing while AppShell's effect bounces us to an allowed screen.
+  const allowed = canAccessScreen(permissions, screen);
+
   return (
     <AppShell>
-      {screen === 'dashboard' && <DashboardScreen />}
-      {screen === 'patients' && <PatientsScreen />}
-      {screen === 'appointments' && <AppointmentsScreen />}
-      {screen === 'encounters' && <EncounterScreen />}
-      {screen === 'billing' && <BillingScreen />}
-      {screen === 'documents' && <DocumentsScreen />}
-      {screen === 'reports' && <ReportsScreen />}
-      {screen === 'notifications' && <NotificationsScreen />}
-      {screen === 'settings' && <SettingsScreen />}
+      {allowed && screen === 'dashboard' && <DashboardScreen />}
+      {allowed && screen === 'patients' && <PatientsScreen />}
+      {allowed && screen === 'appointments' && <AppointmentsScreen />}
+      {allowed && screen === 'encounters' && <EncounterScreen />}
+      {allowed && screen === 'billing' && <BillingScreen />}
+      {allowed && screen === 'documents' && <DocumentsScreen />}
+      {allowed && screen === 'reports' && <ReportsScreen />}
+      {allowed && screen === 'notifications' && <NotificationsScreen />}
+      {allowed && screen === 'settings' && <SettingsScreen />}
+      {allowed && screen === 'roles' && <RolesScreen />}
+      {allowed && screen === 'users' && <UsersScreen />}
     </AppShell>
   );
 }

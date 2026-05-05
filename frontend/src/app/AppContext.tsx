@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { apiGet, apiPost, AUTH_EXPIRED_EVENT } from './api';
 import { clearContext, isLoggedIn, loadContext, saveContext, type DevContext } from './context';
 
@@ -16,6 +16,33 @@ export type ScreenKey =
   | 'roles'
   | 'settings'
   | 'audit';
+
+const SCREEN_STORAGE_KEY = 'digirx.screen.v1';
+const VALID_SCREENS: ReadonlySet<ScreenKey> = new Set<ScreenKey>([
+  'dashboard',
+  'patients',
+  'appointments',
+  'encounters',
+  'billing',
+  'documents',
+  'reports',
+  'notifications',
+  'branches',
+  'users',
+  'roles',
+  'settings',
+  'audit',
+]);
+
+function loadInitialScreen(): ScreenKey {
+  try {
+    const saved = localStorage.getItem(SCREEN_STORAGE_KEY);
+    if (saved && VALID_SCREENS.has(saved as ScreenKey)) return saved as ScreenKey;
+  } catch {
+    // ignore storage errors
+  }
+  return 'dashboard';
+}
 
 type AppState = {
   ctx: DevContext;
@@ -48,7 +75,16 @@ export function useApp(): AppState {
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [ctx, setCtxState] = useState<DevContext>(() => loadContext());
-  const [screen, setScreen] = useState<ScreenKey>('dashboard');
+  const [screen, setScreenState] = useState<ScreenKey>(() => loadInitialScreen());
+
+  const setScreen = useCallback((s: ScreenKey) => {
+    setScreenState(s);
+    try {
+      localStorage.setItem(SCREEN_STORAGE_KEY, s);
+    } catch {
+      // ignore storage errors
+    }
+  }, []);
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('digirx.theme');
     return saved === 'dark' ? 'dark' : 'light';

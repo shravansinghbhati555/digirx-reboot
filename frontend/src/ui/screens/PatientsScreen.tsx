@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { Perm, usePerm } from '../../app/permissions';
 import { Avatar, EmptyState, Field, Spinner, StatusPill, formatDate, formatINR, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
 import { AnimatedTabs } from '../shared/AnimatedTabs';
@@ -57,6 +58,8 @@ function alphaGroups(list: Patient[]) {
 
 export function PatientsScreen() {
   const { ctx } = useApp();
+  const { has } = usePerm();
+  const canCreatePatient = has(Perm.PatientWrite);
   const toast = useToast();
   const [query, setQuery] = useState('');
   const [items, setItems] = useState<Patient[]>([]);
@@ -127,9 +130,10 @@ export function PatientsScreen() {
               onBlur={(e) => (e.target.style.borderColor = 'var(--border)')}
             />
           </div>
-          <button onClick={() => setShowNew(true)}
-            title="New patient"
-            style={{ width: 36, height: 36, background: 'var(--brand-500)', border: 'none', borderRadius: 9, cursor: 'pointer', color: 'var(--brand-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <button onClick={() => canCreatePatient && setShowNew(true)}
+            disabled={!canCreatePatient}
+            title={canCreatePatient ? 'New patient' : 'You do not have permission to create patients'}
+            style={{ width: 36, height: 36, background: 'var(--brand-500)', border: 'none', borderRadius: 9, cursor: canCreatePatient ? 'pointer' : 'not-allowed', color: 'var(--brand-text)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, opacity: canCreatePatient ? 1 : 0.5 }}>
             <Icon name="plus" size={16} strokeWidth={2.5} />
           </button>
         </div>

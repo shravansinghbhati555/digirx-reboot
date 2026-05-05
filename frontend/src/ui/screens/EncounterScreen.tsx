@@ -565,19 +565,36 @@ function EncounterEditor({
           {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
         </div>
 
-        {!signed && (
-          <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', gap: 10, alignItems: 'center' }}>
-            <span style={{ flex: 1, fontSize: 12, color: 'var(--text-subtle)' }}>{patient?.fullName} · {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-            <button onClick={saveDraft} disabled={savingDraft}
-              style={{ height: 40, padding: '0 20px', background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, fontWeight: 500, cursor: savingDraft ? 'wait' : 'pointer' }}>
-              {savingDraft ? 'Saving…' : 'Save draft'}
-            </button>
-            <button onClick={() => setShowSign(true)}
-              style={{ height: 40, padding: '0 24px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Icon name="lock" size={14} /> Sign encounter
-            </button>
-          </div>
-        )}
+        <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', gap: 10, alignItems: 'center' }}>
+          <span style={{ flex: 1, fontSize: 12, color: 'var(--text-subtle)' }}>{patient?.fullName} · {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+          <button onClick={() => printPrescription({
+            clinic: { name: ctx.clinicName ?? 'Clinic', branchName: ctx.branchName },
+            doctor: { name: ctx.fullName, email: ctx.email },
+            patient,
+            vitals,
+            complaint,
+            diagnosis,
+            rx,
+            notes,
+            followUp,
+            encounter,
+          })}
+            style={{ height: 40, padding: '0 18px', background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+            <Icon name="printer" size={14} /> Print prescription
+          </button>
+          {!signed && (
+            <>
+              <button onClick={saveDraft} disabled={savingDraft}
+                style={{ height: 40, padding: '0 20px', background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, fontWeight: 500, cursor: savingDraft ? 'wait' : 'pointer' }}>
+                {savingDraft ? 'Saving…' : 'Save draft'}
+              </button>
+              <button onClick={() => setShowSign(true)}
+                style={{ height: 40, padding: '0 24px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Icon name="lock" size={14} /> Sign encounter
+              </button>
+            </>
+          )}
+        </div>
       </div>
 
       {showSign && (
@@ -653,4 +670,470 @@ function VitalInput({ label, unit, value, onChange, disabled }: { label: string;
       </div>
     </div>
   );
+}
+
+// ---------- Print prescription ----------
+
+function escapeHtml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+function printPrescription(input: {
+  clinic: { name: string; branchName?: string };
+  doctor: { name?: string; email?: string };
+  patient: Patient | null;
+  vitals: Record<string, string>;
+  complaint: string;
+  diagnosis: string;
+  rx: RxItem[];
+  notes: string;
+  followUp: string;
+  encounter: Encounter;
+}) {
+  const { clinic, doctor, patient, vitals, complaint, diagnosis, rx, notes, followUp, encounter } = input;
+  const signed = encounter.status === 'SIGNED';
+
+  const age = patient?.dob ? getAge(patient.dob) : null;
+  const gender = patient ? genderWord(patient.gender) : '';
+  const phone = patient?.phones?.[0] ?? '';
+
+  const dateStr = new Date(encounter.visitedAt || Date.now()).toLocaleDateString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+  });
+  const signedAtStr = signed
+    ? new Date(encounter.signedAt ?? encounter.updatedAt ?? Date.now()).toLocaleString('en-IN', {
+        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+      })
+    : '';
+
+  const filledVitals = Object.entries(vitals).filter(([, v]) => !!v && v.trim());
+  const diagnosisList = diagnosis.split('|').map((s) => s.trim()).filter(Boolean);
+  const filledRx = rx.filter((r) => r.med.trim());
+
+  const vitalsHtml = filledVitals.length
+    ? `<section class="block">
+         <h2>Vitals</h2>
+         <div class="vitals-grid">
+           ${filledVitals
+             .map(([k, v]) => {
+               const meta = VITAL_FIELDS.find((f) => f.key === k);
+               return `<div class="vital">
+                         <div class="label">${escapeHtml(meta?.label ?? k.toUpperCase())}</div>
+                         <div class="value">${escapeHtml(v)} <span class="unit">${escapeHtml(meta?.unit ?? '')}</span></div>
+                       </div>`;
+             })
+             .join('')}
+         </div>
+       </section>`
+    : '';
+
+  const complaintHtml = complaint.trim()
+    ? `<section class="block">
+         <h2>Chief complaint</h2>
+         <p>${escapeHtml(complaint.trim())}</p>
+       </section>`
+    : '';
+
+  const diagnosisHtml = diagnosisList.length
+    ? `<section class="block">
+         <h2>Diagnosis</h2>
+         <div class="chips">
+           ${diagnosisList.map((d) => `<span class="chip">${escapeHtml(d)}</span>`).join('')}
+         </div>
+       </section>`
+    : '';
+
+  const rxHtml = filledRx.length
+    ? `<section class="block rx-section">
+         <h2>℞ Prescription</h2>
+         <table class="rx-table">
+           <thead>
+             <tr>
+               <th style="width:8%;">#</th>
+               <th style="width:30%;">Medicine</th>
+               <th style="width:15%;">Dose</th>
+               <th style="width:12%;">Frequency</th>
+               <th style="width:12%;">Duration</th>
+               <th>Instructions</th>
+             </tr>
+           </thead>
+           <tbody>
+             ${filledRx
+               .map(
+                 (r, i) => `<tr>
+                   <td class="num">${i + 1}</td>
+                   <td class="med">${escapeHtml(r.med)}</td>
+                   <td>${escapeHtml(r.dose || '—')}</td>
+                   <td>${escapeHtml(r.freq || '—')}</td>
+                   <td>${escapeHtml(r.dur || '—')}</td>
+                   <td>${escapeHtml(r.note || '—')}</td>
+                 </tr>`,
+               )
+               .join('')}
+           </tbody>
+         </table>
+       </section>`
+    : `<section class="block">
+         <h2>℞ Prescription</h2>
+         <p class="empty">No medicines prescribed.</p>
+       </section>`;
+
+  const followUpHtml = followUp
+    ? `<section class="block">
+         <h2>Follow-up</h2>
+         <p>${escapeHtml(new Date(followUp).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' }))}</p>
+       </section>`
+    : '';
+
+  const notesHtml = notes.trim()
+    ? `<section class="block">
+         <h2>Notes</h2>
+         <p class="notes">${escapeHtml(notes.trim())}</p>
+       </section>`
+    : '';
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>Prescription — ${escapeHtml(patient?.fullName ?? 'Patient')}</title>
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    color: #111827;
+    background: #f8fafc;
+    font-size: 13px;
+    line-height: 1.5;
+  }
+  .page {
+    max-width: 820px;
+    margin: 0 auto;
+    background: #ffffff;
+    padding: 36px 40px 28px;
+    box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+  }
+  /* ---------- Header ---------- */
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding-bottom: 18px;
+    border-bottom: 3px solid #6366F1;
+    margin-bottom: 24px;
+  }
+  .clinic { display: flex; align-items: center; gap: 12px; }
+  .clinic .logo {
+    width: 48px; height: 48px; border-radius: 10px;
+    background: linear-gradient(135deg, #6366F1 0%, #818cf8 100%);
+    display: flex; align-items: center; justify-content: center;
+    color: #ffffff; font-weight: 800; font-size: 22px;
+    font-family: 'Manrope', sans-serif;
+    box-shadow: 0 6px 18px rgba(99, 102, 241, 0.25);
+  }
+  .clinic .name {
+    font-family: 'Manrope', sans-serif;
+    font-size: 22px;
+    font-weight: 800;
+    color: #111827;
+    letter-spacing: -0.5px;
+    line-height: 1.1;
+  }
+  .clinic .branch {
+    font-size: 12px;
+    color: #6b7280;
+    margin-top: 2px;
+  }
+  .doctor-info {
+    text-align: right;
+    font-size: 12px;
+    color: #6b7280;
+  }
+  .doctor-info .name {
+    color: #111827;
+    font-weight: 700;
+    font-size: 14px;
+    display: block;
+    margin-bottom: 2px;
+  }
+  .doctor-info .creds { font-size: 11px; }
+
+  /* ---------- Patient strip ---------- */
+  .patient-strip {
+    display: grid;
+    grid-template-columns: 2.5fr 1fr 1.4fr 1fr;
+    gap: 14px;
+    background: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%);
+    border: 1px solid #c7d2fe;
+    border-radius: 10px;
+    padding: 14px 18px;
+    margin-bottom: 22px;
+  }
+  .patient-strip .field { display: flex; flex-direction: column; }
+  .patient-strip .label {
+    font-size: 9.5px;
+    font-weight: 700;
+    color: #6366F1;
+    text-transform: uppercase;
+    letter-spacing: 0.07em;
+    margin-bottom: 3px;
+  }
+  .patient-strip .value {
+    font-size: 14px;
+    font-weight: 600;
+    color: #111827;
+  }
+
+  /* ---------- Sections ---------- */
+  .block { margin-bottom: 18px; }
+  .block h2 {
+    font-size: 11px;
+    font-weight: 700;
+    color: #6366F1;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    margin: 0 0 8px 0;
+    padding-bottom: 6px;
+    border-bottom: 1px solid #e5e7eb;
+  }
+  .block p {
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.6;
+    color: #1f2937;
+  }
+  .block p.empty { color: #9ca3af; font-style: italic; }
+  .block p.notes { white-space: pre-wrap; }
+
+  /* ---------- Vitals ---------- */
+  .vitals-grid {
+    display: grid;
+    grid-template-columns: repeat(6, 1fr);
+    gap: 8px;
+  }
+  .vital {
+    background: #f9fafb;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    padding: 10px 6px;
+    text-align: center;
+  }
+  .vital .label {
+    font-size: 9px;
+    font-weight: 700;
+    color: #6b7280;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 4px;
+  }
+  .vital .value {
+    font-size: 14px;
+    font-weight: 700;
+    color: #111827;
+    font-variant-numeric: tabular-nums;
+  }
+  .vital .unit { font-size: 9px; color: #6b7280; font-weight: 500; }
+
+  /* ---------- Diagnosis chips ---------- */
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  .chip {
+    display: inline-block;
+    padding: 4px 11px;
+    border-radius: 100px;
+    background: #eef2ff;
+    border: 1px solid #c7d2fe;
+    color: #4338ca;
+    font-size: 12px;
+    font-weight: 500;
+  }
+
+  /* ---------- Rx table ---------- */
+  .rx-section h2 { color: #6366F1; font-size: 13px; }
+  .rx-table {
+    width: 100%;
+    border-collapse: collapse;
+    border: 1px solid #e5e7eb;
+    border-radius: 8px;
+    overflow: hidden;
+  }
+  .rx-table thead { background: linear-gradient(135deg, #6366F1 0%, #818cf8 100%); }
+  .rx-table th {
+    color: #ffffff;
+    font-size: 10.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 9px 12px;
+    text-align: left;
+  }
+  .rx-table td {
+    padding: 11px 12px;
+    border-top: 1px solid #f1f5f9;
+    font-size: 12.5px;
+    color: #1f2937;
+    vertical-align: top;
+  }
+  .rx-table tbody tr:nth-child(even) { background: #fafafa; }
+  .rx-table .num {
+    color: #6366F1;
+    font-weight: 700;
+    text-align: center;
+  }
+  .rx-table .med { font-weight: 600; color: #111827; }
+
+  /* ---------- Footer ---------- */
+  .foot {
+    margin-top: 28px;
+    padding-top: 18px;
+    border-top: 2px solid #6366F1;
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-end;
+  }
+  .foot .meta { font-size: 11px; color: #6b7280; }
+  .badge {
+    display: inline-block;
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-size: 9.5px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+  .badge.signed { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
+  .badge.draft  { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
+  .signature { text-align: right; }
+  .signature .line {
+    border-bottom: 1.5px solid #111827;
+    margin-bottom: 6px;
+    padding-bottom: 24px;
+    min-width: 220px;
+  }
+  .signature .who {
+    font-size: 12px;
+    font-weight: 700;
+    color: #111827;
+  }
+  .signature .when {
+    font-size: 10.5px;
+    color: #6b7280;
+    margin-top: 2px;
+  }
+
+  .toolbar {
+    position: fixed; top: 12px; right: 12px;
+    display: flex; gap: 8px;
+    background: #ffffff;
+    padding: 8px 10px;
+    border: 1px solid #e5e7eb;
+    border-radius: 10px;
+    box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08);
+  }
+  .toolbar button {
+    border: 1px solid #e5e7eb;
+    background: #ffffff;
+    color: #374151;
+    border-radius: 8px;
+    padding: 6px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .toolbar button.primary {
+    background: #6366F1;
+    border-color: #6366F1;
+    color: #ffffff;
+  }
+  @media print {
+    body { background: #ffffff; }
+    .page { box-shadow: none; padding: 12mm; max-width: none; }
+    .toolbar { display: none; }
+    .rx-table thead { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .rx-table tbody tr:nth-child(even) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .patient-strip, .vital, .chip { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+</style>
+</head>
+<body>
+  <div class="toolbar">
+    <button class="primary" onclick="window.print()">Print</button>
+    <button onclick="window.close()">Close</button>
+  </div>
+  <main class="page">
+    <header class="header">
+      <div class="clinic">
+        <div class="logo">${escapeHtml((clinic.name || 'C').slice(0, 1).toUpperCase())}</div>
+        <div>
+          <div class="name">${escapeHtml(clinic.name || 'Clinic')}</div>
+          ${clinic.branchName ? `<div class="branch">${escapeHtml(clinic.branchName)}</div>` : ''}
+        </div>
+      </div>
+      <div class="doctor-info">
+        <span class="name">${escapeHtml(doctor.name ? `Dr. ${doctor.name}` : 'Doctor')}</span>
+        ${doctor.email ? `<div class="creds">${escapeHtml(doctor.email)}</div>` : ''}
+      </div>
+    </header>
+
+    <section class="patient-strip">
+      <div class="field">
+        <span class="label">Patient</span>
+        <span class="value">${escapeHtml(patient?.fullName ?? '—')}</span>
+      </div>
+      <div class="field">
+        <span class="label">Age / Sex</span>
+        <span class="value">${age != null ? `${age}y` : '—'} ${gender ? '· ' + escapeHtml(gender) : ''}</span>
+      </div>
+      <div class="field">
+        <span class="label">Phone</span>
+        <span class="value">${escapeHtml(phone || '—')}</span>
+      </div>
+      <div class="field">
+        <span class="label">Date</span>
+        <span class="value">${escapeHtml(dateStr)}</span>
+      </div>
+    </section>
+
+    ${vitalsHtml}
+    ${complaintHtml}
+    ${diagnosisHtml}
+    ${rxHtml}
+    ${followUpHtml}
+    ${notesHtml}
+
+    <footer class="foot">
+      <div class="meta">
+        ${signed
+          ? `<span class="badge signed">Signed</span> &nbsp; ${escapeHtml(signedAtStr)}`
+          : `<span class="badge draft">Draft</span> &nbsp; not yet signed`}
+        <div style="margin-top:4px;">Encounter ID: <code style="font-family:monospace;font-size:10.5px;color:#6b7280;">${escapeHtml(encounter._id)}</code></div>
+      </div>
+      <div class="signature">
+        <div class="line"></div>
+        <div class="who">${escapeHtml(doctor.name ? `Dr. ${doctor.name}` : 'Doctor')}</div>
+        <div class="when">Signature${signed ? ` · ${escapeHtml(signedAtStr)}` : ''}</div>
+      </div>
+    </footer>
+  </main>
+  <script>
+    window.addEventListener('load', function() {
+      setTimeout(function() { window.print(); }, 200);
+    });
+  </script>
+</body>
+</html>`;
+
+  const w = window.open('', '_blank', 'width=900,height=1100');
+  if (!w) {
+    alert('Could not open print window. Please allow pop-ups for this site.');
+    return;
+  }
+  w.document.open();
+  w.document.write(html);
+  w.document.close();
 }

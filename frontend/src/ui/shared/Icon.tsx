@@ -8,7 +8,8 @@ export type IconName =
   | 'phone' | 'mail' | 'mapPin' | 'clock' | 'alertTriangle' | 'info' | 'checkCircle'
   | 'xCircle' | 'trendingUp' | 'trendingDown' | 'moon' | 'sun' | 'help' | 'command'
   | 'stethoscope' | 'pill' | 'fileText' | 'cross' | 'arrowUp' | 'user' | 'gitBranch'
-  | 'activity' | 'eye' | 'lock' | 'send' | 'tag' | 'creditCard' | 'banknote' | 'smartphone';
+  | 'activity' | 'eye' | 'lock' | 'send' | 'tag' | 'creditCard' | 'banknote' | 'smartphone'
+  | 'printer';
 
 export function Icon({
   name,
@@ -91,6 +92,7 @@ export function Icon({
     case 'creditCard':    return <svg {...p}><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>;
     case 'banknote':      return <svg {...p}><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path d="M6 12h.01M18 12h.01"/></svg>;
     case 'smartphone':    return <svg {...p}><rect x="5" y="2" width="14" height="20" rx="2"/><line x1="12" y1="18" x2="12.01" y2="18"/></svg>;
+    case 'printer':       return <svg {...p}><polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect x="6" y="14" width="12" height="8"/></svg>;
     default:              return <svg {...p}><circle cx="12" cy="12" r="5"/></svg>;
   }
 }
