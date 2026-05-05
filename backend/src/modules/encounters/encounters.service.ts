@@ -47,6 +47,21 @@ export class EncountersService {
       });
       if (!appt) throw new NotFoundException('Appointment not found');
 
+      // Check if a DRAFT encounter already exists for this appointment
+      const existingDraft = await this.encounterModel.findOne({
+        clinicId,
+        appointmentId,
+        status: EncounterStatus.Draft,
+      });
+      if (existingDraft) {
+        // eslint-disable-next-line no-console
+        console.log(
+          '[encounters.create] returning existing draft',
+          existingDraft._id,
+        );
+        return existingDraft;
+      }
+
       if (appt.status === AppointmentStatus.CheckedIn) {
         appt.status = AppointmentStatus.InProgress;
         await appt.save();
@@ -131,5 +146,12 @@ export class EncountersService {
     }
 
     return enc;
+  }
+
+  async findByAppointment(clinicId: Types.ObjectId, appointmentId: string) {
+    return await this.encounterModel.findOne({
+      clinicId,
+      appointmentId: new Types.ObjectId(appointmentId),
+    });
   }
 }

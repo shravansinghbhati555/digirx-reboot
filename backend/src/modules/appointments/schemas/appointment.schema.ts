@@ -34,7 +34,7 @@ export class Appointment {
   @Prop({ type: Types.ObjectId, required: true, index: true })
   doctorId!: Types.ObjectId; // references User
 
-  @Prop({ type: Types.ObjectId, required: true, index: true })
+  @Prop({ type: Types.ObjectId, required: true, index: true, ref: 'Patient' })
   patientId!: Types.ObjectId;
 
   @Prop({ required: true, enum: AppointmentType, index: true })

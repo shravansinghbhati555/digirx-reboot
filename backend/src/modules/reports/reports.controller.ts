@@ -31,11 +31,13 @@ export class ReportsController {
     @Query('date') date: string,
     @Query('branchId') branchId: string,
   ) {
-    return await this.reports.dailySchedule(
+    const daily = await this.reports.dailySchedule(
       req.context!.clinicId,
       date,
       branchId,
     );
+    console.log("daily schedule response:", daily);
+    return daily;
   }
 
   @Get('pending-payments')

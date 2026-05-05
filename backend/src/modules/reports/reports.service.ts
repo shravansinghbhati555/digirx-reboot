@@ -143,6 +143,7 @@ export class ReportsService {
 
     const items = await this.apptModel
       .find(filter)
+      .populate('patientId', 'fullName')
       .sort({ doctorId: 1, startAt: 1, queueNumber: 1 });
 
     const byDoctor: Record<
@@ -214,6 +215,15 @@ export class ReportsService {
           payments: 0,
         },
       },
+      {
+        $lookup: {
+          from: 'patients',
+          localField: 'patientId',
+          foreignField: '_id',
+          as: 'patient',
+        },
+      },
+      { $unwind: { path: '$patient', preserveNullAndEmptyArrays: true } },
     ]);
 
     return { branchId: branchId ?? null, count: rows.length, rows };

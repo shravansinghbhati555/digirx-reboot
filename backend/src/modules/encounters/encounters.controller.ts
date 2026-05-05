@@ -22,6 +22,18 @@ export class EncountersController {
     return await this.encounters.getById(req.context!.clinicId, id);
   }
 
+  @Get('by-appointment/:appointmentId')
+  @RequirePermissions(Permission.PatientRead)
+  async getByAppointment(
+    @Req() req: AppRequest,
+    @Param('appointmentId') appointmentId: string,
+  ) {
+    return await this.encounters.findByAppointment(
+      req.context!.clinicId,
+      appointmentId,
+    );
+  }
+
   @Patch(':id')
   @RequirePermissions(Permission.PatientWrite)
   async update(

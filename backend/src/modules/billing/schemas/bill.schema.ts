@@ -26,7 +26,7 @@ export class Bill {
   @Prop({ type: Types.ObjectId, required: true, index: true })
   branchId!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, required: true, index: true })
+  @Prop({ type: Types.ObjectId, required: true, index: true, ref: 'Patient' })
   patientId!: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, index: true })
