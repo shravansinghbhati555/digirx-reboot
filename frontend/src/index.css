@@ -77,8 +77,14 @@
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 html, body, #app { height: 100%; }
+/* Shrink the root font-size so every rem-based size (Tailwind utilities,
+   line-heights, inherited body text) renders denser. 14.4px is ~90% of the
+   browser default of 16px. Tweak here to make the admin panel tighter/looser. */
+html { font-size: 14.4px; }
+
 body {
   font-family: 'Inter', system-ui, sans-serif;
+  font-size: 0.875rem; /* ~12.6px effective — base body copy */
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;

@@ -59,7 +59,14 @@ NotificationLogSchema.index(
   { clinicId: 1, createdAt: -1 },
   { name: 'notification_log_clinic_created_idx' },
 );
+// Unique only when `dedupeKey` is actually a string. `sparse: true` still
+// indexes missing-field rows as null for uniqueness purposes, which causes
+// E11000 collisions on the second insert without a dedupeKey.
 NotificationLogSchema.index(
   { clinicId: 1, dedupeKey: 1 },
-  { unique: true, sparse: true, name: 'notification_log_dedupe_unique' },
+  {
+    unique: true,
+    name: 'notification_log_dedupe_unique',
+    partialFilterExpression: { dedupeKey: { $type: 'string' } },
+  },
 );

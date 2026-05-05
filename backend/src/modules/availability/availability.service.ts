@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
@@ -8,6 +9,8 @@ import { DateTime } from 'luxon';
 import { Model, Types } from 'mongoose';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
 import { mergeClinicSettings } from '../tenancy/clinic-settings.types';
+import { AuthzService } from '../authz/authz.service';
+import { Permission } from '../authz/permissions';
 import { DoctorAvailabilityRule } from './schemas/doctor-availability-rule.schema';
 import {
   DoctorAvailabilityOverride,
@@ -40,10 +43,38 @@ export class AvailabilityService {
     @InjectModel(DoctorAvailabilityOverride.name)
     private readonly overrideModel: Model<DoctorAvailabilityOverride>,
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
+    private readonly authz: AuthzService,
   ) {}
+
+  /**
+   * Allow if the actor is editing their OWN availability, or if the actor has
+   * `clinic:write` (admin path). Otherwise 403.
+   */
+  private async assertCanWriteForDoctor(input: {
+    clinicId: Types.ObjectId;
+    actorUserId?: Types.ObjectId;
+    doctorUserId: Types.ObjectId;
+  }) {
+    if (!input.actorUserId) {
+      throw new ForbiddenException('Missing actor identity');
+    }
+    if (input.actorUserId.equals(input.doctorUserId)) {
+      return; // owner — always allowed to edit themselves
+    }
+    const actor = await this.authz.getActor({
+      clinicId: input.clinicId,
+      actorUserId: input.actorUserId,
+    });
+    if (!actor.permissions.includes(Permission.ClinicWrite)) {
+      throw new ForbiddenException(
+        "You can only edit your own availability",
+      );
+    }
+  }
 
   async replaceWeeklyRules(input: {
     clinicId: Types.ObjectId;
+    actorUserId?: Types.ObjectId;
     branchId: Types.ObjectId;
     doctorUserId: Types.ObjectId;
     rules: {
@@ -53,6 +84,12 @@ export class AvailabilityService {
       active?: boolean;
     }[];
   }) {
+    await this.assertCanWriteForDoctor({
+      clinicId: input.clinicId,
+      actorUserId: input.actorUserId,
+      doctorUserId: input.doctorUserId,
+    });
+
     const weekdays = new Set(input.rules.map((r) => r.weekday));
     if (weekdays.size !== input.rules.length)
       throw new BadRequestException('Duplicate weekday rules');
@@ -127,6 +164,7 @@ export class AvailabilityService {
 
   async upsertOverride(input: {
     clinicId: Types.ObjectId;
+    actorUserId?: Types.ObjectId;
     branchId: Types.ObjectId;
     doctorUserId: Types.ObjectId;
     date: string;
@@ -134,6 +172,11 @@ export class AvailabilityService {
     windows?: { startMinutes: number; endMinutes: number }[];
     note?: string;
   }) {
+    await this.assertCanWriteForDoctor({
+      clinicId: input.clinicId,
+      actorUserId: input.actorUserId,
+      doctorUserId: input.doctorUserId,
+    });
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date))
       throw new BadRequestException('date must be YYYY-MM-DD');
     const windows =

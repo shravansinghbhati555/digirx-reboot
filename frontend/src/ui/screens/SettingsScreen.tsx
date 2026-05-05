@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPatch, apiPost, apiPut } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { Perm, type PermName } from '../../app/permissions';
 import { Field, Spinner, labelStyle, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
 
@@ -34,22 +35,44 @@ const COMMON_TIMEZONES = [
   'UTC',
 ];
 
-type SettingsTab = 'clinic' | 'branches' | 'availability' | 'users' | 'permissions' | 'notif_cfg' | 'security' | 'context' | 'about';
+type SettingsTab = 'clinic' | 'branches' | 'availability' | 'users' | 'permissions' | 'notif_cfg' | 'security' | 'audit' | 'context' | 'about';
 
-const NAV: { id: SettingsTab; label: string; icon: IconName }[] = [
-  { id: 'clinic',       label: 'Clinic',         icon: 'cross' },
-  { id: 'branches',     label: 'Branches',       icon: 'mapPin' },
-  { id: 'availability', label: 'Availability',   icon: 'clock' },
-  { id: 'users',        label: 'Users',          icon: 'users' },
-  { id: 'permissions',  label: 'Roles & Permissions', icon: 'shield' },
-  { id: 'notif_cfg',    label: 'Notifications',  icon: 'bell' },
-  { id: 'security',     label: 'Security',       icon: 'lock' },
-  { id: 'context',      label: 'My context',     icon: 'user' },
-  { id: 'about',        label: 'About',          icon: 'info' },
+// `perm` of `null` = visible to any signed-in user.
+type NavItem = { id: SettingsTab; label: string; icon: IconName; perm: PermName | null };
+
+const NAV: NavItem[] = [
+  { id: 'clinic',       label: 'Clinic',              icon: 'cross',    perm: Perm.ClinicWrite },
+  { id: 'branches',     label: 'Branches',            icon: 'mapPin',   perm: Perm.BranchRead },
+  { id: 'availability', label: 'Availability',        icon: 'clock',    perm: Perm.ClinicRead },
+  { id: 'users',        label: 'Users',               icon: 'users',    perm: Perm.UserWrite },
+  { id: 'permissions',  label: 'Roles & Permissions', icon: 'shield',   perm: Perm.ClinicWrite },
+  { id: 'notif_cfg',    label: 'Notifications',       icon: 'bell',     perm: Perm.NotificationRead },
+  { id: 'security',     label: 'Security',            icon: 'lock',     perm: Perm.ClinicWrite },
+  { id: 'audit',        label: 'Audit log',           icon: 'scroll',   perm: Perm.ClinicWrite },
+  { id: 'context',      label: 'My context',          icon: 'user',     perm: Perm.ClinicWrite },
+  { id: 'about',        label: 'About',               icon: 'info',     perm: null },
 ];
 
 export function SettingsScreen() {
-  const [tab, setTab] = useState<SettingsTab>('clinic');
+  const { permissions } = useApp();
+  const visibleNav = useMemo(
+    () => NAV.filter((n) => n.perm === null || permissions.has(n.perm)),
+    [permissions],
+  );
+
+  const [tab, setTab] = useState<SettingsTab>(visibleNav[0]?.id ?? 'about');
+
+  // If permissions change so the active tab is no longer visible, pick the
+  // first visible one. Prevents a doctor from staring at an empty page if an
+  // admin revokes a role mid-session.
+  useEffect(() => {
+    if (!visibleNav.find((n) => n.id === tab)) {
+      const next = visibleNav[0]?.id;
+      if (next) setTab(next);
+    }
+  }, [visibleNav, tab]);
+
+  const activeAllowed = visibleNav.some((n) => n.id === tab);
 
   return (
     <div style={{ display: 'flex', minHeight: '100%', alignItems: 'flex-start' }}>
@@ -62,7 +85,7 @@ export function SettingsScreen() {
         background: 'var(--surface)',
       }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '4px 10px 8px' }}>Settings</div>
-        {NAV.map((item) => (
+        {visibleNav.map((item) => (
           <button key={item.id} onClick={() => setTab(item.id)}
             style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', border: 'none', background: tab === item.id ? 'var(--brand-50)' : 'transparent', borderRadius: 9, cursor: 'pointer', color: tab === item.id ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 13, fontWeight: tab === item.id ? 600 : 400, textAlign: 'left', borderLeft: tab === item.id ? '3px solid var(--brand-500)' : '3px solid transparent' }}>
             <Icon name={item.icon} size={15} style={{ color: tab === item.id ? 'var(--brand-500)' : 'inherit', flexShrink: 0 }} />
@@ -74,17 +97,18 @@ export function SettingsScreen() {
       <div style={{ flex: 1, minWidth: 0, padding: '24px 32px' }}>
         <div key={tab} style={{ animation: 'slideUp 160ms ease-out', maxWidth: 800 }}>
           <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 20 }}>
-            {NAV.find((n) => n.id === tab)?.label}
+            {visibleNav.find((n) => n.id === tab)?.label}
           </h2>
-          {tab === 'clinic' && <ClinicTab />}
-          {tab === 'branches' && <BranchesTab />}
-          {tab === 'availability' && <AvailabilityTab />}
-          {tab === 'users' && <UsersTab />}
-          {tab === 'permissions' && <PermissionsTab />}
-          {tab === 'notif_cfg' && <NotifConfigTab />}
-          {tab === 'security' && <SecurityTab />}
-          {tab === 'context' && <ContextTab />}
-          {tab === 'about' && <AboutTab />}
+          {activeAllowed && tab === 'clinic' && <ClinicTab />}
+          {activeAllowed && tab === 'branches' && <BranchesTab />}
+          {activeAllowed && tab === 'availability' && <AvailabilityTab />}
+          {activeAllowed && tab === 'users' && <UsersTab />}
+          {activeAllowed && tab === 'permissions' && <PermissionsTab />}
+          {activeAllowed && tab === 'notif_cfg' && <NotifConfigTab />}
+          {activeAllowed && tab === 'security' && <SecurityTab />}
+          {activeAllowed && tab === 'audit' && <AuditTab />}
+          {activeAllowed && tab === 'context' && <ContextTab />}
+          {activeAllowed && tab === 'about' && <AboutTab />}
         </div>
       </div>
     </div>
@@ -339,8 +363,22 @@ function AvailabilityTab() {
   const toast = useToast();
   const canRead = permissions.has('clinic:read');
   const canWrite = permissions.has('clinic:write');
+  // Non-admins can only manage their own availability — lock the picker.
+  const canEditOthers = canWrite;
 
   const [doctorId, setDoctorId] = useState(ctx.userId);
+  // Admin can save anyone's; non-admin can save only when editing themselves.
+  // The backend enforces the same rule, this just keeps the UI honest.
+  const canWriteThis = canWrite || doctorId === ctx.userId;
+
+  // If perms change to non-admin mid-session, snap selection back to self.
+  useEffect(() => {
+    if (!canEditOthers && doctorId !== ctx.userId) {
+      setDoctorId(ctx.userId);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canEditOthers, ctx.userId]);
+  const [doctors, setDoctors] = useState<Array<{ _id: string; name: string; email?: string }>>([]);
   const [rules, setRules] = useState<WeeklyRule[]>(() => Array.from({ length: 7 }, (_, i) => emptyRule(i)));
   const [originalRules, setOriginalRules] = useState<WeeklyRule[] | null>(null);
   const [overrides, setOverrides] = useState<DoctorOverride[]>([]);
@@ -394,6 +432,15 @@ function AvailabilityTab() {
   }
 
   useEffect(() => { if (canRead && doctorId.trim() && ctx.branchId) void load(); }, [canRead, ctx.branchId]);
+
+  // Pull the user list so we can show doctor names instead of raw ObjectIds.
+  // Falls back gracefully if the caller lacks user:read.
+  useEffect(() => {
+    if (!canRead) return;
+    apiGet<Array<{ _id: string; name: string; email?: string }>>(ctx, '/users')
+      .then((list) => setDoctors(list))
+      .catch(() => setDoctors([]));
+  }, [ctx.clinicId, ctx.accessToken, canRead]);
 
   function updateRule(weekday: number, patch: Partial<WeeklyRule>) {
     setRules((rs) => rs.map((r) => (r.weekday === weekday ? { ...r, ...patch } : r)));
@@ -466,14 +513,33 @@ function AvailabilityTab() {
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Doctor & branch</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, alignItems: 'flex-end' }}>
-          <Field label="Doctor user ID" value={doctorId} onChange={setDoctorId} placeholder="ObjectId" />
+          <div>
+            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Doctor</label>
+            {canEditOthers ? (
+              <select value={doctorId} onChange={(e) => setDoctorId(e.target.value)}
+                style={{ width: '100%', height: 40, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' }}>
+                {doctors.length === 0 && (
+                  <option value={doctorId}>{doctorId ? doctorId : '— no users —'}</option>
+                )}
+                {doctors.map((d) => (
+                  <option key={d._id} value={d._id}>
+                    {d.name}{d.email ? ` (${d.email})` : ''}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div style={{ height: 40, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', boxSizing: 'border-box', display: 'flex', alignItems: 'center' }}>
+                {ctx.fullName ? `Dr. ${ctx.fullName}` : 'You'}
+              </div>
+            )}
+          </div>
           <button onClick={() => void load()} disabled={loading || !doctorId.trim() || !ctx.branchId}
             style={{ height: 40, padding: '0 18px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 10, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
             {loading ? 'Loading…' : 'Load'}
           </button>
         </div>
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-subtle)' }}>
-          Branch: <code style={{ fontFamily: 'monospace' }}>{ctx.branchId ?? '— none in context —'}</code>
+          Branch: {ctx.branchName ?? (ctx.branchId ? <code style={{ fontFamily: 'monospace' }}>{ctx.branchId}</code> : '— none in context —')}
         </div>
         {error && <div style={{ marginTop: 12, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
       </div>
@@ -488,10 +554,10 @@ function AvailabilityTab() {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {rules.map((r) => (
-            <RuleRow key={r.weekday} rule={r} disabled={!canWrite} onChange={(patch) => updateRule(r.weekday, patch)} />
+            <RuleRow key={r.weekday} rule={r} disabled={!canWriteThis} onChange={(patch) => updateRule(r.weekday, patch)} />
           ))}
         </div>
-        {canWrite && (
+        {canWriteThis && (
           <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
             <button onClick={saveRules} disabled={saving || !rulesDirty || !doctorId.trim() || !ctx.branchId}
               style={{
@@ -518,8 +584,8 @@ function AvailabilityTab() {
             <label style={labelStyle}>Type</label>
             <div style={{ display: 'flex', gap: 8 }}>
               {(['CLOSED', 'CUSTOM_WINDOWS'] as const).map((t) => (
-                <button key={t} onClick={() => setOverrideType(t)} disabled={!canWrite}
-                  style={{ flex: 1, height: 40, border: `1.5px solid ${overrideType === t ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 10, background: overrideType === t ? 'var(--brand-50)' : 'var(--surface-muted)', color: overrideType === t ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: canWrite ? 'pointer' : 'not-allowed' }}>
+                <button key={t} onClick={() => setOverrideType(t)} disabled={!canWriteThis}
+                  style={{ flex: 1, height: 40, border: `1.5px solid ${overrideType === t ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 10, background: overrideType === t ? 'var(--brand-50)' : 'var(--surface-muted)', color: overrideType === t ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: canWriteThis ? 'pointer' : 'not-allowed' }}>
                   {t === 'CLOSED' ? 'Closed' : 'Custom windows'}
                 </button>
               ))}
@@ -528,13 +594,13 @@ function AvailabilityTab() {
         </div>
         {overrideType === 'CUSTOM_WINDOWS' && (
           <div style={{ marginTop: 12 }}>
-            <WindowsEditor value={overrideWindows} onChange={setOverrideWindows} disabled={!canWrite} />
+            <WindowsEditor value={overrideWindows} onChange={setOverrideWindows} disabled={!canWriteThis} />
           </div>
         )}
         <div style={{ marginTop: 12 }}>
           <Field label="Note (optional)" value={overrideNote} onChange={setOverrideNote} placeholder="e.g. holiday, conference" />
         </div>
-        {canWrite && (
+        {canWriteThis && (
           <div style={{ marginTop: 14, display: 'flex', justifyContent: 'flex-end' }}>
             <button onClick={saveOverride} disabled={savingOverride || !overrideDate}
               style={{
@@ -1197,3 +1263,212 @@ function PermissionGate({ perm }: { perm: string }) {
     </div>
   );
 }
+
+// ---------- Audit log tab ----------
+
+type AuditRow = {
+  _id: string;
+  clinicId: string;
+  branchId?: string;
+  actorUserId?: string;
+  action: 'CREATE' | 'UPDATE' | 'DELETE';
+  entityType: string;
+  entityId: string;
+  meta?: { method?: string; path?: string };
+  createdAt: string;
+};
+
+const ACTION_COLORS: Record<string, { bg: string; text: string; border: string }> = {
+  CREATE: { bg: 'rgba(16,185,129,0.10)', text: '#15803d', border: 'rgba(16,185,129,0.25)' },
+  UPDATE: { bg: 'rgba(59,130,246,0.10)', text: '#1d4ed8', border: 'rgba(59,130,246,0.25)' },
+  DELETE: { bg: 'rgba(239,68,68,0.10)', text: '#b91c1c', border: 'rgba(239,68,68,0.25)' },
+};
+
+function entityLabel(entityType: string): string {
+  // "/patients" → "Patient", "/patients/:id" → "Patient", etc.
+  const m = /\/([a-z-]+)/i.exec(entityType);
+  if (!m) return entityType;
+  const word = m[1].replace(/s$/, '');
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+function formatAuditTime(iso: string): string {
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleString('en-IN', {
+    day: '2-digit', month: 'short', year: 'numeric',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+}
+
+function AuditTab() {
+  const { ctx, permissions } = useApp();
+  const canRead = permissions.has('clinic:write');
+  const [rows, setRows] = useState<AuditRow[]>([]);
+  const [users, setUsers] = useState<Map<string, string>>(new Map());
+  const [nextBefore, setNextBefore] = useState<string | undefined>();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [actionFilter, setActionFilter] = useState<'' | 'CREATE' | 'UPDATE' | 'DELETE'>('');
+  const [actorFilter, setActorFilter] = useState<string>('');
+
+  async function load(reset: boolean) {
+    setLoading(true);
+    setError(null);
+    try {
+      const qs = new URLSearchParams({ limit: '50' });
+      if (!reset && nextBefore) qs.set('before', nextBefore);
+      if (actionFilter) qs.set('action', actionFilter);
+      if (actorFilter) qs.set('actorUserId', actorFilter);
+      const data = await apiGet<{ rows: AuditRow[]; nextBefore?: string }>(
+        ctx,
+        `/audit-logs?${qs.toString()}`,
+      );
+      setRows((prev) => (reset ? data.rows : [...prev, ...data.rows]));
+      setNextBefore(data.nextBefore);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  // Load users once for actor display + filter dropdown
+  useEffect(() => {
+    if (!canRead) return;
+    apiGet<Array<{ _id: string; name: string; email?: string }>>(ctx, '/users')
+      .then((list) => {
+        const m = new Map<string, string>();
+        for (const u of list) m.set(u._id, u.name + (u.email ? ` (${u.email})` : ''));
+        setUsers(m);
+      })
+      .catch(() => undefined);
+  }, [ctx.clinicId, ctx.accessToken, canRead]);
+
+  // Reload whenever filters change
+  useEffect(() => {
+    if (!canRead) return;
+    void load(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [actionFilter, actorFilter, ctx.clinicId, ctx.accessToken]);
+
+  if (!canRead) return <PermissionGate perm="clinic:write" />;
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      {/* Filter bar */}
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 14, display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div style={{ minWidth: 140 }}>
+          <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Action</label>
+          <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value as typeof actionFilter)}
+            style={{ width: '100%', height: 36, padding: '0 10px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }}>
+            <option value="">All actions</option>
+            <option value="CREATE">Create</option>
+            <option value="UPDATE">Update</option>
+            <option value="DELETE">Delete</option>
+          </select>
+        </div>
+        <div style={{ flex: 1, minWidth: 220 }}>
+          <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Actor</label>
+          <select value={actorFilter} onChange={(e) => setActorFilter(e.target.value)}
+            style={{ width: '100%', height: 36, padding: '0 10px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }}>
+            <option value="">All users</option>
+            {Array.from(users.entries()).map(([id, name]) => (
+              <option key={id} value={id}>{name}</option>
+            ))}
+          </select>
+        </div>
+        <button onClick={() => void load(true)} disabled={loading}
+          style={{ height: 36, padding: '0 16px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 9, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
+          {loading ? 'Loading…' : 'Refresh'}
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: 'var(--danger-500)' }}>
+          {error}
+        </div>
+      )}
+
+      {/* Table */}
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+        {loading && rows.length === 0 ? (
+          <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>Loading audit log…</div>
+        ) : rows.length === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-subtle)' }}>
+            <Icon name="scroll" size={28} style={{ color: 'var(--text-subtle)', margin: '0 auto 10px' }} />
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>No audit entries</div>
+            <div style={{ fontSize: 12, marginTop: 4 }}>Mutations to patients, appointments, bills, etc. will appear here.</div>
+          </div>
+        ) : (
+          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+            <thead>
+              <tr style={{ background: 'var(--surface-muted)' }}>
+                <th style={thAuditStyle}>Time</th>
+                <th style={thAuditStyle}>Action</th>
+                <th style={thAuditStyle}>Entity</th>
+                <th style={thAuditStyle}>Actor</th>
+                <th style={thAuditStyle}>Detail</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r) => {
+                const actor = r.actorUserId ? users.get(r.actorUserId) ?? r.actorUserId.slice(-6) : '—';
+                const color = ACTION_COLORS[r.action] ?? ACTION_COLORS.UPDATE;
+                return (
+                  <tr key={r._id} style={{ borderTop: '1px solid var(--border)' }}>
+                    <td style={tdAuditStyle}>
+                      <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-muted)' }}>{formatAuditTime(r.createdAt)}</span>
+                    </td>
+                    <td style={tdAuditStyle}>
+                      <span style={{ display: 'inline-block', padding: '2px 9px', borderRadius: 100, background: color.bg, color: color.text, border: `1px solid ${color.border}`, fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>{r.action}</span>
+                    </td>
+                    <td style={tdAuditStyle}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{entityLabel(r.entityType)}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-subtle)', fontFamily: 'monospace', marginTop: 1 }}>
+                        {r.entityId === 'n/a' ? '—' : r.entityId.slice(-12)}
+                      </div>
+                    </td>
+                    <td style={tdAuditStyle}>
+                      <span style={{ fontSize: 12, color: 'var(--text)' }}>{actor}</span>
+                    </td>
+                    <td style={{ ...tdAuditStyle, color: 'var(--text-subtle)', fontSize: 11, fontFamily: 'monospace' }}>
+                      {r.meta?.method} {r.meta?.path ?? r.entityType}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {/* Footer: count + load more */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-subtle)', padding: '0 4px' }}>
+        <span>{rows.length} row{rows.length === 1 ? '' : 's'} loaded</span>
+        {nextBefore && (
+          <button onClick={() => void load(false)} disabled={loading}
+            style={{ height: 32, padding: '0 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 500, cursor: loading ? 'wait' : 'pointer' }}>
+            {loading ? 'Loading…' : 'Load more'}
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const thAuditStyle: React.CSSProperties = {
+  padding: '10px 14px',
+  textAlign: 'left',
+  fontSize: 10,
+  fontWeight: 700,
+  color: 'var(--text-subtle)',
+  textTransform: 'uppercase',
+  letterSpacing: '0.06em',
+  borderBottom: '1px solid var(--border)',
+};
+
+const tdAuditStyle: React.CSSProperties = {
+  padding: '10px 14px',
+  verticalAlign: 'top',
+};

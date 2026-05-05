@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiGet, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { Perm, usePerm } from '../../app/permissions';
 import { Avatar, EmptyState, Spinner, StatusPill, formatINR, labelStyle, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
 import { Skeleton } from '../shared/Skeleton';
@@ -46,8 +47,8 @@ type Service = {
   defaultPrice: number;
 };
 
-type PendingRow = Bill & { totalPaid: number; outstanding: number };
-type PendingPayments = { branchId: string | null; count: number; rows: PendingRow[] };
+type BillRow = Bill & { totalPaid: number; outstanding: number; patientName?: string };
+type BillList = { branchId: string | null; count: number; rows: BillRow[] };
 
 const PAYMENT_METHODS: { id: string; label: string; icon: IconName }[] = [
   { id: 'CASH',          label: 'Cash',          icon: 'banknote' },
@@ -59,7 +60,9 @@ const PAYMENT_METHODS: { id: string; label: string; icon: IconName }[] = [
 
 export function BillingScreen() {
   const { ctx } = useApp();
-  const [pending, setPending] = useState<PendingRow[] | null>(null);
+  const { has } = usePerm();
+  const canCreateBill = has(Perm.BillingWrite);
+  const [bills, setBills] = useState<BillRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'draft' | 'issued' | 'paid' | 'void'>('all');
@@ -67,14 +70,15 @@ export function BillingScreen() {
   const [showCreate, setShowCreate] = useState(false);
   const [lookupId, setLookupId] = useState('');
 
-  async function loadPending() {
+  async function loadBills() {
     setLoading(true);
     setError(null);
     try {
-      const qs = new URLSearchParams({ limit: '50' });
+      const qs = new URLSearchParams({ limit: '100' });
       if (ctx.branchId) qs.set('branchId', ctx.branchId);
-      const data = await apiGet<PendingPayments>(ctx, `/reports/pending-payments?${qs.toString()}`);
-      setPending(data.rows);
+      if (filter !== 'all') qs.set('status', filter);
+      const data = await apiGet<BillList>(ctx, `/bills?${qs.toString()}`);
+      setBills(data.rows);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -82,7 +86,7 @@ export function BillingScreen() {
     }
   }
 
-  useEffect(() => { void loadPending(); }, [ctx.clinicId, ctx.branchId]);
+  useEffect(() => { void loadBills(); }, [ctx.clinicId, ctx.branchId, filter]);
 
   async function loadBill(id: string) {
     if (!id.trim()) return;
@@ -95,11 +99,7 @@ export function BillingScreen() {
     }
   }
 
-  const filtered = useMemo(() => {
-    if (!pending) return [];
-    if (filter === 'all' || filter === 'issued') return pending;
-    return pending.filter((b) => b.status.toLowerCase() === filter);
-  }, [pending, filter]);
+  const filtered = useMemo(() => bills ?? [], [bills]);
 
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
@@ -121,8 +121,10 @@ export function BillingScreen() {
             style={{ height: 34, padding: '0 14px', background: 'none', border: '1px solid var(--border)', borderRadius: 9, fontSize: 12, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
             Load
           </button>
-          <button onClick={() => setShowCreate(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+          <button onClick={() => canCreateBill && setShowCreate(true)}
+            disabled={!canCreateBill}
+            title={canCreateBill ? undefined : 'You do not have permission to create bills'}
+            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: canCreateBill ? 'pointer' : 'not-allowed', opacity: canCreateBill ? 1 : 0.5 }}>
             <Icon name="plus" size={13} strokeWidth={2.5} /> New bill
           </button>
         </div>
@@ -144,10 +146,10 @@ export function BillingScreen() {
           )}
           {error && <div style={{ padding: 16, fontSize: 13, color: 'var(--danger-500)' }}>{error}</div>}
           {!loading && !error && filtered.length === 0 && (
-            <EmptyState illustration="receipt" title="No issued bills with outstanding balance"
-              hint="Create a bill or look one up by ID. Drafts don't appear here yet." />
+            <EmptyState illustration="receipt" title={filter === 'all' ? 'No bills yet' : `No ${filter} bills`}
+              hint="Create a bill or change the status filter." />
           )}
-          {filtered.length > 0 && (
+          {!loading && filtered.length > 0 && (
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
@@ -163,8 +165,10 @@ export function BillingScreen() {
                     <td style={{ padding: '12px 16px', fontSize: 12, color: 'var(--text-subtle)', fontFamily: 'monospace', fontWeight: 500 }}>{b.billNo ?? b._id.slice(-6)}</td>
                     <td style={{ padding: '12px 16px' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <Avatar name={b.patientId.slice(-4)} size={26} />
-                        <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500, fontFamily: 'monospace' }}>{b.patientId.slice(-12)}</span>
+                        <Avatar name={b.patientName ?? '?'} size={26} />
+                        <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500 }}>
+                          {b.patientName ?? <span style={{ color: 'var(--text-subtle)', fontStyle: 'italic' }}>Unknown patient</span>}
+                        </span>
                       </div>
                     </td>
                     <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{formatINR(b.total)}</td>
@@ -181,13 +185,13 @@ export function BillingScreen() {
       </div>
 
       {selected && (
-        <BillDetail bill={selected} onClose={() => setSelected(null)} onChanged={(b) => { setSelected(b); void loadPending(); }} />
+        <BillDetail bill={selected} onClose={() => setSelected(null)} onChanged={(b) => { setSelected(b); void loadBills(); }} />
       )}
 
       {showCreate && (
         <CreateBillSheet
           onClose={() => setShowCreate(false)}
-          onCreated={(b) => { setShowCreate(false); setSelected(b); void loadPending(); }}
+          onCreated={(b) => { setShowCreate(false); setSelected(b); void loadBills(); }}
         />
       )}
     </div>
@@ -198,11 +202,21 @@ function BillDetail({ bill, onClose, onChanged }: { bill: Bill; onClose: () => v
   const { ctx } = useApp();
   const toast = useToast();
   const [payments, setPayments] = useState<Payment[] | null>(null);
+  const [patientName, setPatientName] = useState<string | null>(null);
   const [showPay, setShowPay] = useState(false);
   const [busy, setBusy] = useState(false);
   const [billNoFreshKey, setBillNoFreshKey] = useState(0);
   const [latestPaymentId, setLatestPaymentId] = useState<string | null>(null);
   const prevBillNoRef = useRef<string | undefined>(bill.billNo);
+
+  useEffect(() => {
+    let cancelled = false;
+    setPatientName(null);
+    apiGet<{ fullName?: string }>(ctx, `/patients/${bill.patientId}`)
+      .then((p) => { if (!cancelled) setPatientName(p.fullName ?? null); })
+      .catch(() => { if (!cancelled) setPatientName(null); });
+    return () => { cancelled = true; };
+  }, [bill.patientId, ctx]);
 
   useEffect(() => {
     if (!prevBillNoRef.current && bill.billNo) {
@@ -264,7 +278,7 @@ function BillDetail({ bill, onClose, onChanged }: { bill: Bill; onClose: () => v
               {bill.billNo ?? bill._id}
             </span>
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>{bill.patientId.slice(-12)} · {bill.currency}</div>
+          <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>{patientName ?? '—'} · {bill.currency}</div>
         </div>
         <StatusPill status={bill.status.toLowerCase()} />
         {isDraft && <button onClick={issue} disabled={busy} style={{ height: 36, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: busy ? 'wait' : 'pointer' }}>Issue bill</button>}

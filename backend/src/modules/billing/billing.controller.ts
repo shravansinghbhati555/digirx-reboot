@@ -65,6 +65,22 @@ export class BillingController {
     return await this.billing.issueBill(req.context!.clinicId, id);
   }
 
+  @Get('bills')
+  @RequirePermissions(Permission.BillingRead)
+  async listBills(
+    @Req() req: AppRequest,
+    @Query('branchId') branchId?: string,
+    @Query('status') status?: string,
+    @Query('limit') limitRaw?: string,
+  ) {
+    const limit = Number(limitRaw ?? 100) || 100;
+    return await this.billing.listBills(req.context!.clinicId, {
+      branchId,
+      status,
+      limit,
+    });
+  }
+
   @Get('bills/:id')
   @RequirePermissions(Permission.BillingRead)
   async getBill(@Req() req: AppRequest, @Param('id') id: string) {

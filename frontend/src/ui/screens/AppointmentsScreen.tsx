@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { Perm, usePerm } from '../../app/permissions';
 import { Avatar, EmptyState, Spinner, StatusPill, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
 import { ListItemSkeleton, Skeleton } from '../shared/Skeleton';
@@ -282,6 +283,8 @@ function computeDayLayout(appts: Appointment[]) {
 
 export function AppointmentsScreen() {
   const { ctx, selectedPatientId, setSelectedPatientId } = useApp();
+  const { has } = usePerm();
+  const canBook = has(Perm.AppointmentWrite);
   const toast = useToast();
   const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
   const [view, setView] = useState<'day' | 'week' | 'queue'>('day');
@@ -436,8 +439,10 @@ export function AppointmentsScreen() {
           </div>
         </div>
 
-        <button onClick={() => setShowBook(true)}
-          style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 14px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+        <button onClick={() => canBook && setShowBook(true)}
+          disabled={!canBook}
+          title={canBook ? undefined : 'You do not have permission to book appointments'}
+          style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 14px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: canBook ? 'pointer' : 'not-allowed', opacity: canBook ? 1 : 0.5 }}>
           <Icon name="plus" size={14} strokeWidth={2.5} /> Book
         </button>
       </div>

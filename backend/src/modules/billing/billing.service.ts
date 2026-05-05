@@ -191,6 +191,65 @@ export class BillingService {
     return bill;
   }
 
+  async listBills(
+    clinicId: Types.ObjectId,
+    opts: { branchId?: string; status?: string; limit?: number } = {},
+  ) {
+    const { branchId, status, limit = 100 } = opts;
+    const match: Record<string, unknown> = { clinicId };
+    if (branchId) match.branchId = new Types.ObjectId(branchId);
+    if (status) {
+      const upper = status.toUpperCase();
+      if (
+        upper === BillStatus.Draft ||
+        upper === BillStatus.Issued ||
+        upper === BillStatus.Paid ||
+        upper === BillStatus.Void
+      ) {
+        match.status = upper;
+      }
+    }
+
+    const rows = await this.billModel.aggregate([
+      { $match: match },
+      {
+        $lookup: {
+          from: 'payments',
+          localField: '_id',
+          foreignField: 'billId',
+          as: 'payments',
+        },
+      },
+      { $addFields: { totalPaid: { $sum: '$payments.amount' } } },
+      {
+        $addFields: {
+          outstanding: { $max: [0, { $subtract: ['$total', '$totalPaid'] }] },
+        },
+      },
+      {
+        $lookup: {
+          from: 'patients',
+          let: { pid: '$patientId' },
+          pipeline: [
+            { $match: { $expr: { $eq: ['$_id', '$$pid'] } } },
+            { $project: { fullName: 1 } },
+          ],
+          as: 'patient',
+        },
+      },
+      {
+        $addFields: {
+          patientName: { $first: '$patient.fullName' },
+        },
+      },
+      { $sort: { createdAt: -1 } },
+      { $limit: Math.max(1, Math.min(500, limit)) },
+      { $project: { payments: 0, patient: 0 } },
+    ]);
+
+    return { branchId: branchId ?? null, count: rows.length, rows };
+  }
+
   async listPayments(clinicId: Types.ObjectId, billId: string) {
     return await this.paymentModel
       .find({ clinicId, billId: new Types.ObjectId(billId) })

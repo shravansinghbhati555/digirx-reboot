@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useApp, type ScreenKey } from '../app/AppContext';
+import { canAccessScreen, Perm } from '../app/permissions';
 import { Avatar } from './shared/primitives';
 import { Icon, type IconName } from './shared/Icon';
 import { DatePickerChip } from './shared/DatePickerChip';
@@ -18,7 +19,9 @@ const NAV_ITEMS: NavItem[] = [
 ];
 
 const ADMIN_ITEMS: NavItem[] = [
-  { id: 'settings', label: 'Settings', icon: 'settings' },
+  { id: 'users',    label: 'Users',               icon: 'users' },
+  { id: 'roles',    label: 'Roles & Permissions', icon: 'shield' },
+  { id: 'settings', label: 'Settings',            icon: 'settings' },
 ];
 
 const ALL_CMD: { label: string; action: ScreenKey; icon: IconName }[] = [
@@ -36,11 +39,11 @@ const ALL_CMD: { label: string; action: ScreenKey; icon: IconName }[] = [
   { label: 'Go to Settings',     action: 'settings',     icon: 'settings' },
 ];
 
-function CommandPalette({ onNavigate, onClose }: { onNavigate: (s: ScreenKey) => void; onClose: () => void }) {
+function CommandPalette({ commands, onNavigate, onClose }: { commands: typeof ALL_CMD; onNavigate: (s: ScreenKey) => void; onClose: () => void }) {
   const [q, setQ] = useState('');
   const [hi, setHi] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
-  const filtered = ALL_CMD.filter((c) => !q || c.label.toLowerCase().includes(q.toLowerCase()));
+  const filtered = commands.filter((c) => !q || c.label.toLowerCase().includes(q.toLowerCase()));
 
   useEffect(() => { inputRef.current?.focus(); }, []);
   useEffect(() => { setHi(0); }, [q]);
@@ -85,13 +88,35 @@ function CommandPalette({ onNavigate, onClose }: { onNavigate: (s: ScreenKey) =>
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { screen, setScreen, theme, toggleTheme, ctx, logout, selectedDate, setSelectedDate } = useApp();
+  const { screen, setScreen, theme, toggleTheme, ctx, logout, selectedDate, setSelectedDate, permissions } = useApp();
   const [collapsed, setCollapsed] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
-  const rail = collapsed ? 64 : 240;
+  const rail = collapsed ? 56 : 208;
   const userName = ctx.fullName ?? 'User';
   const userEmail = ctx.email ?? '';
+
+  const visibleNav = useMemo(
+    () => NAV_ITEMS.filter((i) => canAccessScreen(permissions, i.id)),
+    [permissions],
+  );
+  const visibleAdmin = useMemo(
+    () => ADMIN_ITEMS.filter((i) => canAccessScreen(permissions, i.id)),
+    [permissions],
+  );
+  const visibleCmd = useMemo(
+    () => ALL_CMD.filter((c) => canAccessScreen(permissions, c.action)),
+    [permissions],
+  );
+  const canCreatePatient = permissions.has(Perm.PatientWrite);
+
+  // If the current screen is no longer accessible (e.g. permissions changed,
+  // or restored from a previous session), bounce to the first allowed screen.
+  useEffect(() => {
+    if (canAccessScreen(permissions, screen)) return;
+    const fallback = [...visibleNav, ...visibleAdmin][0];
+    if (fallback) setScreen(fallback.id);
+  }, [permissions, screen, visibleNav, visibleAdmin, setScreen]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -107,16 +132,16 @@ export function AppShell({ children }: { children: ReactNode }) {
     return (
       <button onClick={() => setScreen(item.id)} title={collapsed ? item.label : undefined}
         style={{
-          width: '100%', display: 'flex', alignItems: 'center', gap: 12,
-          padding: collapsed ? '10px 20px' : '9px 16px',
+          width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+          padding: collapsed ? '8px 16px' : '7px 12px',
           border: 'none', background: active ? 'var(--brand-50)' : 'transparent',
-          borderRadius: 10, cursor: 'pointer',
+          borderRadius: 8, cursor: 'pointer',
           color: active ? 'var(--brand-600)' : 'var(--text-muted)',
-          fontSize: 13.5, fontWeight: active ? 600 : 400, textAlign: 'left',
+          fontSize: 12, fontWeight: active ? 600 : 400, textAlign: 'left',
           transition: 'background 120ms, color 120ms', position: 'relative', overflow: 'hidden',
         }}>
         {active && <span style={{ position: 'absolute', left: 0, top: '20%', height: '60%', width: 3, background: 'var(--brand-500)', borderRadius: '0 3px 3px 0' }} />}
-        <Icon name={item.icon} size={18} style={{ flexShrink: 0, color: active ? 'var(--brand-500)' : 'inherit' }} />
+        <Icon name={item.icon} size={16} style={{ flexShrink: 0, color: active ? 'var(--brand-500)' : 'inherit' }} />
         {!collapsed && <span style={{ flex: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{item.label}</span>}
       </button>
     );
@@ -127,13 +152,13 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Left rail */}
       <div style={{ width: rail, flexShrink: 0, background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', transition: 'width 240ms var(--ease-out)', overflow: 'hidden' }}>
         {/* Logo */}
-        <div style={{ height: 56, display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-start', padding: collapsed ? 0 : '0 12px 0 16px', gap: 10, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
-          <div style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--brand-500)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-            <Icon name="cross" size={14} style={{ color: 'var(--brand-text)' }} strokeWidth={2.5} />
+        <div style={{ height: 48, display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-start', padding: collapsed ? 0 : '0 10px 0 14px', gap: 8, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
+          <div style={{ width: 24, height: 24, borderRadius: 7, background: 'var(--brand-500)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Icon name="cross" size={12} style={{ color: 'var(--brand-text)' }} strokeWidth={2.5} />
           </div>
           {!collapsed && (
             <>
-              <span style={{ fontFamily: "'Manrope',sans-serif", fontSize: 17, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.4px', flex: 1 }}>
+              <span style={{ fontFamily: "'Manrope',sans-serif", fontSize: 15, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.4px', flex: 1 }}>
                 Digi<span style={{ color: 'var(--brand-500)' }}>Rx</span>
               </span>
               <button onClick={() => setCollapsed(true)} title="Collapse sidebar"
@@ -161,10 +186,14 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         {/* Primary nav */}
         <nav style={{ flex: 1, overflowY: 'auto', padding: '8px 8px', display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {NAV_ITEMS.map((item) => <NavItemBtn key={item.id} item={item} />)}
-          {!collapsed && <div style={{ height: 1, background: 'var(--border)', margin: '8px 4px' }} />}
-          {!collapsed && <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', padding: '4px 8px 2px' }}>Admin</div>}
-          {ADMIN_ITEMS.map((item) => <NavItemBtn key={item.id} item={item} />)}
+          {visibleNav.map((item) => <NavItemBtn key={item.id} item={item} />)}
+          {visibleAdmin.length > 0 && (
+            <>
+              {!collapsed && <div style={{ height: 1, background: 'var(--border)', margin: '8px 4px' }} />}
+              {!collapsed && <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', padding: '4px 8px 2px' }}>Admin</div>}
+              {visibleAdmin.map((item) => <NavItemBtn key={item.id} item={item} />)}
+            </>
+          )}
         </nav>
 
         {/* Footer: user + logout */}
@@ -202,10 +231,10 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Main */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Topbar */}
-        <div style={{ height: 56, flexShrink: 0, background: 'var(--surface)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', padding: '0 20px', gap: 12 }}>
+        <div style={{ height: 48, flexShrink: 0, background: 'var(--surface)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', padding: '0 16px', gap: 10 }}>
           <button onClick={() => setCmdOpen(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, padding: '0 12px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-subtle)', fontSize: 13, cursor: 'pointer', flex: '0 0 220px' }}>
-            <Icon name="search" size={14} />
+            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 30, padding: '0 10px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-subtle)', fontSize: 12, cursor: 'pointer', flex: '0 0 200px' }}>
+            <Icon name="search" size={13} />
             <span>Search…</span>
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 2 }}>
               <kbd style={{ padding: '1px 5px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 10 }}>⌘</kbd>
@@ -217,26 +246,28 @@ export function AppShell({ children }: { children: ReactNode }) {
 
           <div style={{ flex: 1 }} />
 
-          <button onClick={() => setScreen('patients')}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 14px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', transition: 'background 120ms, transform 120ms' }}
-            onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.97)')}
-            onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
-            onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}>
-            <Icon name="plus" size={14} strokeWidth={2.5} />
-            New
-          </button>
+          {canCreatePatient && (
+            <button onClick={() => setScreen('patients')}
+              style={{ display: 'flex', alignItems: 'center', gap: 5, height: 30, padding: '0 12px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', transition: 'background 120ms, transform 120ms' }}
+              onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.97)')}
+              onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
+              onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}>
+              <Icon name="plus" size={13} strokeWidth={2.5} />
+              New
+            </button>
+          )}
 
           <button onClick={() => setScreen('notifications')}
-            style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', color: 'var(--text-muted)' }}>
-            <Icon name="bell" size={16} />
+            style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
+            <Icon name="bell" size={14} />
           </button>
           <button onClick={toggleTheme} className="press-scale" title="Toggle theme"
-            style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', color: 'var(--text-muted)' }}>
-            <Icon name={theme === 'light' ? 'moon' : 'sun'} size={16} />
+            style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
+            <Icon name={theme === 'light' ? 'moon' : 'sun'} size={14} />
           </button>
           <button onClick={() => setHelpOpen(true)} className="press-scale" title="Keyboard shortcuts (⌘/)"
-            style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', color: 'var(--text-muted)' }}>
-            <Icon name="help" size={16} />
+            style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
+            <Icon name="help" size={14} />
           </button>
         </div>
 
@@ -248,7 +279,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       </div>
 
-      {cmdOpen && <CommandPalette onNavigate={setScreen} onClose={() => setCmdOpen(false)} />}
+      {cmdOpen && <CommandPalette commands={visibleCmd} onNavigate={setScreen} onClose={() => setCmdOpen(false)} />}
       {helpOpen && <ShortcutsCheatsheet onClose={() => setHelpOpen(false)} />}
     </div>
   );

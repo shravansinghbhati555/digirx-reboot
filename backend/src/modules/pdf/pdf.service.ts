@@ -1,3 +1,6 @@
+// fontkit's Indic complex-script shaping (used for Devanagari) is transpiled
+// to reference a global `regeneratorRuntime` — load the polyfill once, here.
+import 'regenerator-runtime/runtime';
 import { Injectable, Logger } from '@nestjs/common';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -17,60 +20,177 @@ const MARGIN_X = 40;
 const TOP_Y = 800;
 const BOTTOM_Y = 100;
 
-const FONT_REGULAR_PATH =
-  process.env.PDF_FONT_PATH ??
-  path.resolve(process.cwd(), 'assets', 'NotoSans-Regular.ttf');
-const FONT_BOLD_PATH =
-  process.env.PDF_FONT_BOLD_PATH ??
-  path.resolve(process.cwd(), 'assets', 'NotoSans-Bold.ttf');
+const ASSETS = path.resolve(process.cwd(), 'assets');
 
-let cachedRegular: Uint8Array | null = null;
-let cachedBold: Uint8Array | null = null;
+// Font paths. Set PDF_FONT_PATH / PDF_FONT_BOLD_PATH to override the Latin
+// font; the script-specific fallbacks always look in ./assets.
+const LATIN_REGULAR = process.env.PDF_FONT_PATH ?? path.join(ASSETS, 'NotoSans-Regular.ttf');
+const LATIN_BOLD = process.env.PDF_FONT_BOLD_PATH ?? path.join(ASSETS, 'NotoSans-Bold.ttf');
+const DEV_REGULAR = path.join(ASSETS, 'NotoSansDevanagari-Regular.ttf');
+const DEV_BOLD = path.join(ASSETS, 'NotoSansDevanagari-Bold.ttf');
+const TAM_REGULAR = path.join(ASSETS, 'NotoSansTamil-Regular.ttf');
+const TAM_BOLD = path.join(ASSETS, 'NotoSansTamil-Bold.ttf');
+
+type FontCache = Map<string, Uint8Array | null>;
+const fontCache: FontCache = new Map();
 let fontWarnEmitted = false;
 const log = new Logger('PdfService');
 
 function loadFontIfPresent(fontPath: string): Uint8Array | null {
+  if (fontCache.has(fontPath)) return fontCache.get(fontPath) ?? null;
   try {
-    if (!fs.existsSync(fontPath)) return null;
+    if (!fs.existsSync(fontPath)) {
+      fontCache.set(fontPath, null);
+      return null;
+    }
     const buf = fs.readFileSync(fontPath);
-    return new Uint8Array(buf);
+    const arr = new Uint8Array(buf);
+    fontCache.set(fontPath, arr);
+    return arr;
   } catch (e) {
     log.warn(
       `Could not read PDF font at ${fontPath}: ${e instanceof Error ? e.message : String(e)}`,
     );
+    fontCache.set(fontPath, null);
     return null;
   }
 }
 
 /**
- * Try to embed a Unicode-supporting TTF (e.g. Noto Sans) so PDFs can render
- * non-Latin scripts like Devanagari, Tamil, Arabic. Falls back to Helvetica
- * if no font file is available — the caller still gets working Latin output.
+ * One slot per script. When a script-specific font is missing we substitute
+ * the Latin font so the renderer never crashes — those glyphs will render as
+ * .notdef boxes which is still better than throwing.
  */
+type FontTriple = {
+  latin: PDFFont;
+  devanagari: PDFFont;
+  tamil: PDFFont;
+};
+
 async function embedFonts(
   pdf: PDFDocument,
-): Promise<{ font: PDFFont; bold: PDFFont; isUnicode: boolean }> {
-  if (cachedRegular === null) cachedRegular = loadFontIfPresent(FONT_REGULAR_PATH);
-  if (cachedBold === null) cachedBold = loadFontIfPresent(FONT_BOLD_PATH);
+): Promise<{ font: FontTriple; bold: FontTriple; isUnicode: boolean }> {
+  const latinReg = loadFontIfPresent(LATIN_REGULAR);
+  const latinBold = loadFontIfPresent(LATIN_BOLD);
 
-  if (cachedRegular && cachedBold) {
+  if (latinReg && latinBold) {
     pdf.registerFontkit(fontkit);
-    const font = await pdf.embedFont(cachedRegular, { subset: true });
-    const bold = await pdf.embedFont(cachedBold, { subset: true });
-    return { font, bold, isUnicode: true };
+    const latin = await pdf.embedFont(latinReg, { subset: true });
+    const latinB = await pdf.embedFont(latinBold, { subset: true });
+
+    const devRegBytes = loadFontIfPresent(DEV_REGULAR);
+    const devBoldBytes = loadFontIfPresent(DEV_BOLD);
+    const tamRegBytes = loadFontIfPresent(TAM_REGULAR);
+    const tamBoldBytes = loadFontIfPresent(TAM_BOLD);
+
+    const devanagari = devRegBytes
+      ? await pdf.embedFont(devRegBytes, { subset: true })
+      : latin;
+    const devanagariBold = devBoldBytes
+      ? await pdf.embedFont(devBoldBytes, { subset: true })
+      : latinB;
+    const tamil = tamRegBytes
+      ? await pdf.embedFont(tamRegBytes, { subset: true })
+      : latin;
+    const tamilBold = tamBoldBytes
+      ? await pdf.embedFont(tamBoldBytes, { subset: true })
+      : latinB;
+
+    return {
+      font: { latin, devanagari, tamil },
+      bold: { latin: latinB, devanagari: devanagariBold, tamil: tamilBold },
+      isUnicode: true,
+    };
   }
 
   if (!fontWarnEmitted) {
     log.warn(
-      `Unicode PDF font not found at ${FONT_REGULAR_PATH}; falling back to Helvetica. ` +
-        `Non-Latin glyphs will not render. Set PDF_FONT_PATH / PDF_FONT_BOLD_PATH ` +
-        `or drop NotoSans-Regular.ttf and NotoSans-Bold.ttf into backend/assets/.`,
+      `Unicode PDF font not found at ${LATIN_REGULAR}; falling back to Helvetica. ` +
+        `Non-Latin glyphs will not render. Drop NotoSans-Regular.ttf, NotoSans-Bold.ttf, ` +
+        `NotoSansDevanagari-Regular.ttf, NotoSansDevanagari-Bold.ttf, ` +
+        `NotoSansTamil-Regular.ttf, NotoSansTamil-Bold.ttf into backend/assets/.`,
     );
     fontWarnEmitted = true;
   }
-  const font = await pdf.embedFont(StandardFonts.Helvetica);
-  const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  return { font, bold, isUnicode: false };
+  const h = await pdf.embedFont(StandardFonts.Helvetica);
+  const hb = await pdf.embedFont(StandardFonts.HelveticaBold);
+  return {
+    font: { latin: h, devanagari: h, tamil: h },
+    bold: { latin: hb, devanagari: hb, tamil: hb },
+    isUnicode: false,
+  };
+}
+
+/**
+ * Pick the right font for a single Unicode code point. Anything outside the
+ * Devanagari / Tamil blocks falls back to the Latin slot.
+ */
+function fontForCodePoint(cp: number, triple: FontTriple): PDFFont {
+  // Devanagari: U+0900–U+097F (+ extended U+A8E0–U+A8FF)
+  if ((cp >= 0x0900 && cp <= 0x097f) || (cp >= 0xa8e0 && cp <= 0xa8ff)) {
+    return triple.devanagari;
+  }
+  // Tamil: U+0B80–U+0BFF
+  if (cp >= 0x0b80 && cp <= 0x0bff) {
+    return triple.tamil;
+  }
+  return triple.latin;
+}
+
+/** Split a string into runs that share a font. */
+function segmentByFont(
+  text: string,
+  triple: FontTriple,
+): { text: string; font: PDFFont }[] {
+  if (!text) return [];
+  const segments: { text: string; font: PDFFont }[] = [];
+  let cur = '';
+  let curFont: PDFFont | null = null;
+  for (const ch of text) {
+    const cp = ch.codePointAt(0)!;
+    const f = fontForCodePoint(cp, triple);
+    if (curFont === null) {
+      curFont = f;
+      cur = ch;
+    } else if (f === curFont) {
+      cur += ch;
+    } else {
+      segments.push({ text: cur, font: curFont });
+      cur = ch;
+      curFont = f;
+    }
+  }
+  if (cur && curFont) segments.push({ text: cur, font: curFont });
+  return segments;
+}
+
+type DrawOpts = {
+  x: number;
+  y: number;
+  size: number;
+  font: FontTriple;
+  color?: ReturnType<typeof rgb>;
+  opacity?: number;
+  rotate?: ReturnType<typeof degrees>;
+};
+
+/** Drop-in replacement for page.drawText that walks font runs. */
+function drawText(page: PDFPage, text: string, opts: DrawOpts) {
+  const segments = segmentByFont(text, opts.font);
+  let x = opts.x;
+  const y = opts.y;
+  for (const seg of segments) {
+    page.drawText(seg.text, {
+      x,
+      y,
+      size: opts.size,
+      font: seg.font,
+      color: opts.color,
+      opacity: opts.opacity,
+      rotate: opts.rotate,
+    });
+    x += seg.font.widthOfTextAtSize(seg.text, opts.size);
+  }
 }
 
 @Injectable()
@@ -95,7 +215,7 @@ export class PdfService {
     let y = TOP_Y;
 
     const drawHeader = () => {
-      page.drawText(input.clinicName, {
+      drawText(page, input.clinicName, {
         x: MARGIN_X,
         y,
         size: 16,
@@ -103,30 +223,30 @@ export class PdfService {
         color: rgb(0.1, 0.1, 0.1),
       });
       y -= 24;
-      page.drawText('Prescription', { x: MARGIN_X, y, size: 12, font: bold });
+      drawText(page, 'Prescription', { x: MARGIN_X, y, size: 12, font: bold });
       y -= 18;
-      page.drawText(`Patient: ${input.patientName}`, {
+      drawText(page, `Patient: ${input.patientName}`, {
         x: MARGIN_X,
         y,
         size: 10,
         font,
       });
       y -= 14;
-      page.drawText(`Doctor: ${input.doctorName}`, {
+      drawText(page, `Doctor: ${input.doctorName}`, {
         x: MARGIN_X,
         y,
         size: 10,
         font,
       });
       y -= 14;
-      page.drawText(`Date: ${input.createdAtIso}`, {
+      drawText(page, `Date: ${input.createdAtIso}`, {
         x: MARGIN_X,
         y,
         size: 10,
         font,
       });
       y -= 22;
-      page.drawText('Medicines', { x: MARGIN_X, y, size: 11, font: bold });
+      drawText(page, 'Medicines', { x: MARGIN_X, y, size: 11, font: bold });
       y -= 14;
     };
 
@@ -137,12 +257,11 @@ export class PdfService {
     };
 
     const ensureRoom = (lines: number) => {
-      // 14pt line height, plus a 4pt cushion per item.
       if (y - lines * 14 < BOTTOM_Y + 60) newPage();
     };
 
     const line = (s: string) => {
-      page.drawText(s, { x: MARGIN_X, y, size: 10, font });
+      drawText(page, s, { x: MARGIN_X, y, size: 10, font });
       y -= 14;
     };
 
@@ -192,7 +311,7 @@ export class PdfService {
     let y = TOP_Y;
 
     const drawHeader = (continuation: boolean) => {
-      page.drawText(input.clinicName, {
+      drawText(page, input.clinicName, {
         x: MARGIN_X,
         y,
         size: 16,
@@ -200,7 +319,7 @@ export class PdfService {
         color: rgb(0.1, 0.1, 0.1),
       });
       y -= 24;
-      page.drawText(continuation ? 'Bill / Invoice (cont.)' : 'Bill / Invoice', {
+      drawText(page, continuation ? 'Bill / Invoice (cont.)' : 'Bill / Invoice', {
         x: MARGIN_X,
         y,
         size: 12,
@@ -208,21 +327,21 @@ export class PdfService {
       });
       y -= 18;
       if (!continuation) {
-        page.drawText(`Bill No: ${input.billNo ?? '—'}`, {
+        drawText(page, `Bill No: ${input.billNo ?? '—'}`, {
           x: MARGIN_X,
           y,
           size: 10,
           font,
         });
         y -= 14;
-        page.drawText(`Patient: ${input.patientName}`, {
+        drawText(page, `Patient: ${input.patientName}`, {
           x: MARGIN_X,
           y,
           size: 10,
           font,
         });
         y -= 14;
-        page.drawText(`Date: ${input.issuedAtIso ?? ''}`, {
+        drawText(page, `Date: ${input.issuedAtIso ?? ''}`, {
           x: MARGIN_X,
           y,
           size: 10,
@@ -230,16 +349,16 @@ export class PdfService {
         });
         y -= 22;
       }
-      page.drawText('Items', { x: MARGIN_X, y, size: 11, font: bold });
+      drawText(page, 'Items', { x: MARGIN_X, y, size: 11, font: bold });
       y -= 14;
       drawColumnHeaders();
     };
 
     const drawColumnHeaders = () => {
-      page.drawText('Name', { x: MARGIN_X, y, size: 9, font: bold });
-      page.drawText('Qty', { x: 340, y, size: 9, font: bold });
-      page.drawText('Rate', { x: 390, y, size: 9, font: bold });
-      page.drawText('Amount', { x: 470, y, size: 9, font: bold });
+      drawText(page, 'Name', { x: MARGIN_X, y, size: 9, font: bold });
+      drawText(page, 'Qty', { x: 340, y, size: 9, font: bold });
+      drawText(page, 'Rate', { x: 390, y, size: 9, font: bold });
+      drawText(page, 'Amount', { x: 470, y, size: 9, font: bold });
       y -= 12;
     };
 
@@ -252,18 +371,17 @@ export class PdfService {
     drawHeader(false);
 
     for (const it of input.items) {
-      // 12pt line height; reserve room for one row plus footer/totals on last page.
       if (y - 12 < BOTTOM_Y + 80) newPage();
 
-      page.drawText(it.name.slice(0, 45), { x: MARGIN_X, y, size: 9, font });
-      page.drawText(String(it.quantity), { x: 340, y, size: 9, font });
-      page.drawText(`${input.currency} ${it.unitPrice}`, {
+      drawText(page, it.name.slice(0, 45), { x: MARGIN_X, y, size: 9, font });
+      drawText(page, String(it.quantity), { x: 340, y, size: 9, font });
+      drawText(page, `${input.currency} ${it.unitPrice}`, {
         x: 390,
         y,
         size: 9,
         font,
       });
-      page.drawText(`${input.currency} ${it.amount}`, {
+      drawText(page, `${input.currency} ${it.amount}`, {
         x: 470,
         y,
         size: 9,
@@ -272,13 +390,12 @@ export class PdfService {
       y -= 12;
     }
 
-    // Reserve space for totals; move to next page if cramped.
     if (y - 80 < BOTTOM_Y) newPage();
 
     y = Math.max(y - 10, BOTTOM_Y + 20);
     const right = (label: string, value: string) => {
-      page.drawText(label, { x: 340, y, size: 10, font });
-      page.drawText(value, { x: 470, y, size: 10, font: bold });
+      drawText(page, label, { x: 340, y, size: 10, font });
+      drawText(page, value, { x: 470, y, size: 10, font: bold });
       y -= 14;
     };
 
@@ -297,26 +414,25 @@ export class PdfService {
 
 function drawSignatureLine(
   page: PDFPage,
-  font: PDFFont,
-  bold: PDFFont,
+  font: FontTriple,
+  bold: FontTriple,
   doctorName: string,
 ) {
   const y = BOTTOM_Y;
-  // Right-aligned signature block.
   page.drawLine({
     start: { x: 380, y: y + 18 },
     end: { x: 555, y: y + 18 },
     thickness: 0.5,
     color: rgb(0.3, 0.3, 0.3),
   });
-  page.drawText('Signature', {
+  drawText(page, 'Signature', {
     x: 380,
     y: y + 4,
     size: 9,
     font,
     color: rgb(0.4, 0.4, 0.4),
   });
-  page.drawText(doctorName, {
+  drawText(page, doctorName, {
     x: 380,
     y: y - 10,
     size: 10,
@@ -324,9 +440,8 @@ function drawSignatureLine(
   });
 }
 
-function drawPaidStamp(page: PDFPage, bold: PDFFont, paidAtIso?: string) {
-  // Diagonal "PAID" watermark across the totals area.
-  page.drawText('PAID', {
+function drawPaidStamp(page: PDFPage, bold: FontTriple, paidAtIso?: string) {
+  drawText(page, 'PAID', {
     x: 360,
     y: 340,
     size: 90,
@@ -336,7 +451,7 @@ function drawPaidStamp(page: PDFPage, bold: PDFFont, paidAtIso?: string) {
     rotate: degrees(-20),
   });
   if (paidAtIso) {
-    page.drawText(`Paid on ${paidAtIso}`, {
+    drawText(page, `Paid on ${paidAtIso}`, {
       x: 340,
       y: 280,
       size: 9,

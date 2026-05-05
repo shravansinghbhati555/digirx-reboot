@@ -128,10 +128,10 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       <div style={{ position: 'fixed', top: 16, left: '50%', transform: 'translateX(-50%)', zIndex: 1000, display: 'flex', flexDirection: 'column', gap: 8, alignItems: 'center' }}>
         {toasts.map((t) => (
           <div key={t.id} style={{
-            display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px',
+            display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px',
             background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: 12, boxShadow: '0 8px 24px rgba(15,23,42,0.12)',
-            minWidth: 280, maxWidth: 360, animation: 'toastIn 200ms ease-out', fontSize: 14,
+            borderRadius: 10, boxShadow: '0 8px 24px rgba(15,23,42,0.12)',
+            minWidth: 260, maxWidth: 340, animation: 'toastIn 200ms ease-out', fontSize: 12.5,
           }}>
             <Icon name={t.type === 'success' ? 'checkCircle' : t.type === 'error' ? 'xCircle' : 'info'}
               size={16}
@@ -166,7 +166,7 @@ export const formatDateTime = (str: string | Date | null | undefined) => {
   return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 };
 
-export const labelStyle: CSSProperties = { display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 5 };
+export const labelStyle: CSSProperties = { display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text)', marginBottom: 4 };
 
 export function Field({
   label, value, onChange, placeholder, prefix, type = 'text',
@@ -183,9 +183,9 @@ export function Field({
         )}
         <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} type={type}
           style={{
-            width: '100%', height: 40, padding: prefix ? '0 12px 0 44px' : '0 12px',
-            background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
-            fontSize: 13, color: 'var(--text)', fontFamily: "'Inter',sans-serif",
+            width: '100%', height: 32, padding: prefix ? '0 10px 0 38px' : '0 10px',
+            background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 8,
+            fontSize: 12, color: 'var(--text)', fontFamily: "'Inter',sans-serif",
             outline: 'none', boxSizing: 'border-box', transition: 'border-color 120ms',
           }}
           onFocus={(e) => (e.target.style.borderColor = 'var(--brand-500)')}
@@ -204,11 +204,11 @@ export function PrimaryButton({
   return (
     <button type={type} onClick={onClick} disabled={disabled} className="press-scale"
       style={{
-        height: 40, padding: '0 20px',
+        height: 32, padding: '0 16px',
         background: disabled ? 'var(--border)' : 'var(--brand-500)',
-        color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600,
+        color: 'var(--brand-text)', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 600,
         cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: "'Inter',sans-serif",
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
         transition: 'background 120ms, transform 120ms var(--ease-out)', opacity: disabled ? 0.6 : 1,
       }}
     >
@@ -225,11 +225,11 @@ export function GhostButton({
   return (
     <button type={type} onClick={onClick} disabled={disabled} className="press-scale"
       style={{
-        height: 40, padding: '0 18px',
+        height: 32, padding: '0 14px',
         background: 'none', color: 'var(--text-muted)',
-        border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 500,
+        border: '1.5px solid var(--border)', borderRadius: 8, fontSize: 12, fontWeight: 500,
         cursor: disabled ? 'not-allowed' : 'pointer', fontFamily: "'Inter',sans-serif",
-        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+        display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 5,
         opacity: disabled ? 0.5 : 1, transition: 'transform 120ms var(--ease-out)',
       }}
     >
