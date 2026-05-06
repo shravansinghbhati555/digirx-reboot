@@ -197,9 +197,15 @@ function drawText(page: PDFPage, text: string, opts: DrawOpts) {
 export class PdfService {
   async prescriptionPdf(input: {
     clinicName: string;
+    clinicAddress?: string;
+    clinicPhone?: string;
     patientName: string;
+    patientAge?: string | number;
+    patientGender?: string;
     doctorName: string;
     createdAtIso: string;
+    diagnosis?: string;
+    vitals?: Record<string, string>;
     items: Array<{
       name: string;
       dosage?: string;
@@ -211,48 +217,112 @@ export class PdfService {
     const pdf = await PDFDocument.create();
     const { font, bold } = await embedFonts(pdf);
 
+    const BRAND_BLUE = rgb(0.06, 0.45, 0.92);
+    const TEXT_DARK = rgb(0.1, 0.1, 0.1);
+    const TEXT_MUTED = rgb(0.4, 0.4, 0.4);
+    const BORDER_COLOR = rgb(0.9, 0.9, 0.9);
+    const STRIP_BG = rgb(0.96, 0.97, 0.99);
+
     let page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     let y = TOP_Y;
 
     const drawHeader = () => {
-      drawText(page, input.clinicName, {
-        x: MARGIN_X,
-        y,
-        size: 16,
-        font: bold,
-        color: rgb(0.1, 0.1, 0.1),
+      // Brand Bar (Top)
+      page.drawRectangle({
+        x: 0,
+        y: PAGE_HEIGHT - 60,
+        width: PAGE_WIDTH,
+        height: 60,
+        color: BRAND_BLUE,
       });
-      y -= 24;
-      drawText(page, 'Prescription', { x: MARGIN_X, y, size: 12, font: bold });
-      y -= 18;
-      drawText(page, `Patient: ${input.patientName}`, {
+
+      // Clinic Info
+      y = PAGE_HEIGHT - 35;
+      drawText(page, input.clinicName, { x: MARGIN_X, y, size: 20, font: bold, color: rgb(1, 1, 1) });
+      
+      y = PAGE_HEIGHT - 85;
+      if (input.clinicAddress) {
+        drawText(page, input.clinicAddress, { x: MARGIN_X, y, size: 9, font, color: TEXT_MUTED });
+        y -= 12;
+      }
+      if (input.clinicPhone) {
+        drawText(page, `Ph: ${input.clinicPhone}`, { x: MARGIN_X, y, size: 9, font, color: TEXT_MUTED });
+      }
+
+      // Prescription Label & Date
+      y = PAGE_HEIGHT - 130;
+      drawText(page, 'PRESCRIPTION', { x: MARGIN_X, y, size: 14, font: bold, color: BRAND_BLUE });
+      const dateStr = new Date(input.createdAtIso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+      const dateWidth = bold.latin.widthOfTextAtSize(`Date: ${dateStr}`, 10);
+      drawText(page, `Date: ${dateStr}`, { x: PAGE_WIDTH - MARGIN_X - dateWidth, y: y + 2, size: 10, font: bold });
+
+      y -= 25;
+
+      // Patient Info Strip
+      page.drawRectangle({
         x: MARGIN_X,
-        y,
-        size: 10,
-        font,
+        y: y - 10,
+        width: PAGE_WIDTH - (MARGIN_X * 2),
+        height: 40,
+        color: STRIP_BG,
       });
-      y -= 14;
-      drawText(page, `Doctor: ${input.doctorName}`, {
+      page.drawRectangle({
         x: MARGIN_X,
-        y,
-        size: 10,
-        font,
+        y: y - 10,
+        width: PAGE_WIDTH - (MARGIN_X * 2),
+        height: 40,
+        borderColor: BORDER_COLOR,
+        borderWidth: 1,
       });
-      y -= 14;
-      drawText(page, `Date: ${input.createdAtIso}`, {
-        x: MARGIN_X,
-        y,
-        size: 10,
-        font,
-      });
-      y -= 22;
-      drawText(page, 'Medicines', { x: MARGIN_X, y, size: 11, font: bold });
-      y -= 14;
+
+      const stripY = y + 10;
+      drawText(page, 'PATIENT', { x: MARGIN_X + 15, y: stripY + 10, size: 8, font: bold, color: TEXT_MUTED });
+      drawText(page, input.patientName, { x: MARGIN_X + 15, y: stripY - 4, size: 11, font: bold, color: TEXT_DARK });
+
+      const genderAge = [input.patientGender, input.patientAge ? `${input.patientAge}y` : null].filter(Boolean).join(' / ');
+      if (genderAge) {
+        drawText(page, 'AGE/GENDER', { x: MARGIN_X + 220, y: stripY + 10, size: 8, font: bold, color: TEXT_MUTED });
+        drawText(page, genderAge, { x: MARGIN_X + 220, y: stripY - 4, size: 11, font, color: TEXT_DARK });
+      }
+
+      drawText(page, 'DOCTOR', { x: PAGE_WIDTH - MARGIN_X - 120, y: stripY + 10, size: 8, font: bold, color: TEXT_MUTED });
+      drawText(page, input.doctorName, { x: PAGE_WIDTH - MARGIN_X - 120, y: stripY - 4, size: 10, font, color: TEXT_DARK });
+
+      y -= 60;
+
+      // Vitals & Diagnosis
+      if (input.vitals || input.diagnosis) {
+        if (input.vitals) {
+          const vitalsArr = Object.entries(input.vitals).filter(([_, v]) => !!v).map(([k, v]) => `${k.toUpperCase()}: ${v}`);
+          if (vitalsArr.length > 0) {
+             drawText(page, 'Vitals: ', { x: MARGIN_X, y, size: 9, font: bold, color: TEXT_MUTED });
+             drawText(page, vitalsArr.join('  •  '), { x: MARGIN_X + 45, y, size: 9, font, color: TEXT_DARK });
+             y -= 16;
+          }
+        }
+        if (input.diagnosis) {
+          drawText(page, 'Diagnosis: ', { x: MARGIN_X, y, size: 9, font: bold, color: TEXT_MUTED });
+          drawText(page, input.diagnosis, { x: MARGIN_X + 65, y, size: 9, font, color: TEXT_DARK });
+          y -= 25;
+        }
+      }
+
+      // Medicines Table Header
+      page.drawLine({ start: { x: MARGIN_X, y }, end: { x: PAGE_WIDTH - MARGIN_X, y }, thickness: 1, color: BORDER_COLOR });
+      y -= 15;
+      drawText(page, 'Medicine', { x: MARGIN_X, y, size: 9, font: bold, color: TEXT_MUTED });
+      drawText(page, 'Dosage', { x: MARGIN_X + 180, y, size: 9, font: bold, color: TEXT_MUTED });
+      drawText(page, 'Freq', { x: MARGIN_X + 260, y, size: 9, font: bold, color: TEXT_MUTED });
+      drawText(page, 'Duration', { x: MARGIN_X + 320, y, size: 9, font: bold, color: TEXT_MUTED });
+      drawText(page, 'Instructions', { x: MARGIN_X + 380, y, size: 9, font: bold, color: TEXT_MUTED });
+      y -= 10;
+      page.drawLine({ start: { x: MARGIN_X, y }, end: { x: PAGE_WIDTH - MARGIN_X, y }, thickness: 1, color: BORDER_COLOR });
+      y -= 25;
     };
 
     const newPage = () => {
       page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-      y = TOP_Y;
+      y = TOP_Y - 40;
       drawHeader();
     };
 
@@ -260,24 +330,24 @@ export class PdfService {
       if (y - lines * 14 < BOTTOM_Y + 60) newPage();
     };
 
-    const line = (s: string) => {
-      drawText(page, s, { x: MARGIN_X, y, size: 10, font });
-      y -= 14;
-    };
-
     drawHeader();
 
     input.items.forEach((it, idx) => {
-      const detailLine = [it.dosage, it.frequency, it.duration]
-        .filter(Boolean)
-        .join(' • ');
-      const lineCount = 1 + (detailLine ? 1 : 0) + (it.instructions ? 1 : 0);
-      ensureRoom(lineCount + 1);
+      ensureRoom(3);
 
-      line(`${idx + 1}. ${it.name}`);
-      if (detailLine) line(`   ${detailLine}`);
-      if (it.instructions) line(`   Notes: ${it.instructions}`);
-      y -= 4;
+      drawText(page, `${idx + 1}.`, { x: MARGIN_X - 15, y, size: 10, font, color: TEXT_MUTED });
+      drawText(page, it.name, { x: MARGIN_X, y, size: 10, font: bold, color: TEXT_DARK });
+      
+      if (it.dosage) drawText(page, it.dosage, { x: MARGIN_X + 180, y, size: 9, font, color: TEXT_DARK });
+      if (it.frequency) drawText(page, it.frequency, { x: MARGIN_X + 260, y, size: 9, font, color: TEXT_DARK });
+      if (it.duration) drawText(page, it.duration, { x: MARGIN_X + 320, y, size: 9, font, color: TEXT_DARK });
+      if (it.instructions) {
+         const wrapped = it.instructions.length > 30 ? it.instructions.slice(0, 27) + '...' : it.instructions;
+         drawText(page, wrapped, { x: MARGIN_X + 380, y, size: 9, font, color: TEXT_MUTED });
+      }
+
+      y -= 24;
+      page.drawLine({ start: { x: MARGIN_X, y: y + 12 }, end: { x: PAGE_WIDTH - MARGIN_X, y: y + 12 }, thickness: 0.5, color: BORDER_COLOR });
     });
 
     drawSignatureLine(page, font, bold, input.doctorName);

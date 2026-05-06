@@ -71,4 +71,15 @@ export class TenancyController {
     const clinicId = this.tenancy.assertTenantMatch(id, req.context!.clinicId);
     return await this.tenancy.updateBranch(clinicId, branchId, body);
   }
+
+  @Get('clinics/:id/branches/:branchId')
+  @RequirePermissions(Permission.ClinicRead)
+  async getBranch(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @Param('branchId') branchId: string,
+  ) {
+    const clinicId = this.tenancy.assertTenantMatch(id, req.context!.clinicId);
+    return await this.tenancy.getBranch(clinicId, branchId);
+  }
 }

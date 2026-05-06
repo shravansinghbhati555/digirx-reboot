@@ -214,12 +214,31 @@ export class TenancyService {
     return this.toBranchDto(branch, docCount);
   }
 
-  private toBranchDto(b: Branch & { _id: Types.ObjectId }, doctorCount: number) {
+  async getBranch(clinicId: Types.ObjectId, branchId: string) {
+    if (!Types.ObjectId.isValid(branchId)) {
+      throw new NotFoundException('Branch not found');
+    }
+    const branch = await this.branchModel.findOne({
+      _id: new Types.ObjectId(branchId),
+      clinicId,
+    });
+    if (!branch) throw new NotFoundException('Branch not found');
+
+    const docCount = await this.userModel.countDocuments({
+      clinicId,
+      branchIds: branch._id,
+    });
+    return this.toBranchDto(branch as any, docCount);
+  }
+
+  private toBranchDto(b: any, doctorCount: number) {
     const wh = (b.workingHours ?? {}) as { open?: string; close?: string };
+    const addr = b.addressLine || legacyAddressLine(b.address);
+    console.log(`[TenancyService] Mapping branch ${b.name}: addressLine=${addr}`);
     return {
       _id: b._id,
       name: b.name,
-      addressLine: b.addressLine ?? legacyAddressLine(b.address),
+      addressLine: addr,
       phone: b.phone,
       open: wh.open,
       close: wh.close,

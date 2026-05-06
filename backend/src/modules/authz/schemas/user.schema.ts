@@ -36,6 +36,12 @@ export class User {
 
   @Prop({ type: [Types.ObjectId], default: [], index: true })
   roleIds!: Types.ObjectId[];
+
+  @Prop({ trim: true })
+  registrationNumber?: string;
+
+  @Prop({ trim: true })
+  qualifications?: string;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

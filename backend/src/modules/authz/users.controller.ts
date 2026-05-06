@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Req } from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { Permission } from './permissions';
 import { RequirePermissions } from './require-permissions.decorator';
@@ -13,6 +13,12 @@ export class UsersController {
   @RequirePermissions(Permission.UserRead)
   async list(@Req() req: AppRequest) {
     return await this.users.list(req.context!.clinicId);
+  }
+
+  @Post()
+  @RequirePermissions(Permission.UserWrite)
+  async create(@Req() req: AppRequest, @Body() dto: any) {
+    return await this.users.create(req.context!.clinicId, dto);
   }
 
   @Patch(':id/roles')

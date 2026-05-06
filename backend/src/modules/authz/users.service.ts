@@ -5,10 +5,11 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import * as bcrypt from 'bcrypt';
 import { Role } from './schemas/role.schema';
 import { User } from './schemas/user.schema';
 
-type UserListItem = {
+export type UserListItem = {
   _id: string;
   name: string;
   email?: string;
@@ -16,6 +17,19 @@ type UserListItem = {
   status: string;
   roleIds: string[];
   roles: { _id: string; name: string }[];
+  registrationNumber?: string;
+  qualifications?: string;
+};
+
+export type CreateUserDto = {
+  name: string;
+  email?: string;
+  phone?: string;
+  password?: string;
+  registrationNumber?: string;
+  qualifications?: string;
+  roleIds?: string[];
+  branchIds?: string[];
 };
 
 @Injectable()
@@ -53,7 +67,41 @@ export class UsersService {
       roles: (u.roleIds ?? [])
         .map((rid) => roleMap.get(String(rid)))
         .filter((r): r is { _id: string; name: string } => !!r),
+      registrationNumber: u.registrationNumber,
+      qualifications: u.qualifications,
     }));
+  }
+
+  async create(
+    clinicId: Types.ObjectId,
+    dto: CreateUserDto,
+  ): Promise<UserListItem> {
+    const { password, roleIds, ...rest } = dto;
+
+    const user = new this.userModel({
+      ...rest,
+      clinicId,
+      status: 'ACTIVE',
+    });
+
+    if (password) {
+      user.passwordHash = await bcrypt.hash(password, 10);
+    }
+
+    if (roleIds?.length) {
+      user.roleIds = roleIds.map((id) => new Types.ObjectId(id));
+    }
+
+    if (dto.branchIds?.length) {
+      user.branchIds = dto.branchIds.map((id) => new Types.ObjectId(id));
+    }
+
+    await user.save();
+    
+    const [item] = await this.list(clinicId).then((rows) =>
+      rows.filter((r) => r._id === String(user._id)),
+    );
+    return item;
   }
 
   async updateRoles(

@@ -12,6 +12,35 @@ import { randomBytes } from 'crypto';
 
 const DEFAULT_RX_SHARE_EXPIRY_SECONDS = 7 * 24 * 60 * 60;
 
+/** Shared logic for mapping DTO items → stored items */
+function mapItems(dto: CreatePrescriptionDto) {
+  if (!Array.isArray(dto.items) || dto.items.length === 0) {
+    throw new BadRequestException('items is required');
+  }
+  return dto.items.map((it) => {
+    const hasCatalog =
+      typeof it.medicineCatalogItemId === 'string' &&
+      it.medicineCatalogItemId.length > 0;
+    const hasCustom =
+      typeof it.customName === 'string' && it.customName.trim().length > 0;
+    if (!hasCatalog && !hasCustom) {
+      throw new BadRequestException(
+        'Each item must have medicineCatalogItemId or customName',
+      );
+    }
+    return {
+      medicineCatalogItemId: hasCatalog
+        ? new Types.ObjectId(it.medicineCatalogItemId)
+        : undefined,
+      customName: hasCustom ? it.customName!.trim() : undefined,
+      dosage: it.dosage?.trim(),
+      frequency: it.frequency?.trim(),
+      duration: it.duration?.trim(),
+      instructions: it.instructions?.trim(),
+    };
+  });
+}
+
 @Injectable()
 export class PrescriptionsService {
   constructor(
@@ -20,42 +49,42 @@ export class PrescriptionsService {
     private readonly encounters: EncountersService,
   ) {}
 
-  async createForEncounter(
+  /**
+   * Get the prescription for an encounter, or null if none exists yet.
+   */
+  async getByEncounter(
+    clinicId: Types.ObjectId,
+    encounterId: string,
+  ): Promise<Prescription | null> {
+    return this.rxModel
+      .findOne({ clinicId, encounterId: new Types.ObjectId(encounterId) })
+      .exec();
+  }
+
+  /**
+   * Upsert prescription items for an encounter.
+   * If no prescription exists yet, creates one.
+   * If one already exists, replaces its items.
+   * Safe to call at any time (draft or signed).
+   */
+  async upsertForEncounter(
     clinicId: Types.ObjectId,
     encounterId: string,
     dto: CreatePrescriptionDto,
   ) {
     const enc = await this.encounters.getById(clinicId, encounterId);
+    const items = mapItems(dto);
 
-    if (!Array.isArray(dto.items) || dto.items.length === 0) {
-      throw new BadRequestException('items is required');
+    const existing = await this.rxModel
+      .findOne({ clinicId, encounterId: enc._id })
+      .exec();
+
+    if (existing) {
+      existing.items = items as any;
+      return existing.save();
     }
 
-    const items = dto.items.map((it) => {
-      const hasCatalog =
-        typeof it.medicineCatalogItemId === 'string' &&
-        it.medicineCatalogItemId.length > 0;
-      const hasCustom =
-        typeof it.customName === 'string' && it.customName.trim().length > 0;
-      if (!hasCatalog && !hasCustom) {
-        throw new BadRequestException(
-          'Each item must have medicineCatalogItemId or customName',
-        );
-      }
-
-      return {
-        medicineCatalogItemId: hasCatalog
-          ? new Types.ObjectId(it.medicineCatalogItemId)
-          : undefined,
-        customName: hasCustom ? it.customName!.trim() : undefined,
-        dosage: it.dosage?.trim(),
-        frequency: it.frequency?.trim(),
-        duration: it.duration?.trim(),
-        instructions: it.instructions?.trim(),
-      };
-    });
-
-    return await this.rxModel.create({
+    return this.rxModel.create({
       clinicId,
       branchId: enc.branchId,
       doctorId: enc.doctorId,
@@ -63,6 +92,15 @@ export class PrescriptionsService {
       encounterId: enc._id,
       items,
     });
+  }
+
+  async createForEncounter(
+    clinicId: Types.ObjectId,
+    encounterId: string,
+    dto: CreatePrescriptionDto,
+  ) {
+    // Delegate to upsert — idempotent, no duplicates
+    return this.upsertForEncounter(clinicId, encounterId, dto);
   }
 
   async getById(clinicId: Types.ObjectId, id: string) {

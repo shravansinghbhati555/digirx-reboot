@@ -13,6 +13,8 @@ import {
 import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
 import { User, UserSchema } from '../authz/schemas/user.schema';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
+import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
+import { Encounter, EncounterSchema } from '../encounters/schemas/encounter.schema';
 
 @Module({
   imports: [
@@ -21,6 +23,8 @@ import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
       { name: Patient.name, schema: PatientSchema },
       { name: User.name, schema: UserSchema },
       { name: Clinic.name, schema: ClinicSchema },
+      { name: Branch.name, schema: BranchSchema },
+      { name: Encounter.name, schema: EncounterSchema },
     ]),
     EncountersModule,
     PdfModule,
