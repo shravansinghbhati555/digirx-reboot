@@ -1,3 +1,4 @@
+import { Inject } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { InjectModel } from '@nestjs/mongoose';
@@ -10,14 +11,16 @@ import {
   NOTIFICATIONS_JOB_SEND,
   NOTIFICATIONS_QUEUE,
 } from './notifications.queue';
-import { ConsoleNotificationProvider } from './providers/console.provider';
+import { NOTIFICATION_PROVIDER } from './providers/notification-provider';
+import type { NotificationProvider } from './providers/notification-provider';
 
 @Processor(NOTIFICATIONS_QUEUE)
 export class NotificationsProcessor extends WorkerHost {
   constructor(
     @InjectModel(NotificationLog.name)
     private readonly logModel: Model<NotificationLog>,
-    private readonly provider: ConsoleNotificationProvider,
+    @Inject(NOTIFICATION_PROVIDER)
+    private readonly provider: NotificationProvider,
   ) {
     super();
   }

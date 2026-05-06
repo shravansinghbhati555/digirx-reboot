@@ -31,6 +31,9 @@ export class NotificationLog {
   @Prop({ trim: true, index: true })
   dedupeKey?: string;
 
+  @Prop({ trim: true })
+  templateKey?: string;
+
   @Prop({
     required: true,
     enum: NotificationStatus,

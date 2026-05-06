@@ -14,3 +14,7 @@ export type SendNotificationResult = {
 export interface NotificationProvider {
   send(input: SendNotificationInput): Promise<SendNotificationResult>;
 }
+
+// DI token used by NotificationsProcessor to receive whichever provider the
+// module factory selects based on the NOTIFICATION_PROVIDER env var.
+export const NOTIFICATION_PROVIDER = 'NOTIFICATION_PROVIDER';
