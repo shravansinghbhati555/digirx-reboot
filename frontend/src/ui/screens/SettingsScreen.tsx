@@ -35,7 +35,7 @@ const COMMON_TIMEZONES = [
   'UTC',
 ];
 
-type SettingsTab = 'clinic' | 'branches' | 'availability' | 'users' | 'permissions' | 'notif_cfg' | 'audit' | 'about';
+type SettingsTab = 'clinic' | 'branches' | 'availability' | 'notif_cfg' | 'audit' | 'about';
 
 // `perm` of `null` = visible to any signed-in user.
 type NavItem = { id: SettingsTab; label: string; icon: IconName; perm: PermName | null };
@@ -44,8 +44,6 @@ const NAV: NavItem[] = [
   { id: 'clinic',       label: 'Clinic',              icon: 'cross',    perm: Perm.ClinicWrite },
   { id: 'branches',     label: 'Branches',            icon: 'mapPin',   perm: Perm.BranchRead },
   { id: 'availability', label: 'Availability',        icon: 'clock',    perm: Perm.ClinicRead },
-  { id: 'users',        label: 'Users',               icon: 'users',    perm: Perm.UserWrite },
-  { id: 'permissions',  label: 'Roles & Permissions', icon: 'shield',   perm: Perm.ClinicWrite },
   { id: 'notif_cfg',    label: 'Notifications',       icon: 'bell',     perm: Perm.NotificationRead },
   { id: 'audit',        label: 'Audit log',           icon: 'scroll',   perm: Perm.ClinicWrite },
   { id: 'about',        label: 'About',               icon: 'info',     perm: null },
@@ -100,8 +98,6 @@ export function SettingsScreen() {
           {activeAllowed && tab === 'clinic' && <ClinicTab />}
           {activeAllowed && tab === 'branches' && <BranchesTab />}
           {activeAllowed && tab === 'availability' && <AvailabilityTab />}
-          {activeAllowed && tab === 'users' && <UsersTab />}
-          {activeAllowed && tab === 'permissions' && <PermissionsTab />}
           {activeAllowed && tab === 'notif_cfg' && <NotifConfigTab />}
           {activeAllowed && tab === 'audit' && <AuditTab />}
           {activeAllowed && tab === 'about' && <AboutTab />}
@@ -699,103 +695,6 @@ function WindowsEditor({ value, onChange, disabled, compact }: { value: Availabi
 }
 
 
-const PERMISSION_GROUPS: { group: string; items: string[] }[] = [
-  { group: 'Clinic',        items: ['clinic:read', 'clinic:write'] },
-  { group: 'Patients',      items: ['patient:read', 'patient:write'] },
-  { group: 'Appointments',  items: ['appointment:read', 'appointment:write'] },
-  { group: 'Billing',       items: ['billing:read', 'billing:write'] },
-  { group: 'Documents',     items: ['document:read', 'document:write'] },
-  { group: 'Notifications', items: ['notification:read', 'notification:write'] },
-];
-
-function PermissionsTab() {
-  const { permissions, ctx } = useApp();
-  const list = useMemo(() => Array.from(permissions).sort(), [permissions]);
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>Your permissions</div>
-        <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginBottom: 12 }}>
-          Loaded from <code>/me</code> for <code>{ctx.email ?? ctx.userId.slice(-8)}</code>.
-        </div>
-        {list.length === 0 ? (
-          <div style={{ fontSize: 13, color: 'var(--text-subtle)', padding: 16, textAlign: 'center' }}>No permissions resolved.</div>
-        ) : (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {list.map((p) => (
-              <span key={p} style={{ padding: '4px 10px', borderRadius: 100, background: 'var(--brand-50)', color: 'var(--brand-700)', fontSize: 11, fontWeight: 600, border: '1px solid var(--brand-100)', fontFamily: 'monospace' }}>{p}</span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div>
-        <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginBottom: 10 }}>
-          Permissions matrix — your role's grants vs all known capabilities.
-        </div>
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'auto' }}>
-          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-            <thead>
-              <tr style={{ background: 'var(--surface-muted)' }}>
-                <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', width: 220 }}>Permission</th>
-                <th style={{ padding: '12px 16px', textAlign: 'center', fontSize: 12, fontWeight: 700, color: 'var(--brand-600)' }}>You</th>
-              </tr>
-            </thead>
-            <tbody>
-              {PERMISSION_GROUPS.map((pg) => (
-                <PermissionGroupRows key={pg.group} group={pg.group} items={pg.items} permissions={permissions} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PermissionGroupRows({ group, items, permissions }: { group: string; items: string[]; permissions: Set<string> }) {
-  return (
-    <>
-      <tr style={{ background: 'var(--surface-muted)' }}>
-        <td colSpan={2} style={{ padding: '6px 16px', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{group}</td>
-      </tr>
-      {items.map((p) => {
-        const has = permissions.has(p);
-        return (
-          <tr key={p} style={{ borderTop: '1px solid var(--border)' }}>
-            <td style={{ padding: '10px 16px', fontSize: 13, color: 'var(--text)', fontFamily: 'monospace' }}>{p}</td>
-            <td style={{ padding: '10px 16px', textAlign: 'center' }}>
-              <PermCheck checked={has} />
-            </td>
-          </tr>
-        );
-      })}
-    </>
-  );
-}
-
-function PermCheck({ checked }: { checked: boolean }) {
-  return (
-    <div style={{
-      width: 20, height: 20, borderRadius: 6,
-      border: `1.5px solid ${checked ? 'var(--brand-500)' : 'var(--border)'}`,
-      background: checked ? 'var(--brand-500)' : 'var(--surface-muted)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      margin: '0 auto',
-      transition: 'background 160ms var(--ease-out), border-color 160ms var(--ease-out)',
-    }}>
-      {checked && (
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12"
-            strokeDasharray="24" strokeDashoffset="24"
-            style={{ animation: 'pathDraw 160ms var(--ease-out) forwards', ['--draw-len' as never]: 24 }} />
-        </svg>
-      )}
-    </div>
-  );
-}
-
 function AboutTab() {
   return (
     <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 24 }}>
@@ -1102,11 +1001,6 @@ const timeInputStyle: React.CSSProperties = {
   fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
 };
 
-function UsersTab() {
-  return <StubTab icon="users" title="Users"
-    hint="User invitations, roles, and deactivation will live here. The backend currently exposes user records via /me only; once a list endpoint exists we'll wire a table with role chips and last-login." />;
-}
-
 function NotifConfigTab() {
   return <StubTab icon="bell" title="Notification providers & quiet hours"
     hint="Provider keys (Twilio/WhatsApp Business), quiet hours, and reminder windows will live here. Templates are already editable on the Notifications page." />;
@@ -1149,6 +1043,60 @@ function entityLabel(entityType: string): string {
   if (!m) return entityType;
   const word = m[1].replace(/s$/, '');
   return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+// Map of `METHOD route-pattern` → human verb for the audit log Detail cell.
+// `entityType` from the backend is the matched Express route pattern with
+// parameter placeholders (e.g. `/appointments/:id/checkin`). New mutation
+// routes should get a row here; otherwise the UI falls back to the raw
+// method+path on the line below.
+const AUDIT_DETAIL_LABELS: Record<string, string> = {
+  // Appointments
+  'POST /appointments':                       'Booked appointment',
+  'PATCH /appointments/:id':                  'Updated appointment',
+  'POST /appointments/:id/checkin':           'Checked in patient',
+  // Encounters
+  'POST /encounters':                         'Started encounter',
+  'PATCH /encounters/:id':                    'Updated encounter',
+  'POST /encounters/:id/sign':                'Signed encounter',
+  // Patients
+  'POST /patients':                           'Registered patient',
+  'PATCH /patients/:id':                      'Updated patient',
+  'POST /patients/:id/documents':             'Attached document to patient',
+  // Billing
+  'POST /bills':                              'Created bill (draft)',
+  'PATCH /bills/:id':                         'Updated bill',
+  'POST /bills/:id/issue':                    'Issued bill',
+  'POST /bills/:id/payments':                 'Recorded payment',
+  'POST /catalog/services':                   'Added service to catalog',
+  // Documents
+  'POST /documents/upload-url':               'Initiated document upload',
+  'POST /documents/:id/share':                'Shared document',
+  'POST /documents/:id/share/revoke':         'Revoked document share',
+  // Prescriptions
+  'POST /encounters/:id/prescriptions':       'Issued prescription',
+  'POST /prescriptions/:id/share':            'Shared prescription',
+  'POST /prescriptions/:id/share/revoke':     'Revoked prescription share',
+  // Notifications
+  'POST /notifications/test':                 'Sent test notification',
+  'POST /notifications/templates':            'Saved notification template',
+  // Tenancy / clinic settings
+  'PATCH /clinics/:id/settings':              'Updated clinic settings',
+  'POST /clinics/:id/branches':               'Added branch',
+  'PATCH /clinics/:id/branches/:branchId':    'Updated branch',
+  // Availability
+  'PUT /availability/doctors/:doctorUserId/rules':                       'Updated doctor availability',
+  'PUT /availability/doctors/:doctorUserId/overrides/:date':             'Set availability override',
+  'PATCH /availability/doctors/:doctorUserId/overrides/:date/close':     'Closed clinic for date',
+  // Auth / roles
+  'PATCH /roles/:id':                         'Updated role',
+  'PATCH /users/:id/roles':                   'Updated user roles',
+};
+
+function auditDetailLabel(method: string | undefined, entityType: string): string | null {
+  if (!method) return null;
+  const key = `${method.toUpperCase()} ${entityType.startsWith('/') ? entityType : '/' + entityType}`;
+  return AUDIT_DETAIL_LABELS[key] ?? null;
 }
 
 function formatAuditTime(iso: string): string {
@@ -1291,8 +1239,10 @@ function AuditTab() {
                     <td style={tdAuditStyle}>
                       <span style={{ fontSize: 12, color: 'var(--text)' }}>{actor}</span>
                     </td>
-                    <td style={{ ...tdAuditStyle, color: 'var(--text-subtle)', fontSize: 11, fontFamily: 'monospace' }}>
-                      {r.meta?.method} {r.meta?.path ?? r.entityType}
+                    <td style={tdAuditStyle}>
+                      <div style={{ fontSize: 13, color: 'var(--text)' }}>
+                        {auditDetailLabel(r.meta?.method, r.entityType) ?? <span style={{ color: 'var(--text-subtle)' }}>—</span>}
+                      </div>
                     </td>
                   </tr>
                 );
