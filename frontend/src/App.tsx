@@ -14,6 +14,7 @@ import { NotificationsScreen } from './ui/screens/NotificationsScreen';
 import { SettingsScreen } from './ui/screens/SettingsScreen';
 import { RolesScreen } from './ui/screens/RolesScreen';
 import { UsersScreen } from './ui/screens/UsersScreen';
+import { SharePrescriptionScreen } from './ui/screens/SharePrescriptionScreen';
 
 function Router() {
   const { loggedIn, screen, permissions } = useApp();
@@ -42,6 +43,17 @@ function Router() {
 }
 
 export function App() {
+  // Simple public routing for sharing
+  const path = window.location.pathname;
+  if (path.startsWith('/share/')) {
+    const token = path.split('/')[2];
+    return (
+      <AppProvider>
+        <SharePrescriptionScreen token={token} />
+      </AppProvider>
+    );
+  }
+
   return (
     <AppProvider>
       <ToastProvider>

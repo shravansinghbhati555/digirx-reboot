@@ -17,7 +17,11 @@ export function loadContext(): DevContext {
   const raw = localStorage.getItem(KEY);
   if (raw) {
     try {
-      return JSON.parse(raw) as DevContext;
+      const parsed = JSON.parse(raw) as DevContext;
+      // Always override the API URL from the environment variable if present,
+      // to avoid getting stuck on a cached value in localStorage.
+      parsed.apiBaseUrl = import.meta.env.VITE_API_BASE_URL ?? parsed.apiBaseUrl ?? 'http://localhost:4000';
+      return parsed;
     } catch {
       // ignore
     }

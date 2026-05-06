@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiGet, apiPatch } from '../../app/api';
+import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
 import { Avatar, Spinner, useToast } from '../shared/primitives';
@@ -13,9 +13,13 @@ type UserRow = {
   status: string;
   roleIds: string[];
   roles: { _id: string; name: string }[];
+  registrationNumber?: string;
+  qualifications?: string;
+  branchIds?: string[];
 };
 
 type RoleOption = { _id: string; name: string; immutable: boolean };
+type BranchOption = { _id: string; name: string };
 
 export function UsersScreen() {
   const { ctx } = useApp();
@@ -24,20 +28,24 @@ export function UsersScreen() {
   const toast = useToast();
   const [users, setUsers] = useState<UserRow[]>([]);
   const [roles, setRoles] = useState<RoleOption[]>([]);
+  const [branches, setBranches] = useState<BranchOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
+  const [showAddModal, setShowAddModal] = useState(false);
 
   async function load() {
     setLoading(true);
     setError(null);
     try {
-      const [u, r] = await Promise.all([
+      const [u, r, b] = await Promise.all([
         apiGet<UserRow[]>(ctx, '/users'),
         apiGet<RoleOption[]>(ctx, '/roles'),
+        apiGet<BranchOption[]>(ctx, `/clinics/${ctx.clinicId}/branches`),
       ]);
       setUsers(u);
       setRoles(r);
+      setBranches(b);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -70,6 +78,17 @@ export function UsersScreen() {
     }
   }
 
+  async function handleAddUser(data: any) {
+    try {
+      const newUser = await apiPost<UserRow>(ctx, '/users', data);
+      setUsers((prev) => [...prev, newUser].sort((a, b) => a.name.localeCompare(b.name)));
+      setShowAddModal(false);
+      toast(`User ${newUser.name} added successfully`, 'success');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Failed to add user', 'error');
+    }
+  }
+
   if (loading) {
     return (
       <div style={{ padding: 60, display: 'flex', justifyContent: 'center' }}>
@@ -81,13 +100,33 @@ export function UsersScreen() {
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px' }}>
-        <div style={{ marginBottom: 16 }}>
-          <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px', margin: 0 }}>
-            Users
-          </h1>
-          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
-            Click a user to assign roles. {canEdit ? '' : '(read-only — you lack user:write permission)'}
-          </p>
+        <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px', margin: 0 }}>
+              Users
+            </h1>
+            <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
+              Click a user to assign roles. {canEdit ? '' : '(read-only — you lack user:write permission)'}
+            </p>
+          </div>
+          {canEdit && (
+            <button
+              onClick={() => setShowAddModal(true)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 8,
+                padding: '10px 20px', borderRadius: 12,
+                background: 'var(--brand-500)', color: 'var(--brand-text)',
+                border: 'none', cursor: 'pointer', fontSize: 14, fontWeight: 600,
+                boxShadow: '0 4px 12px rgba(99, 102, 241, 0.25)',
+                transition: 'transform 0.2s, background 0.2s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.transform = 'translateY(-1px)')}
+              onMouseLeave={(e) => (e.currentTarget.style.transform = 'translateY(0)')}
+            >
+              <Icon name="plus" size={18} strokeWidth={2.5} />
+              Add User
+            </button>
+          )}
         </div>
 
         {error && (
@@ -121,6 +160,7 @@ export function UsersScreen() {
                     </div>
                     <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                       {u.email ?? '—'}{u.phone ? ` · ${u.phone}` : ''}
+                      {u.registrationNumber && <span style={{ marginLeft: 8, color: 'var(--brand-500)', fontWeight: 600 }}>({u.registrationNumber})</span>}
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap', justifyContent: 'flex-end', maxWidth: 280 }}>
@@ -151,6 +191,15 @@ export function UsersScreen() {
           canEdit={canEdit}
           onClose={() => setSelectedId(undefined)}
           onSave={(roleIds) => saveUserRoles(selected._id, roleIds)}
+        />
+      )}
+
+      {showAddModal && (
+        <AddUserModal
+          roles={roles}
+          branches={branches}
+          onClose={() => setShowAddModal(false)}
+          onSave={handleAddUser}
         />
       )}
     </div>
@@ -281,6 +330,138 @@ function UserRolePanel({
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[], branches: BranchOption[], onClose: () => void, onSave: (data: any) => Promise<void> }) {
+  const [data, setData] = useState({
+    name: '',
+    email: '',
+    phone: '',
+    password: '',
+    registrationNumber: '',
+    qualifications: '',
+    roleIds: [] as string[],
+    branchIds: [] as string[]
+  });
+  const [loading, setLoading] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!data.name) return;
+    setLoading(true);
+    try {
+      await onSave(data);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  function toggleRole(id: string) {
+    setData(prev => ({
+      ...prev,
+      roleIds: prev.roleIds.includes(id) 
+        ? prev.roleIds.filter(r => r !== id) 
+        : [...prev.roleIds, id]
+    }));
+  }
+
+  function toggleBranch(id: string) {
+    setData(prev => ({
+      ...prev,
+      branchIds: prev.branchIds.includes(id)
+        ? prev.branchIds.filter(b => b !== id)
+        : [...prev.branchIds, id]
+    }));
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+      <div style={{ background: 'var(--surface)', width: '100%', maxWidth: 500, borderRadius: 20, boxShadow: '0 20px 50px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+        <div style={{ padding: '24px 32px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Add New User</h2>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)' }}><Icon name="x" size={20} /></button>
+        </div>
+        
+        <div style={{ maxHeight: 'calc(100vh - 160px)', overflowY: 'auto' }}>
+          <form onSubmit={handleSubmit} style={{ padding: '32px' }}>
+            <div style={{ display: 'grid', gap: 20 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Full Name *</label>
+                  <input required value={data.name} onChange={e => setData({...data, name: e.target.value})} style={{ width: '100%', height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)' }} placeholder="e.g. Dr. John Doe" />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Email</label>
+                  <input type="email" value={data.email} onChange={e => setData({...data, email: e.target.value})} style={{ width: '100%', height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)' }} placeholder="john@example.com" />
+                </div>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Phone</label>
+                  <input value={data.phone} onChange={e => setData({...data, phone: e.target.value})} style={{ width: '100%', height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)' }} placeholder="+91 9876543210" />
+                </div>
+                <div>
+                  <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Password</label>
+                  <input type="password" value={data.password} onChange={e => setData({...data, password: e.target.value})} style={{ width: '100%', height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)' }} placeholder="••••••••" />
+                </div>
+              </div>
+
+              <div style={{ background: 'var(--brand-50)', padding: 16, borderRadius: 12, border: '1px solid var(--brand-100)', display: 'grid', gap: 16 }}>
+                <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: 'var(--brand-600)', textTransform: 'uppercase' }}>Professional Details (for Prescription)</p>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--brand-700)', marginBottom: 4 }}>Reg No.</label>
+                    <input value={data.registrationNumber} onChange={e => setData({...data, registrationNumber: e.target.value})} style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: '#fff', fontSize: 13 }} placeholder="MCI-2019-..." />
+                  </div>
+                  <div>
+                    <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--brand-700)', marginBottom: 4 }}>Qualifications</label>
+                    <input value={data.qualifications} onChange={e => setData({...data, qualifications: e.target.value})} style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: '#fff', fontSize: 13 }} placeholder="MBBS, MD" />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 10 }}>Select Branches</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {branches.map(b => (
+                    <button type="button" key={b._id} onClick={() => toggleBranch(b._id)} style={{
+                      padding: '6px 14px', borderRadius: 100, fontSize: 12, fontWeight: 600,
+                      background: data.branchIds.includes(b._id) ? 'rgba(16,185,129,0.1)' : 'var(--surface-muted)',
+                      color: data.branchIds.includes(b._id) ? 'var(--success-600)' : 'var(--text-muted)',
+                      border: `1px solid ${data.branchIds.includes(b._id) ? 'var(--success-500)' : 'var(--border)'}`,
+                      cursor: 'pointer'
+                    }}>{b.name}</button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 10 }}>Assign Roles</label>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                  {roles.map(r => (
+                    <button type="button" key={r._id} onClick={() => toggleRole(r._id)} style={{
+                      padding: '6px 14px', borderRadius: 100, fontSize: 12, fontWeight: 600,
+                      background: data.roleIds.includes(r._id) ? 'var(--brand-500)' : 'var(--surface-muted)',
+                      color: data.roleIds.includes(r._id) ? 'var(--brand-text)' : 'var(--text-muted)',
+                      border: '1px solid var(--border)', cursor: 'pointer'
+                    }}>{r.name}</button>
+                  ))}
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: 40, display: 'flex', gap: 12 }}>
+              <button type="button" onClick={onClose} style={{ flex: 1, height: 44, borderRadius: 12, border: '1.5px solid var(--border)', background: 'none', fontWeight: 600, color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
+              <button type="submit" disabled={loading} style={{ flex: 2, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand-500)', fontWeight: 600, color: 'var(--brand-text)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {loading ? <Spinner /> : 'Create User'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
     </div>
   );
 }

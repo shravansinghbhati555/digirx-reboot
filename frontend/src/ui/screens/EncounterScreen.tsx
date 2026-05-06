@@ -26,11 +26,11 @@ type Patient = { _id: string; fullName: string; gender?: string; dob?: string; p
 type RxItem = { id: number; med: string; dose: string; freq: string; dur: string; note: string };
 
 const VITAL_FIELDS: { key: string; label: string; unit: string }[] = [
-  { key: 'bp',     label: 'BP',     unit: 'mmHg' },
-  { key: 'spo2',   label: 'SpO2',   unit: '%' },
-  { key: 'temp',   label: 'Temp',   unit: '°F' },
-  { key: 'pulse',  label: 'Pulse',  unit: 'bpm' },
-  { key: 'rr',     label: 'RR',     unit: '/min' },
+  { key: 'bp', label: 'BP', unit: 'mmHg' },
+  { key: 'spo2', label: 'SpO2', unit: '%' },
+  { key: 'temp', label: 'Temp', unit: '°F' },
+  { key: 'pulse', label: 'Pulse', unit: 'bpm' },
+  { key: 'rr', label: 'RR', unit: '/min' },
   { key: 'weight', label: 'Weight', unit: 'kg' },
 ];
 
@@ -309,11 +309,67 @@ function EncounterEditor({
   const diags = diagnosis.split('|').map((s) => s.trim()).filter(Boolean);
   const [rx, setRx] = useState<RxItem[]>([{ id: 1, med: '', dose: '', freq: '', dur: '', note: '' }]);
   const nextRxId = useRef(2);
+  const [rxLoaded, setRxLoaded] = useState(false);
+  const [branchInfo, setBranchInfo] = useState<any>(null);
+  const [doctorInfo, setDoctorInfo] = useState<any>(null);
+
+  useEffect(() => {
+    const promises = [];
+    if (ctx.branchId) {
+      promises.push(
+        apiGet<any>(ctx, `/clinics/${ctx.clinicId}/branches/${ctx.branchId}`)
+          .then(data => {
+            console.log("BRANCH FETCHED", data);
+            setBranchInfo(data);
+          })
+      );
+    }
+    promises.push(
+      apiGet<any>(ctx, '/me')
+        .then(data => {
+          console.log("DOCTOR FETCHED", data);
+          setDoctorInfo(data);
+        })
+    );
+
+    Promise.all(promises).catch(err => console.error("FETCH ERROR", err));
+  }, [ctx.clinicId, ctx.branchId]);
+
+  const [prescriptionId, setPrescriptionId] = useState<string | null>(null);
+  const [sharing, setSharing] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [showSign, setShowSign] = useState(false);
   const [signing, setSigning] = useState(false);
   const [justSigned, setJustSigned] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Load existing prescription items when the encounter opens
+  useEffect(() => {
+    let cancelled = false;
+    apiGet<{ _id: string; items: Array<{ customName?: string; dosage?: string; frequency?: string; duration?: string; instructions?: string }> } | null>(
+      ctx, `/encounters/${encounter._id}/prescriptions`
+    ).then((res) => {
+      if (cancelled) return;
+      if (res) {
+        setPrescriptionId(res._id);
+        if (Array.isArray(res.items) && res.items.length > 0) {
+          const loaded: RxItem[] = res.items.map((it, i) => ({
+            id: i + 1,
+            med: it.customName ?? '',
+            dose: it.dosage ?? '',
+            freq: it.frequency ?? '',
+            dur: it.duration ?? '',
+            note: it.instructions ?? '',
+          }));
+          nextRxId.current = loaded.length + 1;
+          setRx(loaded);
+        }
+      }
+      setRxLoaded(true);
+    }).catch(() => setRxLoaded(true));
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [encounter._id]);
 
   function addDiag() {
     const v = diagInput.trim();
@@ -332,13 +388,30 @@ function EncounterEditor({
     try {
       const cleanVitals: Record<string, string> = {};
       Object.entries(vitals).forEach(([k, v]) => { if (v) cleanVitals[k] = v; });
-      const updated = await apiPatch<Encounter>(ctx, `/encounters/${encounter._id}`, {
-        chiefComplaint: complaint || undefined,
-        diagnosis: diagnosis || undefined,
-        notes: notes || undefined,
-        vitals: Object.keys(cleanVitals).length ? cleanVitals : undefined,
-        followUpAt: followUp ? new Date(followUp).toISOString() : undefined,
-      });
+      const [updated] = await Promise.all([
+        apiPatch<Encounter>(ctx, `/encounters/${encounter._id}`, {
+          chiefComplaint: complaint || undefined,
+          diagnosis: diagnosis || undefined,
+          notes: notes || undefined,
+          vitals: Object.keys(cleanVitals).length ? cleanVitals : undefined,
+          followUpAt: followUp ? new Date(followUp).toISOString() : undefined,
+        }),
+        // Persist medicine rows on every draft save so they survive navigation
+        (async () => {
+          const filled = rx.filter((r) => r.med.trim());
+          if (filled.length > 0) {
+            await apiPatch(ctx, `/encounters/${encounter._id}/prescriptions`, {
+              items: filled.map((r) => ({
+                customName: r.med,
+                dosage: r.dose || undefined,
+                frequency: r.freq || undefined,
+                duration: r.dur || undefined,
+                instructions: r.note || undefined,
+              })),
+            });
+          }
+        })(),
+      ]);
       onChanged(updated);
       toast('Draft saved', 'success');
     } catch (e) {
@@ -356,7 +429,7 @@ function EncounterEditor({
       // Save Rx items as a prescription if any are filled
       const filled = rx.filter((r) => r.med.trim());
       if (filled.length > 0) {
-        await apiPost(ctx, `/encounters/${encounter._id}/prescriptions`, {
+        const res = await apiPost<{ _id: string }>(ctx, `/encounters/${encounter._id}/prescriptions`, {
           items: filled.map((r) => ({
             customName: r.med,
             dosage: r.dose || undefined,
@@ -365,6 +438,7 @@ function EncounterEditor({
             instructions: r.note || undefined,
           })),
         });
+        setPrescriptionId(res._id);
       }
       const signedEnc = await apiPost<Encounter>(ctx, `/encounters/${encounter._id}/sign`, {});
       onChanged(signedEnc);
@@ -376,6 +450,23 @@ function EncounterEditor({
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSigning(false);
+    }
+  }
+
+  async function shareOnWhatsApp() {
+    if (!prescriptionId) return;
+    setSharing(true);
+    try {
+      const { shareToken } = await apiPost<{ shareToken: string }>(ctx, `/prescriptions/${prescriptionId}/share`, {
+        expiresInSeconds: 7 * 24 * 60 * 60, // 7 days
+      });
+      const shareUrl = `${ctx.apiBaseUrl}/share/prescriptions/${shareToken}/pdf`;
+      const text = encodeURIComponent(`Hi ${patient?.fullName ?? 'Patient'}, your prescription is ready. You can view it here: ${shareUrl}`);
+      window.open(`https://wa.me/${patient?.phones?.[0]?.replace(/\D/g, '') || ''}?text=${text}`, '_blank');
+    } catch (e) {
+      toast('Could not generate sharing link', 'error');
+    } finally {
+      setSharing(false);
     }
   }
 
@@ -470,7 +561,60 @@ function EncounterEditor({
             <span style={{ fontSize: 13, color: 'var(--success-500)', fontWeight: 600 }}>
               Signed by {signerLabel(encounter, ctx.fullName ?? ctx.email)} · {formatSignedAt(encounter.signedAt ?? encounter.updatedAt)}
             </span>
-            <span style={{ marginLeft: 'auto' }}><StatusPill status="signed" small /></span>
+            <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+              <button
+                disabled={!branchInfo || !doctorInfo}
+                onClick={() => printPrescription({
+                  clinic: {
+                    name: ctx.clinicName ?? 'Clinic',
+                    branchName: branchInfo?.name ?? ctx.branchName,
+                    address: branchInfo?.addressLine,
+                    fullAddress: branchInfo?.addressLine,
+                    phone: branchInfo?.phone,
+                    doctorQuals: doctorInfo?.user?.qualifications,
+                    doctorReg: doctorInfo?.user?.registrationNumber,
+                  },
+                  doctor: { name: ctx.fullName, email: ctx.email },
+                  patient,
+                  vitals,
+                  complaint,
+                  diagnosis: diags.join(' | '),
+                  rx,
+                  notes,
+                  followUp,
+                  encounter,
+                })}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 6,
+                  height: 32, padding: '0 14px',
+                  background: 'var(--brand-500)',
+                  border: '1.5px solid var(--brand-500)',
+                  borderRadius: 8,
+                  color: '#ffffffff',
+                  fontSize: 12, fontWeight: 600,
+                  cursor: (!branchInfo || !doctorInfo) ? 'wait' : 'pointer',
+                  opacity: (!branchInfo || !doctorInfo) ? 0.6 : 1
+                }}>
+                {(!branchInfo || !doctorInfo) ? <><Spinner size={12} /> Loading...</> : <><Icon name="printer" size={13} /> Print</>}
+              </button>
+              <button
+                onClick={shareOnWhatsApp}
+                disabled={sharing || !prescriptionId}
+                style={{
+                  height: 32, width: 36, padding: 0,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  background: 'rgba(37,211,102,0.1)',
+                  border: '1.5px solid rgba(37,211,102,0.3)',
+                  borderRadius: 8,
+                  color: '#25D366',
+                  fontSize: 12, fontWeight: 600,
+                  cursor: 'pointer',
+                  opacity: (sharing || !prescriptionId) ? 0.6 : 1
+                }}>
+                {sharing ? <Spinner size={13} /> : <Icon name="share" size={13} />}
+              </button>
+              <StatusPill status="signed" small />
+            </span>
           </div>
         )}
 
@@ -521,48 +665,54 @@ function EncounterEditor({
           </Section>
 
           <Section title="Prescription" icon="pill" defaultOpen>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div style={{ display: 'flex', gap: 8, padding: '0 12px 6px', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                <span style={{ flex: '0 0 30%' }}>Medicine</span>
-                <span style={{ flex: '0 0 16%' }}>Dose</span>
-                <span style={{ flex: '0 0 14%' }}>Freq</span>
-                <span style={{ flex: '0 0 14%' }}>Duration</span>
-                <span style={{ flex: 1 }}>Instructions</span>
+            {!rxLoaded ? (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', color: 'var(--text-subtle)', fontSize: 12 }}>
+                <Spinner size={14} /> Loading medicines…
               </div>
-              {rx.map((item) => (
-                <div key={item.id} style={{ display: 'flex', gap: 8, padding: '10px 12px', background: 'var(--surface-muted)', borderRadius: 10, border: '1px solid var(--border)', alignItems: 'flex-start' }}>
-                  <div style={{ flex: '0 0 30%' }}>
-                    <input value={item.med} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, med: e.target.value } : x))} disabled={signed} placeholder="Medicine name" style={rxInputStyle} />
-                  </div>
-                  <div style={{ flex: '0 0 16%' }}>
-                    <input value={item.dose} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dose: e.target.value } : x))} disabled={signed} placeholder="1 tab" style={rxInputStyle} />
-                  </div>
-                  <div style={{ flex: '0 0 14%' }}>
-                    <select value={item.freq} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, freq: e.target.value } : x))} disabled={signed} style={{ ...rxInputStyle, cursor: 'pointer' }}>
-                      <option value="">Freq</option>
-                      <option>OD</option><option>BD</option><option>TDS</option><option>QID</option><option>SOS</option>
-                    </select>
-                  </div>
-                  <div style={{ flex: '0 0 14%' }}>
-                    <input value={item.dur} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dur: e.target.value } : x))} disabled={signed} placeholder="7 days" style={rxInputStyle} />
-                  </div>
-                  <div style={{ flex: 1 }}>
-                    <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} disabled={signed} placeholder="Instructions" style={rxInputStyle} />
-                  </div>
-                  {!signed && (
-                    <button onClick={() => setRx((r) => r.filter((x) => x.id !== item.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-500)', padding: '6px 4px', display: 'flex', marginTop: 1 }}>
-                      <Icon name="trash" size={14} />
-                    </button>
-                  )}
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, padding: '0 12px 6px', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                  <span style={{ flex: '0 0 30%' }}>Medicine</span>
+                  <span style={{ flex: '0 0 16%' }}>Dose</span>
+                  <span style={{ flex: '0 0 14%' }}>Freq</span>
+                  <span style={{ flex: '0 0 14%' }}>Duration</span>
+                  <span style={{ flex: 1 }}>Instructions</span>
                 </div>
-              ))}
-              {!signed && (
-                <button onClick={() => setRx((r) => [...r, { id: nextRxId.current++, med: '', dose: '', freq: '', dur: '', note: '' }])}
-                  style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', background: 'none', border: '1.5px dashed var(--border)', borderRadius: 9, color: 'var(--text-subtle)', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
-                  <Icon name="plus" size={13} strokeWidth={2.5} /> Add medicine
-                </button>
-              )}
-            </div>
+                {rx.map((item) => (
+                  <div key={item.id} style={{ display: 'flex', gap: 8, padding: '10px 12px', background: 'var(--surface-muted)', borderRadius: 10, border: '1px solid var(--border)', alignItems: 'flex-start' }}>
+                    <div style={{ flex: '0 0 30%' }}>
+                      <input value={item.med} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, med: e.target.value } : x))} disabled={signed} placeholder="Medicine name" style={rxInputStyle} />
+                    </div>
+                    <div style={{ flex: '0 0 16%' }}>
+                      <input value={item.dose} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dose: e.target.value } : x))} disabled={signed} placeholder="1 tab" style={rxInputStyle} />
+                    </div>
+                    <div style={{ flex: '0 0 14%' }}>
+                      <select value={item.freq} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, freq: e.target.value } : x))} disabled={signed} style={{ ...rxInputStyle, cursor: 'pointer' }}>
+                        <option value="">Freq</option>
+                        <option>OD</option><option>BD</option><option>TDS</option><option>QID</option><option>SOS</option>
+                      </select>
+                    </div>
+                    <div style={{ flex: '0 0 14%' }}>
+                      <input value={item.dur} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dur: e.target.value } : x))} disabled={signed} placeholder="7 days" style={rxInputStyle} />
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} disabled={signed} placeholder="Instructions" style={rxInputStyle} />
+                    </div>
+                    {!signed && (
+                      <button onClick={() => setRx((r) => r.filter((x) => x.id !== item.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-500)', padding: '6px 4px', display: 'flex', marginTop: 1 }}>
+                        <Icon name="trash" size={14} />
+                      </button>
+                    )}
+                  </div>
+                ))}
+                {!signed && (
+                  <button onClick={() => setRx((r) => [...r, { id: nextRxId.current++, med: '', dose: '', freq: '', dur: '', note: '' }])}
+                    style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', background: 'none', border: '1.5px dashed var(--border)', borderRadius: 9, color: 'var(--text-subtle)', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
+                    <Icon name="plus" size={13} strokeWidth={2.5} /> Add medicine
+                  </button>
+                )}
+              </div>
+            )}
           </Section>
 
           <Section title="Follow-up" icon="calendar">
@@ -584,21 +734,56 @@ function EncounterEditor({
 
         <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', gap: 10, alignItems: 'center' }}>
           <span style={{ flex: 1, fontSize: 12, color: 'var(--text-subtle)' }}>{patient?.fullName} · {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-          <button onClick={() => printPrescription({
-            clinic: { name: ctx.clinicName ?? 'Clinic', branchName: ctx.branchName },
-            doctor: { name: ctx.fullName, email: ctx.email },
-            patient,
-            vitals,
-            complaint,
-            diagnosis,
-            rx,
-            notes,
-            followUp,
-            encounter,
-          })}
-            style={{ height: 40, padding: '0 18px', background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
-            <Icon name="printer" size={14} /> Print prescription
+          <button
+            disabled={!branchInfo || !doctorInfo}
+            onClick={() => printPrescription({
+              clinic: {
+                name: ctx.clinicName ?? 'Clinic',
+                branchName: branchInfo?.name ?? ctx.branchName,
+                address: branchInfo?.addressLine,
+                fullAddress: branchInfo?.addressLine,
+                phone: branchInfo?.phone,
+                doctorQuals: doctorInfo?.user?.qualifications,
+                doctorReg: doctorInfo?.user?.registrationNumber,
+              },
+              doctor: { name: ctx.fullName, email: ctx.email },
+              patient,
+              vitals,
+              complaint,
+              diagnosis: diags.join(' | '),
+              rx,
+              notes,
+              followUp,
+              encounter,
+            })}
+            style={{
+              height: 40, padding: '0 18px', background: 'none',
+              border: '1.5px solid var(--border)', borderRadius: 10,
+              color: 'var(--text-muted)', fontSize: 13, fontWeight: 500,
+              cursor: (!branchInfo || !doctorInfo) ? 'wait' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 6,
+              opacity: (!branchInfo || !doctorInfo) ? 0.6 : 1
+            }}>
+            {(!branchInfo || !doctorInfo) ? <><Spinner size={14} /> Loading details...</> : <><Icon name="printer" size={14} /> Print</>}
           </button>
+          {signed && (
+            <button
+              onClick={shareOnWhatsApp}
+              disabled={sharing || !prescriptionId}
+              style={{
+                height: 40, width: 44, padding: 0,
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                background: 'rgba(37,211,102,0.1)',
+                border: '1.5px solid rgba(37,211,102,0.3)',
+                borderRadius: 10,
+                color: '#25D366',
+                fontSize: 13, fontWeight: 600,
+                cursor: 'pointer',
+                opacity: (sharing || !prescriptionId) ? 0.6 : 1
+              }}>
+              {sharing ? <Spinner size={14} /> : <Icon name="share" size={14} />}
+            </button>
+          )}
           {!signed && (
             <>
               <button onClick={saveDraft} disabled={savingDraft}
@@ -731,7 +916,15 @@ function escapeHtml(s: string): string {
 }
 
 function printPrescription(input: {
-  clinic: { name: string; branchName?: string };
+  clinic: {
+    name: string;
+    branchName?: string;
+    address?: string;
+    fullAddress?: string;
+    phone?: string;
+    doctorQuals?: string;
+    doctorReg?: string;
+  };
   doctor: { name?: string; email?: string };
   patient: Patient | null;
   vitals: Record<string, string>;
@@ -742,24 +935,31 @@ function printPrescription(input: {
   followUp: string;
   encounter: Encounter;
 }) {
+  console.log("PRINT DATA", input);
   const { clinic, doctor, patient, vitals, complaint, diagnosis, rx, notes, followUp, encounter } = input;
   const signed = encounter.status === 'SIGNED';
+
+  const doctorName = doctor.name
+    ? doctor.name.toLowerCase().startsWith('dr.')
+      ? doctor.name
+      : `Dr. ${doctor.name}`
+    : 'Doctor';
 
   const age = patient?.dob ? getAge(patient.dob) : null;
   const gender = patient ? genderWord(patient.gender) : '';
   const phone = patient?.phones?.[0] ?? '';
 
   const dateStr = new Date(encounter.visitedAt || Date.now()).toLocaleDateString('en-IN', {
-    day: '2-digit', month: 'short', year: 'numeric',
+    day: '2-digit',
+    month: 'short',
+    year: 'numeric',
   });
-  const signedAtStr = signed
-    ? new Date(encounter.signedAt ?? encounter.updatedAt ?? Date.now()).toLocaleString('en-IN', {
-        day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
-      })
-    : '';
 
   const filledVitals = Object.entries(vitals).filter(([, v]) => !!v && v.trim());
-  const diagnosisList = diagnosis.split('|').map((s) => s.trim()).filter(Boolean);
+  const diagnosisList = diagnosis
+    .split('|')
+    .map((s) => s.trim())
+    .filter(Boolean);
   const filledRx = rx.filter((r) => r.med.trim());
 
   const vitalsHtml = filledVitals.length
@@ -767,14 +967,15 @@ function printPrescription(input: {
          <h2>Vitals</h2>
          <div class="vitals-grid">
            ${filledVitals
-             .map(([k, v]) => {
-               const meta = VITAL_FIELDS.find((f) => f.key === k);
-               return `<div class="vital">
+      .map(([k, v]) => {
+        const meta = VITAL_FIELDS.find((f) => f.key === k);
+        return `<div class="vital">
                          <div class="label">${escapeHtml(meta?.label ?? k.toUpperCase())}</div>
-                         <div class="value">${escapeHtml(v)} <span class="unit">${escapeHtml(meta?.unit ?? '')}</span></div>
+                         <div class="value">${escapeHtml(v)}</div>
+                         <div class="unit">${escapeHtml(meta?.unit ?? '')}</div>
                        </div>`;
-             })
-             .join('')}
+      })
+      .join('')}
          </div>
        </section>`
     : '';
@@ -797,50 +998,56 @@ function printPrescription(input: {
 
   const rxHtml = filledRx.length
     ? `<section class="block rx-section">
-         <h2>℞ Prescription</h2>
+         <h2 style="color:#6366F1; font-size: 15px; margin-bottom: 16px;">℞ Prescription</h2>
          <table class="rx-table">
            <thead>
              <tr>
-               <th style="width:8%;">#</th>
-               <th style="width:30%;">Medicine</th>
-               <th style="width:15%;">Dose</th>
-               <th style="width:12%;">Frequency</th>
-               <th style="width:12%;">Duration</th>
+               <th>#</th>
+               <th>Medicine</th>
+               <th>Dose</th>
+               <th>Frequency</th>
+               <th>Duration</th>
                <th>Instructions</th>
              </tr>
            </thead>
            <tbody>
              ${filledRx
-               .map(
-                 (r, i) => `<tr>
+      .map(
+        (r, i) => `<tr>
                    <td class="num">${i + 1}</td>
                    <td class="med">${escapeHtml(r.med)}</td>
                    <td>${escapeHtml(r.dose || '—')}</td>
                    <td>${escapeHtml(r.freq || '—')}</td>
                    <td>${escapeHtml(r.dur || '—')}</td>
-                   <td>${escapeHtml(r.note || '—')}</td>
+                   <td style="font-size: 12px; color: #64748b;">${escapeHtml(r.note || '—')}</td>
                  </tr>`,
-               )
-               .join('')}
+      )
+      .join('')}
            </tbody>
          </table>
        </section>`
     : `<section class="block">
-         <h2>℞ Prescription</h2>
+         <h2>Prescription (℞)</h2>
          <p class="empty">No medicines prescribed.</p>
        </section>`;
 
   const followUpHtml = followUp
     ? `<section class="block">
          <h2>Follow-up</h2>
-         <p>${escapeHtml(new Date(followUp).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' }))}</p>
+         <p>${escapeHtml(
+      new Date(followUp).toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'long',
+        year: 'numeric',
+      }),
+    )}</p>
        </section>`
     : '';
 
   const notesHtml = notes.trim()
     ? `<section class="block">
          <h2>Notes</h2>
-         <p class="notes">${escapeHtml(notes.trim())}</p>
+         <p style="white-space: pre-wrap;">${escapeHtml(notes.trim())}</p>
        </section>`
     : '';
 
@@ -850,260 +1057,255 @@ function printPrescription(input: {
 <meta charset="utf-8" />
 <title>Prescription — ${escapeHtml(patient?.fullName ?? 'Patient')}</title>
 <style>
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
-  body {
-    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    color: #111827;
-    background: #f8fafc;
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    color: #1a1a1a;
+    background: #fff;
     font-size: 13px;
     line-height: 1.5;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
   }
   .page {
-    max-width: 820px;
+    max-width: 794px;
     margin: 0 auto;
-    background: #ffffff;
-    padding: 36px 40px 28px;
-    box-shadow: 0 4px 24px rgba(15, 23, 42, 0.06);
+    background: #fff;
+    padding: 28px 28px 36px;
   }
-  /* ---------- Header ---------- */
+
+  /* ── TOOLBAR ─────────────────────────────── */
+  .toolbar {
+    position: fixed; top: 10px; right: 10px;
+    display: flex; gap: 6px;
+    background: #fff;
+    padding: 6px 8px;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+    z-index: 999;
+  }
+  .toolbar button {
+    border: 1px solid #d1d5db;
+    background: #fff;
+    color: #374151;
+    border-radius: 6px;
+    padding: 6px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: inherit;
+  }
+  .toolbar button.primary {
+    background: #1a56db;
+    border-color: #1a56db;
+    color: #fff;
+  }
+  @media print {
+    @page { margin: 0; }
+    body { background: #fff; }
+    .page { padding: 14mm 16mm; max-width: none; width: 100%; }
+    .toolbar { display: none; }
+    .patient-strip, .vital-box, .chip { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    .rx-table thead { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  }
+
+  /* ── HEADER ──────────────────────────────── */
   .header {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
-    padding-bottom: 18px;
-    border-bottom: 3px solid #6366F1;
-    margin-bottom: 24px;
+    padding-bottom: 14px;
+    border-bottom: 2px solid #1a56db;
+    margin-bottom: 20px;
   }
-  .clinic { display: flex; align-items: center; gap: 12px; }
-  .clinic .logo {
-    width: 48px; height: 48px; border-radius: 10px;
-    background: linear-gradient(135deg, #6366F1 0%, #818cf8 100%);
-    display: flex; align-items: center; justify-content: center;
-    color: #ffffff; font-weight: 800; font-size: 22px;
-    font-family: 'Manrope', sans-serif;
-    box-shadow: 0 6px 18px rgba(99, 102, 241, 0.25);
-  }
-  .clinic .name {
-    font-family: 'Manrope', sans-serif;
-    font-size: 22px;
-    font-weight: 800;
-    color: #111827;
-    letter-spacing: -0.5px;
-    line-height: 1.1;
-  }
-  .clinic .branch {
-    font-size: 12px;
-    color: #6b7280;
-    margin-top: 2px;
-  }
-  .doctor-info {
-    text-align: right;
-    font-size: 12px;
-    color: #6b7280;
-  }
-  .doctor-info .name {
-    color: #111827;
+  .clinic-name {
+    font-size: 28px;
     font-weight: 700;
+    color: #1a56db;
+    line-height: 1.1;
+    margin-bottom: 6px;
+  }
+  .clinic-addr {
+    font-size: 12px;
+    color: #6b7280;
+    font-weight: 400;
+    line-height: 1.7;
+  }
+  .doctor-block {
+    text-align: right;
+  }
+  .doctor-block .dr-name {
     font-size: 14px;
+    font-weight: 700;
+    color: #1a1a1a;
     display: block;
     margin-bottom: 2px;
   }
-  .doctor-info .creds { font-size: 11px; }
+  .doctor-block .dr-cred {
+    font-size: 11.5px;
+    color: #6b7280;
+    font-weight: 400;
+    display: block;
+    line-height: 1.6;
+  }
+  .doctor-block .dr-date {
+    font-size: 13px;
+    font-weight: 700;
+    color: #1a56db;
+    display: block;
+    margin-top: 6px;
+  }
 
-  /* ---------- Patient strip ---------- */
+  /* ── PATIENT STRIP ───────────────────────── */
   .patient-strip {
     display: grid;
-    grid-template-columns: 2.5fr 1fr 1.4fr 1fr;
-    gap: 14px;
-    background: linear-gradient(135deg, #eef2ff 0%, #f5f3ff 100%);
-    border: 1px solid #c7d2fe;
-    border-radius: 10px;
-    padding: 14px 18px;
+    grid-template-columns: 1.4fr 1.2fr 0.7fr 1.2fr;
+    background: #f3f4f6;
+    border: 1px solid #e5e7eb;
+    border-radius: 6px;
+    padding: 12px 20px;
     margin-bottom: 22px;
+    gap: 0;
   }
-  .patient-strip .field { display: flex; flex-direction: column; }
-  .patient-strip .label {
-    font-size: 9.5px;
-    font-weight: 700;
-    color: #6366F1;
-    text-transform: uppercase;
-    letter-spacing: 0.07em;
-    margin-bottom: 3px;
+  .ps-field {
+    padding: 4px 12px 4px 0;
   }
-  .patient-strip .value {
+  .ps-field:first-child { padding-left: 0; }
+  .ps-value {
     font-size: 14px;
-    font-weight: 600;
-    color: #111827;
+    font-weight: 700;
+    color: #1a1a1a;
+    display: block;
+    margin-bottom: 2px;
+  }
+  .ps-label {
+    font-size: 11px;
+    color: #9ca3af;
+    font-weight: 400;
+    display: block;
   }
 
-  /* ---------- Sections ---------- */
-  .block { margin-bottom: 18px; }
-  .block h2 {
+  /* ── SECTION HEADING ─────────────────────── */
+  .section-title {
     font-size: 11px;
     font-weight: 700;
-    color: #6366F1;
+    color: #1a56db;
     text-transform: uppercase;
-    letter-spacing: 0.08em;
-    margin: 0 0 8px 0;
-    padding-bottom: 6px;
-    border-bottom: 1px solid #e5e7eb;
+    letter-spacing: 0.1em;
+    margin: 0 0 10px 0;
   }
-  .block p {
-    margin: 0;
-    font-size: 13px;
-    line-height: 1.6;
-    color: #1f2937;
-  }
-  .block p.empty { color: #9ca3af; font-style: italic; }
-  .block p.notes { white-space: pre-wrap; }
+  .section { margin-bottom: 20px; }
 
-  /* ---------- Vitals ---------- */
+  /* ── VITALS ──────────────────────────────── */
   .vitals-grid {
     display: grid;
     grid-template-columns: repeat(6, 1fr);
     gap: 8px;
   }
-  .vital {
+  .vital-box {
     background: #f9fafb;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
+    border: 1px solid #e9ebee;
+    border-radius: 6px;
     padding: 10px 6px;
     text-align: center;
   }
-  .vital .label {
-    font-size: 9px;
-    font-weight: 700;
-    color: #6b7280;
+  .vital-lbl {
+    font-size: 9.5px;
+    font-weight: 600;
+    color: #9ca3af;
     text-transform: uppercase;
     letter-spacing: 0.06em;
-    margin-bottom: 4px;
+    display: block;
+    margin-bottom: 5px;
   }
-  .vital .value {
-    font-size: 14px;
+  .vital-val {
+    font-size: 17px;
     font-weight: 700;
-    color: #111827;
-    font-variant-numeric: tabular-nums;
+    color: #1a1a1a;
+    line-height: 1;
   }
-  .vital .unit { font-size: 9px; color: #6b7280; font-weight: 500; }
 
-  /* ---------- Diagnosis chips ---------- */
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+  /* ── DIAGNOSIS ───────────────────────────── */
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; }
   .chip {
-    display: inline-block;
-    padding: 4px 11px;
-    border-radius: 100px;
-    background: #eef2ff;
-    border: 1px solid #c7d2fe;
-    color: #4338ca;
+    padding: 5px 14px;
+    border-radius: 20px;
+    background: #e8eefb;
+    border: 1px solid #c3d2f5;
+    color: #1a56db;
     font-size: 12px;
     font-weight: 500;
   }
 
-  /* ---------- Rx table ---------- */
-  .rx-section h2 { color: #6366F1; font-size: 13px; }
+  /* ── RX TABLE ────────────────────────────── */
   .rx-table {
     width: 100%;
     border-collapse: collapse;
-    border: 1px solid #e5e7eb;
-    border-radius: 8px;
-    overflow: hidden;
+    font-size: 13px;
   }
-  .rx-table thead { background: linear-gradient(135deg, #6366F1 0%, #818cf8 100%); }
+  .rx-table thead tr {
+    background: #f3f4f6;
+  }
   .rx-table th {
-    color: #ffffff;
-    font-size: 10.5px;
-    font-weight: 700;
+    font-size: 11px;
+    font-weight: 600;
+    color: #6b7280;
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.07em;
     padding: 9px 12px;
     text-align: left;
+    border-bottom: 1px solid #e5e7eb;
   }
   .rx-table td {
-    padding: 11px 12px;
-    border-top: 1px solid #f1f5f9;
-    font-size: 12.5px;
-    color: #1f2937;
+    padding: 12px 12px;
+    border-bottom: 1px solid #f0f0f0;
+    color: #1a1a1a;
+    font-size: 13px;
     vertical-align: top;
   }
-  .rx-table tbody tr:nth-child(even) { background: #fafafa; }
-  .rx-table .num {
-    color: #6366F1;
-    font-weight: 700;
-    text-align: center;
+  .rx-table td.med-name {
+    font-weight: 600;
+    color: #1a1a1a;
   }
-  .rx-table .med { font-weight: 600; color: #111827; }
 
-  /* ---------- Footer ---------- */
+  /* ── NOTES ───────────────────────────────── */
+  .notes-text {
+    font-size: 13px;
+    color: #374151;
+    white-space: pre-wrap;
+    line-height: 1.6;
+  }
+
+  /* ── FOOTER ──────────────────────────────── */
   .foot {
-    margin-top: 28px;
-    padding-top: 18px;
-    border-top: 2px solid #6366F1;
+    margin-top: 48px;
     display: flex;
     justify-content: space-between;
     align-items: flex-end;
   }
-  .foot .meta { font-size: 11px; color: #6b7280; }
-  .badge {
-    display: inline-block;
-    padding: 3px 10px;
-    border-radius: 100px;
-    font-size: 9.5px;
-    font-weight: 700;
-    text-transform: uppercase;
-    letter-spacing: 0.06em;
+  .foot-meta {
+    font-size: 10px;
+    color: #9ca3af;
+    line-height: 1.7;
   }
-  .badge.signed { background: #dcfce7; color: #15803d; border: 1px solid #86efac; }
-  .badge.draft  { background: #fef3c7; color: #b45309; border: 1px solid #fde68a; }
-  .signature { text-align: right; }
-  .signature .line {
-    border-bottom: 1.5px solid #111827;
+  .signature-block {
+    text-align: right;
+    min-width: 200px;
+  }
+  .sig-line {
+    border-bottom: 1.5px solid #1a1a1a;
     margin-bottom: 6px;
-    padding-bottom: 24px;
-    min-width: 220px;
+    padding-bottom: 0;
+    height: 1px;
+    width: 100%;
   }
-  .signature .who {
-    font-size: 12px;
+  .sig-name {
+    font-size: 13px;
     font-weight: 700;
-    color: #111827;
-  }
-  .signature .when {
-    font-size: 10.5px;
-    color: #6b7280;
-    margin-top: 2px;
-  }
-
-  .toolbar {
-    position: fixed; top: 12px; right: 12px;
-    display: flex; gap: 8px;
-    background: #ffffff;
-    padding: 8px 10px;
-    border: 1px solid #e5e7eb;
-    border-radius: 10px;
-    box-shadow: 0 6px 20px rgba(15, 23, 42, 0.08);
-  }
-  .toolbar button {
-    border: 1px solid #e5e7eb;
-    background: #ffffff;
-    color: #374151;
-    border-radius: 8px;
-    padding: 6px 12px;
-    font-size: 12px;
-    font-weight: 600;
-    cursor: pointer;
-  }
-  .toolbar button.primary {
-    background: #6366F1;
-    border-color: #6366F1;
-    color: #ffffff;
-  }
-  @media print {
-    body { background: #ffffff; }
-    .page { box-shadow: none; padding: 12mm; max-width: none; }
-    .toolbar { display: none; }
-    .rx-table thead { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .rx-table tbody tr:nth-child(even) { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
-    .patient-strip, .vital, .chip { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+    color: #1a1a1a;
+    text-align: right;
   }
 </style>
 </head>
@@ -1112,58 +1314,125 @@ function printPrescription(input: {
     <button class="primary" onclick="window.print()">Print</button>
     <button onclick="window.close()">Close</button>
   </div>
+
   <main class="page">
+
     <header class="header">
-      <div class="clinic">
-        <div class="logo">${escapeHtml((clinic.name || 'C').slice(0, 1).toUpperCase())}</div>
-        <div>
-          <div class="name">${escapeHtml(clinic.name || 'Clinic')}</div>
-          ${clinic.branchName ? `<div class="branch">${escapeHtml(clinic.branchName)}</div>` : ''}
+      <div>
+        <div class="clinic-name">${escapeHtml(clinic.name || 'DigiRx')}</div>
+        <div class="clinic-addr">
+          ${escapeHtml(clinic.branchName || 'Main Branch')}<br>
+          ${clinic.fullAddress || clinic.address || ''} ${clinic.phone ? ' · ' + escapeHtml(clinic.phone) : ''}
         </div>
       </div>
-      <div class="doctor-info">
-        <span class="name">${escapeHtml(doctor.name ? `Dr. ${doctor.name}` : 'Doctor')}</span>
-        ${doctor.email ? `<div class="creds">${escapeHtml(doctor.email)}</div>` : ''}
+      <div class="doctor-block">
+        <span class="dr-name">${escapeHtml(doctorName)}</span>
+        <span class="dr-cred">${escapeHtml(clinic.doctorQuals || '')}</span>
+        <span class="dr-cred">${clinic.doctorReg ? 'Reg No: ' + escapeHtml(clinic.doctorReg) : ''}</span>
+        <span class="dr-date">${escapeHtml(dateStr)}</span>
       </div>
     </header>
 
+    <!-- PATIENT STRIP -->
     <section class="patient-strip">
-      <div class="field">
-        <span class="label">Patient</span>
-        <span class="value">${escapeHtml(patient?.fullName ?? '—')}</span>
+      <div class="ps-field">
+        <span class="ps-value">${escapeHtml(patient?.fullName ?? '—')}</span>
+        <span class="ps-label">Patient</span>
       </div>
-      <div class="field">
-        <span class="label">Age / Sex</span>
-        <span class="value">${age != null ? `${age}y` : '—'} ${gender ? '· ' + escapeHtml(gender) : ''}</span>
+      <div class="ps-field">
+        <span class="ps-value">${gender ? escapeHtml(gender) : '—'} · ${age != null ? `${age} yrs` : '—'}</span>
+        <span class="ps-label">Demographics</span>
       </div>
-      <div class="field">
-        <span class="label">Phone</span>
-        <span class="value">${escapeHtml(phone || '—')}</span>
+      <div class="ps-field">
+        <span class="ps-value">B+</span>
+        <span class="ps-label">Blood group</span>
       </div>
-      <div class="field">
-        <span class="label">Date</span>
-        <span class="value">${escapeHtml(dateStr)}</span>
+      <div class="ps-field">
+        <span class="ps-value">${escapeHtml(phone || '—')}</span>
+        <span class="ps-label">Phone</span>
       </div>
     </section>
 
-    ${vitalsHtml}
-    ${complaintHtml}
-    ${diagnosisHtml}
-    ${rxHtml}
-    ${followUpHtml}
-    ${notesHtml}
+    <!-- VITALS -->
+    ${filledVitals.length ? `
+    <section class="section">
+      <div class="section-title">Vitals</div>
+      <div class="vitals-grid">
+        ${filledVitals.map(([k, v]) => {
+    const meta = VITAL_FIELDS.find((f) => f.key === k);
+    return `<div class="vital-box">
+            <span class="vital-lbl">${escapeHtml(meta?.label ?? k.toUpperCase())}</span>
+            <span class="vital-val">${escapeHtml(v)}${meta?.unit ? `<span style="font-size:11px;font-weight:500;color:#6b7280;">${escapeHtml(meta.unit)}</span>` : ''}</span>
+          </div>`;
+  }).join('')}
+      </div>
+    </section>` : ''}
 
+    <!-- CHIEF COMPLAINT -->
+    ${complaint.trim() ? `
+    <section class="section">
+      <div class="section-title">Chief Complaint</div>
+      <p style="font-size:13px;color:#374151;">${escapeHtml(complaint.trim())}</p>
+    </section>` : ''}
+
+    <!-- DIAGNOSIS -->
+    ${diagnosisList.length ? `
+    <section class="section">
+      <div class="section-title">Diagnosis</div>
+      <div class="chips">${diagnosisList.map((d) => `<span class="chip">${escapeHtml(d)}</span>`).join('')}</div>
+    </section>` : ''}
+
+    <!-- PRESCRIPTION -->
+    ${filledRx.length ? `
+    <section class="section">
+      <div class="section-title">Prescription (&#8478;)</div>
+      <table class="rx-table">
+        <thead>
+          <tr>
+            <th style="width:32%;">Medicine</th>
+            <th style="width:14%;">Dose</th>
+            <th style="width:16%;">Frequency</th>
+            <th style="width:16%;">Duration</th>
+            <th>Instructions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${filledRx.map((r) => `
+          <tr>
+            <td class="med-name">${escapeHtml(r.med)}</td>
+            <td>${escapeHtml(r.dose || '—')}</td>
+            <td>${escapeHtml(r.freq || '—')}</td>
+            <td>${escapeHtml(r.dur || '—')}</td>
+            <td style="color:#374151;">${escapeHtml(r.note || '—')}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </section>` : ''}
+
+    <!-- FOLLOW-UP -->
+    ${followUp ? `
+    <section class="section">
+      <div class="section-title">Follow-up</div>
+      <p style="font-size:13px;color:#374151;">${escapeHtml(new Date(followUp).toLocaleDateString('en-IN', { day: '2-digit', month: 'long', year: 'numeric' }))}</p>
+    </section>` : ''}
+
+    <!-- NOTES -->
+    ${notes.trim() ? `
+    <section class="section">
+      <div class="section-title">Notes</div>
+      <p class="notes-text">${escapeHtml(notes.trim())}</p>
+    </section>` : ''}
+
+    <!-- FOOTER -->
     <footer class="foot">
-      <div class="meta">
-        ${signed
-          ? `<span class="badge signed">Signed</span> &nbsp; ${escapeHtml(signedAtStr)}`
-          : `<span class="badge draft">Draft</span> &nbsp; not yet signed`}
-        <div style="margin-top:4px;">Encounter ID: <code style="font-family:monospace;font-size:10.5px;color:#6b7280;">${escapeHtml(encounter._id)}</code></div>
+      <div class="foot-meta">
+        Generated by DigiRx · digirx.in<br>
+        This prescription is valid for 30 days from the date of issue.
+
       </div>
       <div class="signature">
-        <div class="line"></div>
-        <div class="who">${escapeHtml(doctor.name ? `Dr. ${doctor.name}` : 'Doctor')}</div>
-        <div class="when">Signature${signed ? ` · ${escapeHtml(signedAtStr)}` : ''}</div>
+        <div class="line" style="border-bottom: 2.5px solid #0f172a; min-width: 180px;"></div>
+        <div class="who">${escapeHtml(doctorName)}</div>
       </div>
     </footer>
   </main>
