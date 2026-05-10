@@ -5,14 +5,17 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model, Types } from 'mongoose';
+import { Model, Types, QueryFilter } from 'mongoose';
 import { randomBytes } from 'crypto';
 import {
   Document,
   DocumentAccess,
+  DocumentCategory,
   DocumentOwnerType,
+  DocumentStatus,
 } from './schemas/document.schema';
 import { DocumentShare } from './schemas/document-share.schema';
+import { StorageService } from '../storage/storage.service';
 
 const DEFAULT_SHARE_EXPIRY_SECONDS = 7 * 24 * 60 * 60;
 
@@ -22,12 +25,15 @@ export class DocumentsService {
     @InjectModel(Document.name) private readonly docModel: Model<Document>,
     @InjectModel(DocumentShare.name)
     private readonly shareModel: Model<DocumentShare>,
+    private readonly storageService: StorageService,
   ) {}
 
   async createForOwner(input: {
     clinicId: Types.ObjectId;
     ownerType: DocumentOwnerType;
     ownerId: Types.ObjectId;
+    category?: DocumentCategory;
+    ownerName?: string;
     mimeType: string;
     fileName: string;
     sizeBytes: number;
@@ -38,7 +44,57 @@ export class DocumentsService {
     return await this.docModel.create({
       ...input,
       access: input.access ?? DocumentAccess.InternalOnly,
+      status: DocumentStatus.Uploading,
     });
+  }
+
+  async confirmUpload(clinicId: Types.ObjectId, id: string) {
+    const doc = await this.docModel.findOneAndUpdate(
+      { _id: id, clinicId },
+      { $set: { status: DocumentStatus.Available } },
+      { new: true }
+    ).exec();
+    if (!doc) throw new NotFoundException('Document not found');
+    return doc;
+  }
+
+  async listDocuments(
+    clinicId: Types.ObjectId,
+    filters?: { ownerType?: DocumentOwnerType; ownerId?: string; query?: string },
+  ) {
+    const query: QueryFilter<Document> = {
+      clinicId,
+      status: DocumentStatus.Available,
+    };
+    if (filters?.ownerType) query.ownerType = filters.ownerType;
+    if (filters?.ownerId) query.ownerId = new Types.ObjectId(filters.ownerId);
+
+    if (filters?.query) {
+      const regex = { $regex: filters.query, $options: 'i' };
+      query.$or = [{ fileName: regex }, { ownerName: regex }];
+    }
+
+    return await this.docModel
+      .find(query)
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .exec();
+  }
+
+  async deleteDocument(clinicId: Types.ObjectId, id: string) {
+    const doc = await this.docModel.findOne({ _id: id, clinicId }).exec();
+    if (!doc) throw new NotFoundException('Document not found');
+
+    // Delete from storage first
+    try {
+      await this.storageService.deleteObject({ key: doc.storageKey });
+    } catch (e) {
+      console.error(`Failed to delete object from storage: ${doc.storageKey}`, e);
+    }
+
+    // Delete from DB
+    await this.docModel.deleteOne({ _id: doc._id }).exec();
+    return { success: true };
   }
 
   async getById(clinicId: Types.ObjectId, id: string) {

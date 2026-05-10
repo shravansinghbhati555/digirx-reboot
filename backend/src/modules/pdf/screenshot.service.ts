@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { PDFDocument } from 'pdf-lib';
 import puppeteer, { Browser } from 'puppeteer';
 
 @Injectable()
@@ -76,6 +77,26 @@ export class ScreenshotService {
     } finally {
       await page.close();
     }
+  }
+
+  async capturePrescriptionAsPdf(token: string): Promise<Buffer> {
+    const pngBuffer = await this.capturePrescription(token);
+    
+    const pdfDoc = await PDFDocument.create();
+    const pngImage = await pdfDoc.embedPng(pngBuffer);
+    const pngDims = pngImage.scale(1);
+    
+    // Create a page matching the image dimensions
+    const page = pdfDoc.addPage([pngDims.width, pngDims.height]);
+    page.drawImage(pngImage, {
+      x: 0,
+      y: 0,
+      width: pngDims.width,
+      height: pngDims.height,
+    });
+    
+    const pdfBytes = await pdfDoc.save();
+    return Buffer.from(pdfBytes);
   }
 
   async onModuleDestroy() {

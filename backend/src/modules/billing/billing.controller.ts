@@ -26,6 +26,7 @@ import { DocumentsService } from '../documents/documents.service';
 import { DocumentOwnerType } from '../documents/schemas/document.schema';
 import { Patient } from '../patients/schemas/patient.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
+import { Branch } from '../tenancy/schemas/branch.schema';
 import { BillStatus } from './schemas/bill.schema';
 
 @Controller()
@@ -37,6 +38,7 @@ export class BillingController {
     private readonly documents: DocumentsService,
     @InjectModel(Patient.name) private readonly patientModel: Model<Patient>,
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
+    @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
   ) { }
 
   @Post('bills')
@@ -87,6 +89,19 @@ export class BillingController {
     return await this.billing.getBill(req.context!.clinicId, id);
   }
 
+  @Get('bills/context/find')
+  @RequirePermissions(Permission.BillingRead)
+  async getBillByContext(
+    @Req() req: AppRequest,
+    @Query('encounterId') encounterId?: string,
+    @Query('appointmentId') appointmentId?: string,
+  ) {
+    return await this.billing.findByContext(req.context!.clinicId, {
+      encounterId,
+      appointmentId,
+    });
+  }
+
   @Post('bills/:id/payments')
   @RequirePermissions(Permission.BillingWrite)
   async addPayment(
@@ -123,18 +138,27 @@ export class BillingController {
     const cachedDocId = bill.pdfDocumentId;
 
     if (!cachedDocId || isPaid) {
-      const [clinic, patient] = await Promise.all([
+      const [clinic, patient, branch] = await Promise.all([
         this.clinicModel.findById(req.context!.clinicId),
         this.patientModel.findOne({
           _id: bill.patientId,
           clinicId: req.context!.clinicId,
         }),
+        this.branchModel.findOne({
+          _id: bill.branchId,
+          clinicId: req.context!.clinicId,
+        }),
       ]);
 
       const bytes = await this.pdf.billPdf({
-        clinicName: clinic?.name ?? 'Clinic',
+        clinicName: clinic?.name || 'Clinic',
+        branchName: branch?.name,
+        clinicAddress: branch?.addressLine,
+        clinicPhone: branch?.phone,
         billNo: bill.billNo,
         patientName: patient?.fullName ?? 'Patient',
+        patientAge: patient?.dob ? Math.floor((Date.now() - new Date(patient.dob).getTime()) / 31557600000) : undefined,
+        patientGender: patient?.gender,
         issuedAtIso: bill.issuedAt?.toISOString?.() ?? '',
         currency: bill.currency,
         items: (bill.items ?? []).map((it: any) => ({

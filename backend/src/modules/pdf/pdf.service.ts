@@ -106,9 +106,9 @@ async function embedFonts(
   if (!fontWarnEmitted) {
     log.warn(
       `Unicode PDF font not found at ${LATIN_REGULAR}; falling back to Helvetica. ` +
-        `Non-Latin glyphs will not render. Drop NotoSans-Regular.ttf, NotoSans-Bold.ttf, ` +
-        `NotoSansDevanagari-Regular.ttf, NotoSansDevanagari-Bold.ttf, ` +
-        `NotoSansTamil-Regular.ttf, NotoSansTamil-Bold.ttf into backend/assets/.`,
+      `Non-Latin glyphs will not render. Drop NotoSans-Regular.ttf, NotoSans-Bold.ttf, ` +
+      `NotoSansDevanagari-Regular.ttf, NotoSansDevanagari-Bold.ttf, ` +
+      `NotoSansTamil-Regular.ttf, NotoSansTamil-Bold.ttf into backend/assets/.`,
     );
     fontWarnEmitted = true;
   }
@@ -239,7 +239,7 @@ export class PdfService {
       // Clinic Info
       y = PAGE_HEIGHT - 35;
       drawText(page, input.clinicName, { x: MARGIN_X, y, size: 20, font: bold, color: rgb(1, 1, 1) });
-      
+
       y = PAGE_HEIGHT - 85;
       if (input.clinicAddress) {
         drawText(page, input.clinicAddress, { x: MARGIN_X, y, size: 9, font, color: TEXT_MUTED });
@@ -295,9 +295,9 @@ export class PdfService {
         if (input.vitals) {
           const vitalsArr = Object.entries(input.vitals).filter(([_, v]) => !!v).map(([k, v]) => `${k.toUpperCase()}: ${v}`);
           if (vitalsArr.length > 0) {
-             drawText(page, 'Vitals: ', { x: MARGIN_X, y, size: 9, font: bold, color: TEXT_MUTED });
-             drawText(page, vitalsArr.join('  •  '), { x: MARGIN_X + 45, y, size: 9, font, color: TEXT_DARK });
-             y -= 16;
+            drawText(page, 'Vitals: ', { x: MARGIN_X, y, size: 9, font: bold, color: TEXT_MUTED });
+            drawText(page, vitalsArr.join('  •  '), { x: MARGIN_X + 45, y, size: 9, font, color: TEXT_DARK });
+            y -= 16;
           }
         }
         if (input.diagnosis) {
@@ -337,13 +337,13 @@ export class PdfService {
 
       drawText(page, `${idx + 1}.`, { x: MARGIN_X - 15, y, size: 10, font, color: TEXT_MUTED });
       drawText(page, it.name, { x: MARGIN_X, y, size: 10, font: bold, color: TEXT_DARK });
-      
+
       if (it.dosage) drawText(page, it.dosage, { x: MARGIN_X + 180, y, size: 9, font, color: TEXT_DARK });
       if (it.frequency) drawText(page, it.frequency, { x: MARGIN_X + 260, y, size: 9, font, color: TEXT_DARK });
       if (it.duration) drawText(page, it.duration, { x: MARGIN_X + 320, y, size: 9, font, color: TEXT_DARK });
       if (it.instructions) {
-         const wrapped = it.instructions.length > 30 ? it.instructions.slice(0, 27) + '...' : it.instructions;
-         drawText(page, wrapped, { x: MARGIN_X + 380, y, size: 9, font, color: TEXT_MUTED });
+        const wrapped = it.instructions.length > 30 ? it.instructions.slice(0, 27) + '...' : it.instructions;
+        drawText(page, wrapped, { x: MARGIN_X + 380, y, size: 9, font, color: TEXT_MUTED });
       }
 
       y -= 24;
@@ -357,8 +357,13 @@ export class PdfService {
 
   async billPdf(input: {
     clinicName: string;
+    branchName?: string;
+    clinicAddress?: string;
+    clinicPhone?: string;
     billNo?: string;
     patientName: string;
+    patientAge?: string | number;
+    patientGender?: string;
     issuedAtIso?: string;
     currency: string;
     items: Array<{
@@ -376,107 +381,201 @@ export class PdfService {
   }): Promise<Uint8Array> {
     const pdf = await PDFDocument.create();
     const { font, bold } = await embedFonts(pdf);
+    console.log("input", input)
+    const DARK_TEAL = rgb(1 / 255, 66 / 255, 76 / 255);
+    const MINT_BG = rgb(240 / 255, 255 / 255, 240 / 255);
+    const ACCENT_TEAL = rgb(10 / 255, 185 / 255, 140 / 255);
+    const TEXT_LIGHT = rgb(1, 1, 1);
+    const TEXT_DARK = DARK_TEAL;
 
     let page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-    let y = TOP_Y;
+    let currentY = TOP_Y;
+    let tableStartY = 0;
 
-    const drawHeader = (continuation: boolean) => {
-      drawText(page, input.clinicName, {
-        x: MARGIN_X,
-        y,
-        size: 16,
-        font: bold,
-        color: rgb(0.1, 0.1, 0.1),
+    const drawPageBackground = () => {
+      // Light mint background
+      page.drawRectangle({
+        x: 0,
+        y: 0,
+        width: PAGE_WIDTH,
+        height: PAGE_HEIGHT,
+        color: MINT_BG,
       });
-      y -= 24;
-      drawText(page, continuation ? 'Bill / Invoice (cont.)' : 'Bill / Invoice', {
-        x: MARGIN_X,
-        y,
-        size: 12,
-        font: bold,
-      });
-      y -= 18;
-      if (!continuation) {
-        drawText(page, `Bill No: ${input.billNo ?? '—'}`, {
-          x: MARGIN_X,
-          y,
-          size: 10,
-          font,
+
+      // Top pattern
+      for (let i = 0; i < PAGE_WIDTH; i += 15) {
+        page.drawRectangle({
+          x: i,
+          y: PAGE_HEIGHT - 15,
+          width: 15,
+          height: 15,
+          color: (i / 15) % 2 === 0 ? ACCENT_TEAL : DARK_TEAL,
         });
-        y -= 14;
-        drawText(page, `Patient: ${input.patientName}`, {
-          x: MARGIN_X,
-          y,
-          size: 10,
-          font,
-        });
-        y -= 14;
-        drawText(page, `Date: ${input.issuedAtIso ?? ''}`, {
-          x: MARGIN_X,
-          y,
-          size: 10,
-          font,
-        });
-        y -= 22;
       }
-      drawText(page, 'Items', { x: MARGIN_X, y, size: 11, font: bold });
-      y -= 14;
-      drawColumnHeaders();
+
+      // Bottom pattern
+      for (let i = 0; i < PAGE_WIDTH; i += 15) {
+        page.drawRectangle({
+          x: i,
+          y: 0,
+          width: 15,
+          height: 15,
+          color: (i / 15) % 2 === 0 ? ACCENT_TEAL : DARK_TEAL,
+        });
+      }
     };
 
-    const drawColumnHeaders = () => {
-      drawText(page, 'Name', { x: MARGIN_X, y, size: 9, font: bold });
-      drawText(page, 'Qty', { x: 340, y, size: 9, font: bold });
-      drawText(page, 'Rate', { x: 390, y, size: 9, font: bold });
-      drawText(page, 'Amount', { x: 470, y, size: 9, font: bold });
-      y -= 12;
+    const drawHeader = (continuation: boolean) => {
+      drawPageBackground();
+
+      // Header Background
+      page.drawRectangle({
+        x: 0,
+        y: PAGE_HEIGHT - 220,
+        width: PAGE_WIDTH,
+        height: 205, // 220 - 15 (pattern)
+        color: DARK_TEAL,
+      });
+
+      let hy = PAGE_HEIGHT - 60;
+
+      // Title
+      drawText(page, continuation ? 'INVOICE (cont.)' : 'INVOICE', { x: MARGIN_X, y: hy, size: 38, font: bold, color: TEXT_LIGHT });
+
+      // Medical Cross (Logo approximation)
+      const cx = PAGE_WIDTH - 80;
+      const cy = hy + 10;
+      page.drawRectangle({ x: cx - 25, y: cy - 10, width: 50, height: 20, color: ACCENT_TEAL });
+      page.drawRectangle({ x: cx - 10, y: cy - 25, width: 20, height: 50, color: ACCENT_TEAL });
+
+      hy -= 15;
+      page.drawLine({ start: { x: MARGIN_X, y: hy }, end: { x: MARGIN_X + 220, y: hy }, thickness: 1.5, color: TEXT_LIGHT });
+
+      hy -= 30;
+
+      const dateStr = input.issuedAtIso ? new Date(input.issuedAtIso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: '2-digit' }).replace(/\//g, ' - ') : new Date().toLocaleDateString('en-IN').replace(/\//g, ' - ');
+
+      if (!continuation) {
+        drawText(page, `INVOICE NO : ${input.billNo || '001'}`, { x: MARGIN_X, y: hy, size: 9, font: bold, color: TEXT_LIGHT });
+        drawText(page, `DATE : ${dateStr}`, { x: MARGIN_X, y: hy - 14, size: 9, font: bold, color: TEXT_LIGHT });
+
+        drawText(page, `DUE DATE : ${dateStr}`, { x: MARGIN_X + 220, y: hy, size: 9, font: bold, color: TEXT_LIGHT });
+
+        hy -= 40;
+
+        drawText(page, 'TO:', { x: MARGIN_X, y: hy, size: 9, font: bold, color: TEXT_LIGHT });
+        drawText(page, input.patientName, { x: MARGIN_X, y: hy - 14, size: 10, font, color: TEXT_LIGHT });
+        const pMeta = [input.patientGender, input.patientAge ? `${input.patientAge}y` : null].filter(Boolean).join(' / ');
+        if (pMeta) drawText(page, pMeta, { x: MARGIN_X, y: hy - 26, size: 9, font, color: TEXT_LIGHT });
+
+        drawText(page, 'FROM:', { x: MARGIN_X + 220, y: hy, size: 9, font: bold, color: TEXT_LIGHT });
+        drawText(page, input.clinicName, { x: MARGIN_X + 220, y: hy - 14, size: 10, font: bold, color: TEXT_LIGHT });
+        
+        let fromY = hy - 26;
+        if (input.branchName) {
+          drawText(page, input.branchName, { x: MARGIN_X + 220, y: fromY, size: 9, font, color: TEXT_LIGHT });
+          fromY -= 12;
+        }
+        if (input.clinicAddress) {
+          drawText(page, input.clinicAddress, { x: MARGIN_X + 220, y: fromY, size: 9, font, color: TEXT_LIGHT });
+          fromY -= 12;
+        }
+        if (input.clinicPhone) {
+          drawText(page, input.clinicPhone, { x: MARGIN_X + 220, y: fromY, size: 9, font, color: TEXT_LIGHT });
+        }
+      }
+
+      // Prepare for table
+      currentY = PAGE_HEIGHT - 250;
+      tableStartY = currentY;
+
+      // Table Header row
+      page.drawLine({ start: { x: MARGIN_X, y: currentY }, end: { x: PAGE_WIDTH - MARGIN_X, y: currentY }, thickness: 1, color: DARK_TEAL });
+
+      const ty = currentY - 25;
+      drawText(page, 'DESCRIPTION', { x: MARGIN_X + 15, y: ty, size: 9, font: bold, color: TEXT_DARK });
+      drawText(page, 'QTY', { x: 340, y: ty, size: 9, font: bold, color: TEXT_DARK });
+      drawText(page, 'PRICE', { x: 400, y: ty, size: 9, font: bold, color: TEXT_DARK });
+      drawText(page, 'TOTAL', { x: 475, y: ty, size: 9, font: bold, color: TEXT_DARK });
+
+      currentY -= 40;
+      page.drawLine({ start: { x: MARGIN_X, y: currentY }, end: { x: PAGE_WIDTH - MARGIN_X, y: currentY }, thickness: 1, color: DARK_TEAL });
+      currentY -= 20;
     };
 
     const newPage = () => {
+      // Draw bottom vertical lines for previous page table before adding new page
+      page.drawLine({ start: { x: MARGIN_X, y: currentY + 10 }, end: { x: PAGE_WIDTH - MARGIN_X, y: currentY + 10 }, thickness: 1, color: DARK_TEAL });
+      drawVerticalLines(page, tableStartY, currentY + 10, DARK_TEAL);
+
       page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
-      y = TOP_Y;
       drawHeader(true);
+    };
+
+    const drawVerticalLines = (p: PDFPage, top: number, bottom: number, color: any) => {
+      const xs = [MARGIN_X, 320, 380, 460, PAGE_WIDTH - MARGIN_X];
+      xs.forEach(x => {
+        p.drawLine({ start: { x, y: top }, end: { x, y: bottom }, thickness: 1, color });
+      });
     };
 
     drawHeader(false);
 
-    for (const it of input.items) {
-      if (y - 12 < BOTTOM_Y + 80) newPage();
+    for (let i = 0; i < input.items.length; i++) {
+      const it = input.items[i];
+      if (currentY - 12 < BOTTOM_Y + 120) newPage();
 
-      drawText(page, it.name.slice(0, 45), { x: MARGIN_X, y, size: 9, font });
-      drawText(page, String(it.quantity), { x: 340, y, size: 9, font });
-      drawText(page, `${input.currency} ${it.unitPrice}`, {
-        x: 390,
-        y,
-        size: 9,
-        font,
+      drawText(page, it.name.slice(0, 45).toUpperCase(), { x: MARGIN_X + 15, y: currentY, size: 10, font: bold, color: TEXT_DARK });
+      drawText(page, String(it.quantity), { x: 340, y: currentY, size: 10, font: bold, color: TEXT_DARK });
+      drawText(page, `${input.currency.replace('INR', '₹')} ${it.unitPrice}`, {
+        x: 400,
+        y: currentY,
+        size: 10,
+        font: bold,
+        color: TEXT_DARK
       });
-      drawText(page, `${input.currency} ${it.amount}`, {
-        x: 470,
-        y,
-        size: 9,
-        font,
+      drawText(page, `${input.currency.replace('INR', '₹')} ${it.amount}`, {
+        x: 475,
+        y: currentY,
+        size: 10,
+        font: bold,
+        color: TEXT_DARK
       });
-      y -= 12;
+
+      currentY -= 20;
     }
 
-    if (y - 80 < BOTTOM_Y) newPage();
+    if (currentY - 80 < BOTTOM_Y) newPage();
 
-    y = Math.max(y - 10, BOTTOM_Y + 20);
-    const right = (label: string, value: string) => {
-      drawText(page, label, { x: 340, y, size: 10, font });
-      drawText(page, value, { x: 470, y, size: 10, font: bold });
-      y -= 14;
+    currentY -= 10;
+
+    // Close table
+    page.drawLine({ start: { x: MARGIN_X, y: currentY }, end: { x: PAGE_WIDTH - MARGIN_X, y: currentY }, thickness: 1, color: DARK_TEAL });
+    drawVerticalLines(page, tableStartY, currentY, DARK_TEAL);
+
+    currentY -= 30;
+
+    // Bottom section
+    drawText(page, 'PAYMENT STATUS:', { x: MARGIN_X, y: currentY, size: 11, font: bold, color: TEXT_DARK });
+    drawText(page, input.paid ? 'PAID' : 'PENDING', { x: MARGIN_X, y: currentY - 18, size: 11, font: bold, color: TEXT_DARK });
+
+    const rightAlign = (label: string, value: string, fontToUse: FontTriple, yPos: number) => {
+      const labelWidth = fontToUse.latin.widthOfTextAtSize(label, 11);
+      drawText(page, label, { x: 450 - labelWidth, y: yPos, size: 11, font: fontToUse, color: TEXT_DARK });
+      drawText(page, value, { x: 460, y: yPos, size: 11, font: fontToUse, color: TEXT_DARK });
     };
 
-    right('Subtotal', `${input.currency} ${input.subtotal}`);
-    right('Discount', `${input.currency} ${input.discount}`);
-    right('Tax', `${input.currency} ${input.tax}`);
-    right('Total', `${input.currency} ${input.total}`);
-
-    if (input.paid) {
-      drawPaidStamp(page, bold, input.paidAtIso);
+    let sY = currentY;
+    const cur = input.currency.replace('INR', '₹');
+    rightAlign('SUB TOTAL :', `${cur} ${input.subtotal}`, bold, sY);
+    if (input.discount > 0) {
+      sY -= 18;
+      rightAlign('DISCOUNT :', `- ${cur} ${input.discount}`, bold, sY);
     }
+    sY -= 18;
+    rightAlign('TAX :', `${cur} ${input.tax}`, bold, sY);
+    sY -= 18;
+    rightAlign('TOTAL :', `${cur} ${input.total}`, bold, sY);
 
     return await pdf.save();
   }

@@ -210,19 +210,19 @@ export class PrescriptionsController {
     const rx = await this.prescriptions.getByShareToken(token);
     if (!rx.pdfDocumentId) {
       // Use screenshot for public sharing as requested
-      const bytes = await this.screenshotService.capturePrescription(token);
-      const key = `clinic/${rx.clinicId.toHexString()}/prescription/${rx._id.toHexString()}/prescription.png`;
+      const bytes = await this.screenshotService.capturePrescriptionAsPdf(token);
+      const key = `clinic/${rx.clinicId.toHexString()}/prescription/${rx._id.toHexString()}/prescription.pdf`;
       await this.storage.putObject({
         key,
         body: bytes,
-        contentType: 'image/png',
+        contentType: 'application/pdf',
       });
       const doc = await this.documents.createForOwner({
         clinicId: rx.clinicId,
         ownerType: DocumentOwnerType.Prescription,
         ownerId: rx._id,
-        mimeType: 'image/png',
-        fileName: `prescription-${rx._id.toHexString().slice(-6)}.png`,
+        mimeType: 'application/pdf',
+        fileName: `prescription-${rx._id.toHexString().slice(-6)}.pdf`,
         sizeBytes: bytes.length,
         storageKey: key,
         createdBy: rx.doctorId,

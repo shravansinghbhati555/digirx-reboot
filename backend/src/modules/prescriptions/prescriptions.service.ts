@@ -47,7 +47,7 @@ export class PrescriptionsService {
     @InjectModel(Prescription.name)
     private readonly rxModel: Model<Prescription>,
     private readonly encounters: EncountersService,
-  ) {}
+  ) { }
 
   /**
    * Get the prescription for an encounter, or null if none exists yet.
@@ -72,6 +72,7 @@ export class PrescriptionsService {
     encounterId: string,
     dto: CreatePrescriptionDto,
   ) {
+    console.time("checkingtime")
     const enc = await this.encounters.getById(clinicId, encounterId);
     const items = mapItems(dto);
 
@@ -83,7 +84,7 @@ export class PrescriptionsService {
       existing.items = items as any;
       return existing.save();
     }
-
+    console.timeEnd("checkingtime")
     return this.rxModel.create({
       clinicId,
       branchId: enc.branchId,

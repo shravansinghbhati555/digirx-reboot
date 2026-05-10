@@ -12,6 +12,8 @@ import { UpdateBillDto } from './dto/update-bill.dto';
 import { Bill, BillLineItem, BillStatus } from './schemas/bill.schema';
 import { Payment } from './schemas/payment.schema';
 import { ServiceCatalogItem } from './schemas/service-catalog-item.schema';
+import { Appointment } from '../appointments/schemas/appointment.schema';
+import { Encounter } from '../encounters/schemas/encounter.schema';
 
 @Injectable()
 export class BillingService {
@@ -20,6 +22,10 @@ export class BillingService {
     @InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
     @InjectModel(ServiceCatalogItem.name)
     private readonly serviceModel: Model<ServiceCatalogItem>,
+    @InjectModel(Appointment.name)
+    private readonly appointmentModel: Model<Appointment>,
+    @InjectModel(Encounter.name)
+    private readonly encounterModel: Model<Encounter>,
   ) {}
 
   async createBill(
@@ -27,14 +33,59 @@ export class BillingService {
     actorUserId: Types.ObjectId | undefined,
     dto: CreateBillDto,
   ) {
-    const branchId = new Types.ObjectId(dto.branchId);
-    const patientId = new Types.ObjectId(dto.patientId);
+    const branchId = this.toObjectId(dto.branchId, 'branchId');
+    const patientId = this.toObjectId(dto.patientId, 'patientId');
     const appointmentId = dto.appointmentId
-      ? new Types.ObjectId(dto.appointmentId)
+      ? this.toObjectId(dto.appointmentId, 'appointmentId')
       : undefined;
     const encounterId = dto.encounterId
-      ? new Types.ObjectId(dto.encounterId)
+      ? this.toObjectId(dto.encounterId, 'encounterId')
       : undefined;
+
+    // Check for existing bill for this context (Upsert logic)
+    if (appointmentId || encounterId) {
+      const existing = await this.billModel.findOne({
+        clinicId,
+        $or: [
+          ...(appointmentId ? [{ appointmentId }] : []),
+          ...(encounterId ? [{ encounterId }] : []),
+        ],
+        status: { $ne: BillStatus.Void },
+      });
+
+      if (existing) {
+        if (existing.status === BillStatus.Paid) {
+          throw new BadRequestException('A paid bill already exists for this visit');
+        }
+        if (existing.status === BillStatus.Issued) {
+          throw new BadRequestException('A bill has already been issued for this visit. Void it if you need to make changes.');
+        }
+        // Patch the existing DRAFT bill
+        const dtoForUpdate = {
+          items: dto.items,
+          discount: dto.discount,
+          tax: dto.tax,
+        };
+        return await this.updateBill(clinicId, existing._id.toHexString(), dtoForUpdate);
+      }
+    }
+
+    // Constraints:
+    if (appointmentId) {
+      const appt = await this.appointmentModel.findOne({ _id: appointmentId, clinicId });
+      if (!appt) throw new BadRequestException('Appointment not found');
+      if (appt.status !== 'DONE') {
+        throw new BadRequestException('Bill can only be created for DONE appointments');
+      }
+    }
+
+    if (encounterId) {
+      const encounter = await this.encounterModel.findOne({ _id: encounterId, clinicId });
+      if (!encounter) throw new BadRequestException('Encounter not found');
+      if (encounter.status !== 'SIGNED') {
+        throw new BadRequestException('Bill can only be created for SIGNED encounters');
+      }
+    }
 
     const items = await this.mapItems(clinicId, dto.items);
     const { subtotal, discount, tax, total } = computeTotals({
@@ -66,11 +117,9 @@ export class BillingService {
 
   async updateBill(clinicId: Types.ObjectId, id: string, dto: UpdateBillDto) {
     const bill = await this.getBill(clinicId, id);
-    if (
-      bill.status === BillStatus.Issued ||
-      bill.status === BillStatus.Paid
-    )
-      throw new BadRequestException('Cannot edit an issued bill');
+    if (bill.status !== BillStatus.Draft && dto.status !== BillStatus.Void) {
+      throw new BadRequestException('Only draft bills can be edited');
+    }
 
     if (dto.status === BillStatus.Void) {
       bill.status = BillStatus.Void;
@@ -276,6 +325,22 @@ export class BillingService {
       .limit(200);
   }
 
+  async findByContext(
+    clinicId: Types.ObjectId,
+    opts: { encounterId?: string; appointmentId?: string },
+  ) {
+    const { encounterId, appointmentId } = opts;
+    const match: any = { clinicId };
+    if (encounterId)
+      match.encounterId = this.toObjectId(encounterId, 'encounterId');
+    if (appointmentId)
+      match.appointmentId = this.toObjectId(appointmentId, 'appointmentId');
+
+    if (!encounterId && !appointmentId) return null;
+
+    return await this.billModel.findOne(match).sort({ createdAt: -1 });
+  }
+
   private async mapItems(
     clinicId: Types.ObjectId,
     items: Array<{
@@ -336,5 +401,12 @@ export class BillingService {
     // computeTotals will fill amount and validate numeric fields
     computeTotals({ items: mapped });
     return mapped;
+  }
+
+  private toObjectId(id: string, name: string): Types.ObjectId {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new BadRequestException(`Invalid ${name}: ${id}`);
+    }
+    return new Types.ObjectId(id);
   }
 }

@@ -1,5 +1,5 @@
 import { IsEnum, IsInt, IsMongoId, IsOptional, IsString, MaxLength, Min } from 'class-validator';
-import { DocumentAccess, DocumentOwnerType } from '../schemas/document.schema';
+import { DocumentAccess, DocumentCategory, DocumentOwnerType } from '../schemas/document.schema';
 
 export class CreateUploadUrlDto {
   @IsEnum(DocumentOwnerType)
@@ -7,6 +7,15 @@ export class CreateUploadUrlDto {
 
   @IsMongoId()
   ownerId!: string;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(255)
+  ownerName?: string;
+
+  @IsOptional()
+  @IsEnum(DocumentCategory)
+  category?: DocumentCategory;
 
   @IsString()
   @MaxLength(255)

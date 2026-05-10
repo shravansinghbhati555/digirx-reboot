@@ -88,5 +88,21 @@ BillSchema.index(
 );
 BillSchema.index(
   { clinicId: 1, branchId: 1, billNo: 1 },
-  { unique: true, sparse: true, name: 'billno_unique_per_branch' },
+  {
+    unique: true,
+    name: 'billno_unique_per_branch',
+    partialFilterExpression: { billNo: { $type: 'string' } },
+  },
+);
+
+BillSchema.index(
+  { appointmentId: 1 },
+  {
+    unique: true,
+    name: 'unique_bill_per_appointment',
+    partialFilterExpression: {
+      appointmentId: { $exists: true },
+      status: { $ne: 'VOID' },
+    },
+  },
 );

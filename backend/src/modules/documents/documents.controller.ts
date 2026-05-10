@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req } from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
@@ -9,6 +9,7 @@ import { CreateShareDto } from './dto/create-share.dto';
 import { CreateUploadUrlDto } from './dto/create-upload-url.dto';
 import { DocumentsService } from './documents.service';
 import { Types } from 'mongoose';
+import { DocumentOwnerType } from './schemas/document.schema';
 
 @Controller()
 export class DocumentsController {
@@ -16,6 +17,22 @@ export class DocumentsController {
     private readonly storage: StorageService,
     private readonly documents: DocumentsService,
   ) {}
+
+  @Get('documents')
+  @RequirePermissions(Permission.DocumentRead)
+  async listDocuments(
+    @Req() req: AppRequest,
+    @Query('ownerType') ownerType?: DocumentOwnerType,
+    @Query('ownerId') ownerId?: string,
+    @Query('query') query?: string,
+  ) {
+    const docs = await this.documents.listDocuments(req.context!.clinicId, {
+      ownerType,
+      ownerId,
+      query,
+    });
+    return docs;
+  }
 
   @Post('documents/upload-url')
   @RequirePermissions(Permission.DocumentWrite)
@@ -31,6 +48,8 @@ export class DocumentsController {
       clinicId,
       ownerType: dto.ownerType,
       ownerId,
+      category: dto.category,
+      ownerName: dto.ownerName,
       mimeType: dto.mimeType,
       fileName: dto.fileName,
       sizeBytes: dto.sizeBytes,
@@ -40,6 +59,20 @@ export class DocumentsController {
     });
 
     return { documentId: doc._id, storageKey: key, uploadUrl, expiresInSeconds: 300 };
+  }
+
+  @Post('documents/:id/confirm')
+  @RequirePermissions(Permission.DocumentWrite)
+  async confirmUpload(@Req() req: AppRequest, @Param('id') id: string) {
+    const doc = await this.documents.confirmUpload(req.context!.clinicId, id);
+    return { success: true, documentId: doc._id };
+  }
+
+  @Delete('documents/:id')
+  @RequirePermissions(Permission.DocumentWrite)
+  async deleteDocument(@Req() req: AppRequest, @Param('id') id: string) {
+    await this.documents.deleteDocument(req.context!.clinicId, id);
+    return { success: true };
   }
 
   @Get('documents/:id/download')

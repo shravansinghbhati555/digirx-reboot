@@ -13,6 +13,9 @@ import { StorageModule } from '../storage/storage.module';
 import { DocumentsModule } from '../documents/documents.module';
 import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
+import { Appointment, AppointmentSchema } from '../appointments/schemas/appointment.schema';
+import { Encounter, EncounterSchema } from '../encounters/schemas/encounter.schema';
+import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
 
 @Module({
   imports: [
@@ -22,6 +25,9 @@ import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
       { name: ServiceCatalogItem.name, schema: ServiceCatalogItemSchema },
       { name: Patient.name, schema: PatientSchema },
       { name: Clinic.name, schema: ClinicSchema },
+      { name: Appointment.name, schema: AppointmentSchema },
+      { name: Encounter.name, schema: EncounterSchema },
+      { name: Branch.name, schema: BranchSchema },
     ]),
     PdfModule,
     StorageModule,
