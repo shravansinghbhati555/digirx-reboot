@@ -1,0 +1,65 @@
+version: 2
+updates:
+  # Backend deps
+  - package-ecosystem: npm
+    directory: /backend
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    groups:
+      # Group all NestJS / Mongoose / BullMQ patch+minor bumps so we don't
+      # get ten near-identical PRs every week.
+      backend-stack:
+        patterns:
+          - '@nestjs/*'
+          - 'mongoose'
+          - '@nestjs/mongoose'
+          - 'bullmq'
+          - '@nestjs/bullmq'
+          - 'pino*'
+        update-types: [patch, minor]
+      backend-types:
+        patterns:
+          - '@types/*'
+        update-types: [patch, minor]
+
+  # Frontend deps
+  - package-ecosystem: npm
+    directory: /frontend
+    schedule:
+      interval: weekly
+      day: monday
+      time: '06:00'
+      timezone: Asia/Kolkata
+    open-pull-requests-limit: 5
+    groups:
+      frontend-stack:
+        patterns:
+          - 'react*'
+          - 'react-dom'
+          - 'react-router-dom'
+          - 'react-hook-form'
+          - 'zod'
+          - '@hookform/*'
+          - 'vite'
+          - '@vitejs/*'
+        update-types: [patch, minor]
+
+  # Docker base images — security-only via patch updates.
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /frontend
+    schedule:
+      interval: weekly
+
+  # GitHub Actions — keep the CI infra patched.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

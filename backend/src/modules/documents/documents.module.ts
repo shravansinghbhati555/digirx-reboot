@@ -5,6 +5,10 @@ import {
   DocumentShare,
   DocumentShareSchema,
 } from './schemas/document-share.schema';
+import {
+  DocumentAccessLog,
+  DocumentAccessLogSchema,
+} from './schemas/document-access-log.schema';
 import { DocumentsService } from './documents.service';
 import { DocumentsController } from './documents.controller';
 import { StorageModule } from '../storage/storage.module';
@@ -14,6 +18,7 @@ import { StorageModule } from '../storage/storage.module';
     MongooseModule.forFeature([
       { name: Document.name, schema: DocumentSchema },
       { name: DocumentShare.name, schema: DocumentShareSchema },
+      { name: DocumentAccessLog.name, schema: DocumentAccessLogSchema },
     ]),
     StorageModule,
   ],

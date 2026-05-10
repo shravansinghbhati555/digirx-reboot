@@ -2,6 +2,8 @@ export type DevContext = {
   apiBaseUrl: string;
   clinicId: string;
   clinicName?: string;
+  /** ISO 4217 code (INR, USD, …). Drives money formatting + bill defaults. */
+  currency?: string;
   branchId?: string;
   branchName?: string;
   userId: string;

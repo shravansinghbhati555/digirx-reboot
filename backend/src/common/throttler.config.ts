@@ -16,7 +16,10 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
-const THROTTLE_DEFAULT_LIMIT = envInt('THROTTLE_DEFAULT_LIMIT', 600);
+// Roadmap 0.1: 120 req/min global default. Devs running the local UI with
+// many parallel reads can lift this with `THROTTLE_DEFAULT_LIMIT=…` or shut
+// the throttler off entirely with `THROTTLE_DISABLED=true` in `.env`.
+const THROTTLE_DEFAULT_LIMIT = envInt('THROTTLE_DEFAULT_LIMIT', 120);
 const THROTTLE_DEFAULT_TTL_MS = envInt('THROTTLE_DEFAULT_TTL_MS', 60_000);
 
 const THROTTLE_DISABLED = (process.env.THROTTLE_DISABLED ?? '').toLowerCase() === 'true';

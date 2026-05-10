@@ -36,6 +36,26 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): void {
     if (env.ALLOW_DEV_AUTH_HEADERS === 'true') {
       errors.push('ALLOW_DEV_AUTH_HEADERS=true is not permitted in production');
     }
+
+    // The refresh cookie is `Secure: true` in production, so http://
+    // origins would silently fail to receive it on cross-origin login.
+    // Catch this at boot rather than at the first failed login.
+    const fe = env.FRONTEND_ORIGIN;
+    if (fe && /^http:\/\//i.test(fe)) {
+      errors.push(
+        'FRONTEND_ORIGIN must use https:// in production (refresh cookie is Secure)',
+      );
+    }
+    const cors = env.CORS_ORIGINS;
+    if (cors) {
+      for (const origin of cors.split(',').map((s) => s.trim()).filter(Boolean)) {
+        if (/^http:\/\//i.test(origin)) {
+          errors.push(
+            `CORS_ORIGINS contains http:// origin "${origin}" — must be https:// in production`,
+          );
+        }
+      }
+    }
   }
 
   if (errors.length > 0) {

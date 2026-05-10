@@ -11,25 +11,93 @@ export type NotificationChannelToggles = {
   whatsapp: { enabled: boolean };
 };
 
+export type QuietHours = {
+  /**
+   * `null` on either side = no quiet window. Both fields together carve a
+   * daily window during which messages don't go out (e.g. start: '21:00',
+   * end: '08:00'). Crosses midnight when start > end. Times are in clinic
+   * timezone, HH:MM 24-hour.
+   */
+  start: string | null;
+  end: string | null;
+};
+
+export type PatientSettings = {
+  /**
+   * Format string used to mint MRNs on patient registration. Tokens:
+   *   {seq}        — zero-padded sequential number (default width 6)
+   *   {seq:N}      — same, with explicit width N (e.g. {seq:8})
+   *   {YYYY}       — 4-digit calendar year at the moment of mint (UTC)
+   *   {YY}         — 2-digit year
+   *   {clinicCode} — first 4 hex chars of the clinic's _id (cheap stable code)
+   */
+  mrnFormat: string;
+};
+
+export type LogsSettings = {
+  /**
+   * How long audit + access logs are retained before Mongo's TTL cleanup
+   * removes them. Default 365 days. Min 7 (a meaningful debugging window),
+   * max 3650 (10 years — beyond that, regulatory floors apply).
+   */
+  retentionDays: number;
+};
+
+export type BillingSettings = {
+  /**
+   * Format string used to mint bill numbers on issue. Tokens:
+   *   {seq} / {seq:N}  — sequential number (per branch + fiscal year)
+   *   {fiscalYear}     — e.g. "2026-27" (or "2026" when fiscalYearStartMonth === 1)
+   *   {YYYY} / {YY}    — calendar year of `issuedAt` (clinic TZ)
+   *   {branchCode}     — Branch.code, falling back to first 4 alphanumerics of name
+   *   {clinicCode}     — first 4 hex chars of clinic's _id
+   */
+  billNoFormat: string;
+  /**
+   * Month (1-12) the fiscal year starts in. India's standard FY runs Apr-Mar
+   * so the default is 4. Set to 1 for clinics that follow the calendar year.
+   */
+  fiscalYearStartMonth: number;
+  /**
+   * Same token grammar as billNoFormat, used for credit-note numbers in
+   * Phase 1.5.4. Defined here so the credit-note module can be added later
+   * without re-touching settings shape.
+   */
+  creditNoteNoFormat: string;
+};
+
 export type ClinicSettingsV1 = {
   appointments: {
     mode: AppointmentMode;
     slotMinutesDefault: number;
   };
+  patients: PatientSettings;
+  billing: BillingSettings;
+  logs: LogsSettings;
   modules: {
     inventory: { enabled: boolean };
-    notifications: NotificationChannelToggles;
+    notifications: NotificationChannelToggles & {
+      quietHours: QuietHours;
+    };
   };
   branding: ClinicBranding;
 };
 
 export const DEFAULT_CLINIC_SETTINGS: ClinicSettingsV1 = {
   appointments: { mode: 'BOTH', slotMinutesDefault: 15 },
+  patients: { mrnFormat: 'MRN-{seq:06}' },
+  billing: {
+    billNoFormat: '{branchCode}/{fiscalYear}/{seq:06}',
+    fiscalYearStartMonth: 4,
+    creditNoteNoFormat: 'CN/{fiscalYear}/{seq:06}',
+  },
+  logs: { retentionDays: 365 },
   modules: {
     inventory: { enabled: false },
     notifications: {
       sms: { enabled: true },
       whatsapp: { enabled: true },
+      quietHours: { start: null, end: null },
     },
   },
   branding: { displayName: null, logoUrl: null, primaryColor: null },
@@ -88,6 +156,25 @@ export function mergeClinicSettings(raw: unknown): ClinicSettingsV1 {
       ? notifications.whatsapp
       : {}
   ) as Record<string, any>;
+  const notifQuiet = (
+    notifications.quietHours && typeof notifications.quietHours === 'object'
+      ? notifications.quietHours
+      : {}
+  ) as Record<string, any>;
+  const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+  const quietStart =
+    typeof notifQuiet.start === 'string' && HHMM.test(notifQuiet.start)
+      ? notifQuiet.start
+      : null;
+  const quietEnd =
+    typeof notifQuiet.end === 'string' && HHMM.test(notifQuiet.end)
+      ? notifQuiet.end
+      : null;
+  // Both fields must be present for the window to be active; otherwise
+  // treat as off (start: null, end: null).
+  const quietHours = quietStart && quietEnd
+    ? { start: quietStart, end: quietEnd }
+    : { start: null, end: null };
   const branding = (
     obj.branding && typeof obj.branding === 'object' ? obj.branding : {}
   ) as Record<string, any>;
@@ -97,6 +184,37 @@ export function mergeClinicSettings(raw: unknown): ClinicSettingsV1 {
   const invEnabled = inventory.enabled;
   const smsEnabled = notifSms.enabled;
   const waEnabled = notifWa.enabled;
+
+  const patientsRaw = (
+    obj.patients && typeof obj.patients === 'object' ? obj.patients : {}
+  ) as Record<string, any>;
+  const mrnFormat = coerceString(patientsRaw.mrnFormat, 120);
+
+  const billingRaw = (
+    obj.billing && typeof obj.billing === 'object' ? obj.billing : {}
+  ) as Record<string, any>;
+  const billNoFormat = coerceString(billingRaw.billNoFormat, 120);
+  const creditNoteNoFormat = coerceString(billingRaw.creditNoteNoFormat, 120);
+  const fyStartRaw = billingRaw.fiscalYearStartMonth;
+  const fiscalYearStartMonth =
+    typeof fyStartRaw === 'number' &&
+    Number.isInteger(fyStartRaw) &&
+    fyStartRaw >= 1 &&
+    fyStartRaw <= 12
+      ? fyStartRaw
+      : DEFAULT_CLINIC_SETTINGS.billing.fiscalYearStartMonth;
+
+  const logsRaw = (
+    obj.logs && typeof obj.logs === 'object' ? obj.logs : {}
+  ) as Record<string, any>;
+  const retentionRaw = logsRaw.retentionDays;
+  const retentionDays =
+    typeof retentionRaw === 'number' &&
+    Number.isInteger(retentionRaw) &&
+    retentionRaw >= 7 &&
+    retentionRaw <= 3650
+      ? retentionRaw
+      : DEFAULT_CLINIC_SETTINGS.logs.retentionDays;
 
   return {
     appointments: {
@@ -112,6 +230,18 @@ export function mergeClinicSettings(raw: unknown): ClinicSettingsV1 {
           ? Math.round(slot)
           : DEFAULT_CLINIC_SETTINGS.appointments.slotMinutesDefault,
     },
+    patients: {
+      mrnFormat: mrnFormat ?? DEFAULT_CLINIC_SETTINGS.patients.mrnFormat,
+    },
+    billing: {
+      billNoFormat:
+        billNoFormat ?? DEFAULT_CLINIC_SETTINGS.billing.billNoFormat,
+      fiscalYearStartMonth,
+      creditNoteNoFormat:
+        creditNoteNoFormat ??
+        DEFAULT_CLINIC_SETTINGS.billing.creditNoteNoFormat,
+    },
+    logs: { retentionDays },
     modules: {
       inventory: {
         enabled:
@@ -132,6 +262,7 @@ export function mergeClinicSettings(raw: unknown): ClinicSettingsV1 {
               ? waEnabled
               : DEFAULT_CLINIC_SETTINGS.modules.notifications.whatsapp.enabled,
         },
+        quietHours,
       },
     },
     branding: {

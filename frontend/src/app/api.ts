@@ -48,7 +48,7 @@ async function apiFetch<T>(
     body: init.body,
   });
 
-  if (res.status === 401 || res.status === 400) {
+  if (res.status === 401) {
     if (attempt === 0) {
       const next = await sharedRefresh(ctx);
       if (next) {

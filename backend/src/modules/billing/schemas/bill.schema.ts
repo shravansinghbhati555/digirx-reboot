@@ -26,7 +26,7 @@ export class Bill {
   @Prop({ type: Types.ObjectId, required: true, index: true })
   branchId!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, required: true, index: true })
+  @Prop({ type: Types.ObjectId, required: true, index: true, ref: 'Patient' })
   patientId!: Types.ObjectId;
 
   @Prop({ type: Types.ObjectId, index: true })
@@ -78,6 +78,18 @@ export class Bill {
 
   @Prop({ type: Types.ObjectId })
   createdBy?: Types.ObjectId;
+
+  // Void audit. Required at the API layer when transitioning to VOID; left
+  // optional on the schema so legacy bills that never had a void path keep
+  // loading.
+  @Prop({ trim: true })
+  voidReason?: string;
+
+  @Prop({ type: Date })
+  voidedAt?: Date;
+
+  @Prop({ type: Types.ObjectId })
+  voidedBy?: Types.ObjectId;
 }
 
 export const BillSchema = SchemaFactory.createForClass(Bill);

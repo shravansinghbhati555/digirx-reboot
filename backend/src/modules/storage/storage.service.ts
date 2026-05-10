@@ -40,7 +40,9 @@ export class StorageService {
     const cmd = new PutObjectCommand({
       Bucket: this.bucket(),
       Key: input.key,
-      ContentType: input.contentType,
+      // Note: We don't sign the ContentType here because browser mime-type 
+      // detection can sometimes differ slightly from what the backend expects, 
+      // which would break the signature.
     });
     return await getSignedUrl(this.client(), cmd, {
       expiresIn: input.expiresInSeconds ?? 300,

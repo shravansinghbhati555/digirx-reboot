@@ -147,10 +147,37 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export const formatINR = (n: number | null | undefined) => {
+/**
+ * Currency-aware money formatter. Pass the bill's `currency` (ISO 4217) and
+ * the symbol + locale conventions follow automatically. Falls back to INR
+ * when the code is missing/garbled so legacy data still renders.
+ */
+export const formatMoney = (
+  n: number | null | undefined,
+  currency: string | null | undefined,
+  locale = 'en-IN',
+): string => {
   if (n === undefined || n === null || isNaN(Number(n))) return '—';
-  return '₹' + Number(n).toLocaleString('en-IN', { maximumFractionDigits: 0 });
+  const code =
+    typeof currency === 'string' && /^[A-Z]{3}$/.test(currency)
+      ? currency
+      : 'INR';
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: code,
+      maximumFractionDigits: 0,
+    }).format(Number(n));
+  } catch {
+    return `${code} ${Number(n).toLocaleString(locale)}`;
+  }
 };
+
+/**
+ * Legacy alias kept for call sites that don't yet have a currency threaded
+ * through. New code should call `formatMoney(n, bill.currency)`.
+ */
+export const formatINR = (n: number | null | undefined) => formatMoney(n, 'INR');
 
 export const formatDate = (str: string | Date | null | undefined) => {
   if (!str) return '—';
@@ -213,6 +240,51 @@ export function PrimaryButton({
       }}
     >
       {children}
+    </button>
+  );
+}
+
+export function Checkbox({
+  checked,
+  onChange,
+  disabled,
+  title,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  title?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => !disabled && onChange(!checked)}
+      disabled={disabled}
+      title={title}
+      style={{
+        width: 20,
+        height: 20,
+        borderRadius: 6,
+        background: checked ? 'var(--brand-500)' : 'var(--surface)',
+        border: `1.5px solid ${checked ? 'var(--brand-500)' : 'var(--border)'}`,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: disabled ? 0.6 : 1,
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 0,
+        transition: 'all 120ms var(--ease-out)',
+        flexShrink: 0,
+      }}
+    >
+      {checked && (
+        <Icon
+          name="check"
+          size={12}
+          strokeWidth={3}
+          style={{ color: 'var(--brand-text)', animation: 'pathFadeIn 120ms ease-out' }}
+        />
+      )}
     </button>
   );
 }

@@ -29,13 +29,7 @@ export class AuthController {
     res.cookie(
       REFRESH_COOKIE,
       `${out.refresh.sessionId}.${out.refresh.refreshToken}`,
-      {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: (process.env.NODE_ENV ?? 'development') !== 'development',
-        expires: new Date(out.refresh.expiresAt),
-        path: '/auth',
-      },
+      refreshCookieOptions(out.refresh.expiresAt),
     );
     return {
       accessToken: out.accessToken,
@@ -47,6 +41,7 @@ export class AuthController {
 
   @Post('refresh')
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async refresh(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
@@ -61,13 +56,7 @@ export class AuthController {
     res.cookie(
       REFRESH_COOKIE,
       `${out.refresh.sessionId}.${out.refresh.refreshToken}`,
-      {
-        httpOnly: true,
-        sameSite: 'lax',
-        secure: (process.env.NODE_ENV ?? 'development') !== 'development',
-        expires: new Date(out.refresh.expiresAt),
-        path: '/auth',
-      },
+      refreshCookieOptions(out.refresh.expiresAt),
     );
     return { accessToken: out.accessToken };
   }
@@ -83,4 +72,27 @@ export class AuthController {
     res.clearCookie(REFRESH_COOKIE, { path: '/auth' });
     return { ok: true };
   }
+}
+
+/**
+ * Cookie attributes for the refresh-token cookie. Pulled into a helper so
+ * `/auth/login` and `/auth/refresh` issue identical cookies — divergence
+ * here was a real source of "logged in but can't refresh" bugs.
+ *
+ *   httpOnly: true      — never readable from JS, prevents XSS theft.
+ *   secure: true (prod) — only ever transmitted over TLS.
+ *   sameSite: strict (prod) — blocks cross-site CSRF that would attach
+ *                              the refresh cookie to a forged request.
+ *   sameSite: lax (dev) — needed for the localhost FE on a different port.
+ *   path: '/auth'       — cookie is only attached to /auth/* requests.
+ */
+function refreshCookieOptions(expiresAt: Date | number | string) {
+  const isProd = (process.env.NODE_ENV ?? 'development') === 'production';
+  return {
+    httpOnly: true,
+    sameSite: isProd ? ('strict' as const) : ('lax' as const),
+    secure: isProd,
+    expires: expiresAt instanceof Date ? expiresAt : new Date(expiresAt),
+    path: '/auth',
+  };
 }

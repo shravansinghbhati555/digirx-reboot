@@ -173,6 +173,56 @@ describe('BillingService.addPayment idempotency', () => {
     );
   });
 
+  describe('listBills patientId filter — the cross-patient leak fix', () => {
+    it('forwards patientId into the aggregation $match (regression check)', async () => {
+      // Spy on the model's aggregate so we can assert the actual pipeline
+      // shape — this is the fix we shipped: without the patientId in
+      // $match, /bills?patientId=… leaked every clinic-scoped bill.
+      const aggregate = jest.fn().mockResolvedValue([]);
+      billModel.aggregate = aggregate;
+
+      const clinicId = new Types.ObjectId();
+      const patientId = new Types.ObjectId();
+      await service.listBills(clinicId, { patientId: patientId.toHexString() });
+
+      expect(aggregate).toHaveBeenCalledTimes(1);
+      const pipeline = aggregate.mock.calls[0][0] as any[];
+      const matchStage = pipeline.find((s) => s.$match);
+      expect(matchStage).toBeDefined();
+      expect(matchStage.$match.clinicId).toEqual(clinicId);
+      // The actual ObjectId comparison: the filter holds an ObjectId
+      // whose hex is the same as what we passed in.
+      expect((matchStage.$match.patientId as Types.ObjectId).toHexString()).toBe(
+        patientId.toHexString(),
+      );
+    });
+
+    it('omits patientId from the $match when not provided (back-compat)', async () => {
+      const aggregate = jest.fn().mockResolvedValue([]);
+      billModel.aggregate = aggregate;
+
+      await service.listBills(new Types.ObjectId(), {});
+
+      const pipeline = aggregate.mock.calls[0][0] as any[];
+      const matchStage = pipeline.find((s) => s.$match);
+      expect(matchStage.$match.patientId).toBeUndefined();
+    });
+
+    it('ignores a malformed patientId rather than throwing', async () => {
+      const aggregate = jest.fn().mockResolvedValue([]);
+      billModel.aggregate = aggregate;
+
+      await service.listBills(new Types.ObjectId(), {
+        patientId: 'not-a-real-objectid',
+      });
+
+      const pipeline = aggregate.mock.calls[0][0] as any[];
+      const matchStage = pipeline.find((s) => s.$match);
+      // No throw, no patientId in match — the bad value is dropped.
+      expect(matchStage.$match.patientId).toBeUndefined();
+    });
+  });
+
   it('does not auto-Paid a bill that is not yet fully settled', async () => {
     const bill = makeIssuedBill({ total: 1000 });
     billModel.findOne.mockResolvedValue(bill);

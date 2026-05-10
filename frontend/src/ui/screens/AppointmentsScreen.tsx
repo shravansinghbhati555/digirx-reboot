@@ -23,6 +23,7 @@ type Appointment = {
 
 type PatientLite = {
   _id: string;
+  mrn?: string;
   fullName: string;
   phones?: string[];
   gender?: 'MALE' | 'FEMALE' | 'OTHER' | string;
@@ -30,16 +31,28 @@ type PatientLite = {
   tags?: string[];
 };
 
+// MRN is the human-readable identifier; fall back to a `_id` tail only when
+// no MRN was minted (legacy data) or when the patient lookup hasn't resolved.
+function patientRefLabel(
+  p: { mrn?: string; _id: string } | undefined,
+  id?: string,
+): string {
+  if (p?.mrn) return p.mrn;
+  const fallback = (p?._id ?? id ?? '').slice(-6);
+  return fallback ? `#${fallback}` : '—';
+}
+
 const HOURS = Array.from({ length: 12 }, (_, i) => i + 8);
 const HOUR_H = 72;
+const EXPANDED_H = 300;
 
 const STATUS_COLORS: Record<string, { bg: string; border: string; text: string }> = {
-  DONE:        { bg: 'var(--success-bg)',   border: 'var(--success-500)', text: 'var(--success-text)' },
-  CHECKED_IN:  { bg: 'var(--teal-bg)',      border: 'var(--accent-500)',  text: 'var(--teal-text)' },
-  IN_PROGRESS: { bg: 'var(--info-bg)',      border: 'var(--info-500)',    text: 'var(--info-text)' },
-  BOOKED:      { bg: 'var(--brand-bg-soft)',border: 'var(--brand-500)',   text: 'var(--brand-text-strong)' },
-  CANCELLED:   { bg: 'var(--danger-bg)',    border: 'var(--danger-500)',  text: 'var(--danger-text)' },
-  NO_SHOW:     { bg: 'var(--warning-bg)',   border: 'var(--warning-500)', text: 'var(--warning-text)' },
+  DONE: { bg: 'var(--success-bg)', border: 'var(--success-500)', text: 'var(--success-text)' },
+  CHECKED_IN: { bg: 'var(--teal-bg)', border: 'var(--accent-500)', text: 'var(--teal-text)' },
+  IN_PROGRESS: { bg: 'var(--info-bg)', border: 'var(--info-500)', text: 'var(--info-text)' },
+  BOOKED: { bg: 'var(--brand-bg-soft)', border: 'var(--brand-500)', text: 'var(--brand-text-strong)' },
+  CANCELLED: { bg: 'var(--danger-bg)', border: 'var(--danger-500)', text: 'var(--danger-text)' },
+  NO_SHOW: { bg: 'var(--warning-bg)', border: 'var(--warning-500)', text: 'var(--warning-text)' },
 };
 
 function statusKey(s: string): string {
@@ -58,7 +71,7 @@ function isoToTime(iso: string | undefined): string {
 }
 
 function WeekView({
-  date, weekItems, loading, getName, onSelect, onPickDay,
+  date, weekItems, loading, getName, onSelect, onPickDay, showCancelled,
 }: {
   date: string;
   weekItems: Map<string, Appointment[]>;
@@ -66,6 +79,7 @@ function WeekView({
   getName: (id: string) => string;
   onSelect: (a: Appointment) => void;
   onPickDay: (iso: string) => void;
+  showCancelled: boolean;
 }) {
   const days = weekDates(date);
   const todayIso = new Date().toISOString().slice(0, 10);
@@ -112,29 +126,67 @@ function WeekView({
 
         <div style={{ flex: 1, overflowY: 'auto', position: 'relative', display: 'flex', minWidth: COL_W * 7 }}>
           {days.map((d) => {
-            const dayAppts = (weekItems.get(d) ?? []).filter((a) => a.type === 'TIME');
+            let dayAppts = (weekItems.get(d) ?? []).filter((a) => a.type === 'TIME');
+            if (showCancelled) {
+              dayAppts = dayAppts.filter(a => statusKey(a.status) === 'CANCELLED');
+            } else {
+              dayAppts = dayAppts.filter(a => statusKey(a.status) !== 'CANCELLED');
+            }
             const isToday = d === todayIso;
             return (
               <div key={d} style={{ flex: 1, minWidth: COL_W, borderRight: '1px solid var(--border)', position: 'relative', background: isToday ? 'rgba(59,130,246,0.015)' : 'transparent' }}>
                 {HOURS.map((h) => (
                   <div key={h} style={{ position: 'absolute', left: 0, right: 0, top: (h - 8) * HOUR_H, height: HOUR_H, borderBottom: '1px solid var(--border)', boxSizing: 'border-box' }} />
                 ))}
-                {dayAppts.map((a) => {
-                  const startMin = isoToMin(a.startAt);
-                  const endMin = isoToMin(a.endAt);
-                  const dur = Math.max(endMin - startMin, 15);
-                  const top = ((startMin - 8 * 60) / 60) * HOUR_H;
-                  if (top < 0) return null;
-                  const height = Math.max((dur / 60) * HOUR_H - 2, 20);
-                  const col = STATUS_COLORS[statusKey(a.status)] ?? STATUS_COLORS.BOOKED;
-                  return (
-                    <div key={a._id} onClick={() => onSelect(a)}
-                      style={{ position: 'absolute', left: 2, right: 2, top, height, background: col.bg, border: `1px solid ${col.border}`, borderRadius: 6, padding: '3px 6px', cursor: 'pointer', overflow: 'hidden', zIndex: 1 }}>
-                      <div style={{ fontSize: 10, fontWeight: 700, color: col.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', lineHeight: 1.3 }}>{getName(a.patientId)}</div>
-                      {height > 28 && <div style={{ fontSize: 9, color: col.text, opacity: 0.8 }}>{isoToTime(a.startAt)}</div>}
-                    </div>
-                  );
-                })}
+                {(() => {
+                  const dayLayout = computeDayLayout(dayAppts);
+                  return dayAppts.map((a) => {
+                    const startMin = isoToMin(a.startAt);
+                    const endMin = isoToMin(a.endAt);
+                    const dur = Math.max(endMin - startMin, 15);
+                    const top = ((startMin - 8 * 60) / 60) * HOUR_H;
+                    if (top < 0) return null;
+                    const height = Math.max((dur / 60) * HOUR_H - 2, 20);
+                    const col = STATUS_COLORS[statusKey(a.status)] ?? STATUS_COLORS.BOOKED;
+                    const layout = dayLayout.get(a._id) ?? { left: '2px', width: 'calc(100% - 4px)', zIndex: 1, opacity: 1 };
+                    const isCancelled = statusKey(a.status) === 'CANCELLED';
+
+                    return (
+                      <div key={a._id} onClick={() => onSelect(a)}
+                        style={{
+                          position: 'absolute',
+                          left: layout.left,
+                          width: layout.width,
+                          top,
+                          height,
+                          background: col.bg,
+                          border: `1px solid ${col.border}`,
+                          borderStyle: isCancelled ? 'dashed' : 'solid',
+                          borderRadius: 6,
+                          padding: '3px 6px',
+                          cursor: 'pointer',
+                          overflow: 'hidden',
+                          zIndex: layout.zIndex,
+                          opacity: layout.opacity,
+                        }}>
+                        <div style={{
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color: col.text,
+                          whiteSpace: 'nowrap',
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          lineHeight: 1.3,
+                          textDecoration: isCancelled ? 'line-through' : 'none',
+                        }}>
+                          {getName(a.patientId)}
+                          {isCancelled && <span style={{ marginLeft: 2, opacity: 0.6, fontSize: 8 }}>[C]</span>}
+                        </div>
+                        {height > 28 && <div style={{ fontSize: 9, color: col.text, opacity: 0.8 }}>{isoToTime(a.startAt)}</div>}
+                      </div>
+                    );
+                  });
+                })()}
                 {loading && (weekItems.get(d) ?? []).length === 0 && (
                   <>
                     <Skeleton style={{ position: 'absolute', top: 1 * HOUR_H + 4, left: 3, right: 3, height: HOUR_H * 0.5 - 4 }} radius={6} />
@@ -176,6 +228,72 @@ function isoToMin(iso: string | undefined): number {
   return d.getHours() * 60 + d.getMinutes();
 }
 
+type ApptLayout = { left: string; width: string; zIndex: number; opacity: number };
+
+function isOverlapping(a: Appointment, b: Appointment) {
+  const aStart = isoToMin(a.startAt);
+  const aEnd = isoToMin(a.endAt) || (aStart + 30);
+  const bStart = isoToMin(b.startAt);
+  const bEnd = isoToMin(b.endAt) || (bStart + 30);
+  return aStart < bEnd && bStart < aEnd;
+}
+
+function computeDayLayout(appts: Appointment[]) {
+  const active = appts.filter((a) => statusKey(a.status) !== 'CANCELLED');
+  const cancelled = appts.filter((a) => statusKey(a.status) === 'CANCELLED');
+
+  const layout = new Map<string, ApptLayout>();
+
+  // 1. Layout active appointments using a multi-column algorithm
+  const activeCols: Appointment[][] = [];
+  [...active].sort((a, b) => isoToMin(a.startAt) - isoToMin(b.startAt)).forEach((a) => {
+    let placed = false;
+    for (const col of activeCols) {
+      if (isoToMin(a.startAt) >= (isoToMin(col[col.length - 1].endAt) || isoToMin(col[col.length - 1].startAt) + 30)) {
+        col.push(a);
+        placed = true;
+        break;
+      }
+    }
+    if (!placed) activeCols.push([a]);
+  });
+
+  activeCols.forEach((col, colIdx) => {
+    col.forEach((a) => {
+      layout.set(a._id, {
+        left: `calc(${(colIdx / activeCols.length) * 100}% + 4px)`,
+        width: `calc(${(1 / activeCols.length) * 100}% - 8px)`,
+        zIndex: 2,
+        opacity: 1,
+      });
+    });
+  });
+
+  // 2. Layout cancelled appointments
+  cancelled.forEach((a) => {
+    const overlapsWithActive = active.some((other) => isOverlapping(a, other));
+    if (overlapsWithActive) {
+      // Small ghosted slice on the right
+      layout.set(a._id, {
+        left: '70%',
+        width: 'calc(30% - 8px)',
+        zIndex: 1,
+        opacity: 0.4,
+      });
+    } else {
+      layout.set(a._id, {
+        left: '4px',
+        width: 'calc(100% - 8px)',
+        zIndex: 1,
+        opacity: 0.4,
+      });
+    }
+  });
+
+  return layout;
+}
+
+
 export function AppointmentsScreen() {
   const { ctx, selectedPatientId, setSelectedPatientId } = useApp();
   const { has } = usePerm();
@@ -185,12 +303,35 @@ export function AppointmentsScreen() {
   const [view, setView] = useState<'day' | 'week' | 'queue'>('day');
   const [weekItems, setWeekItems] = useState<Map<string, Appointment[]>>(new Map());
   const [weekLoading, setWeekLoading] = useState(false);
+  const [showCancelled, setShowCancelled] = useState(false);
   const [items, setItems] = useState<Appointment[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Appointment | null>(null);
   const [showBook, setShowBook] = useState(false);
   const [patients, setPatients] = useState<Map<string, PatientLite>>(new Map());
+  const [doctors, setDoctors] = useState<Map<string, string>>(new Map());
+  const [expandedHour, setExpandedHour] = useState<number | null>(null);
+
+  const getHourH = (h: number) => h === expandedHour ? EXPANDED_H : HOUR_H;
+
+  const getHourTop = (h: number) => {
+    let top = 0;
+    for (let i = 8; i < h; i++) {
+      top += getHourH(i);
+    }
+    return top;
+  };
+
+  const getTimeTop = (iso: string | undefined) => {
+    if (!iso) return 0;
+    const min = isoToMin(iso);
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    const hTop = getHourTop(h);
+    const hHeight = getHourH(h);
+    return hTop + (m / 60) * hHeight;
+  };
 
   async function load() {
     if (!ctx.branchId) {
@@ -230,6 +371,16 @@ export function AppointmentsScreen() {
   }, [date, ctx.branchId, ctx.clinicId]);
 
   useEffect(() => {
+    apiGet<Array<{ _id: string; name: string }>>(ctx, '/users')
+      .then((list) => {
+        const next = new Map<string, string>();
+        for (const u of list) next.set(u._id, u.name);
+        setDoctors(next);
+      })
+      .catch(() => undefined);
+  }, [ctx.clinicId, ctx.accessToken]);
+
+  useEffect(() => {
     if (view !== 'week') return;
     if (!ctx.branchId) return;
     setWeekLoading(true);
@@ -264,8 +415,24 @@ export function AppointmentsScreen() {
     if (selectedPatientId) setShowBook(true);
   }, [selectedPatientId]);
 
-  const dayAppts = useMemo(() => items.filter((a) => a.type === 'TIME'), [items]);
-  const queueAppts = useMemo(() => items.filter((a) => a.type === 'QUEUE').sort((a, b) => (a.queueNumber ?? 0) - (b.queueNumber ?? 0)), [items]);
+  const dayAppts = useMemo(() => {
+    let filtered = items.filter((a) => a.type === 'TIME');
+    if (showCancelled) {
+      filtered = filtered.filter(a => statusKey(a.status) === 'CANCELLED');
+    } else {
+      filtered = filtered.filter(a => statusKey(a.status) !== 'CANCELLED');
+    }
+    return filtered;
+  }, [items, showCancelled]);
+  const queueAppts = useMemo(() => {
+    let filtered = items.filter((a) => a.type === 'QUEUE');
+    if (showCancelled) {
+      filtered = filtered.filter(a => statusKey(a.status) === 'CANCELLED');
+    } else {
+      filtered = filtered.filter(a => statusKey(a.status) !== 'CANCELLED');
+    }
+    return filtered.sort((a, b) => (a.queueNumber ?? 0) - (b.queueNumber ?? 0));
+  }, [items, showCancelled]);
 
   function shiftDate(deltaDays: number) {
     const d = new Date(date);
@@ -293,13 +460,28 @@ export function AppointmentsScreen() {
           <Icon name="chevronRight" size={16} />
         </button>
 
-        <div style={{ marginLeft: 'auto', display: 'flex', gap: 2, background: 'var(--surface-muted)', borderRadius: 10, padding: 3, border: '1px solid var(--border)' }}>
-          {(['day', 'week', 'queue'] as const).map((v) => (
-            <button key={v} onClick={() => setView(v)}
-              style={{ padding: '5px 14px', borderRadius: 8, border: 'none', background: view === v ? 'var(--surface)' : 'transparent', color: view === v ? 'var(--text)' : 'var(--text-muted)', fontSize: 12, fontWeight: view === v ? 600 : 400, cursor: 'pointer', textTransform: 'capitalize' }}>
-              {v}
-            </button>
-          ))}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <button onClick={() => setShowCancelled(!showCancelled)}
+            style={{
+              display: 'flex', alignItems: 'center', gap: 6, height: 32, padding: '0 12px',
+              background: showCancelled ? 'var(--danger-bg)' : 'var(--surface-muted)',
+              border: `1px solid ${showCancelled ? 'var(--danger-500)' : 'var(--border)'}`,
+              borderRadius: 8, fontSize: 12, fontWeight: 500, cursor: 'pointer',
+              color: showCancelled ? 'var(--danger-text)' : 'var(--text-subtle)',
+              transition: 'all 0.2s'
+            }}>
+            <Icon name={showCancelled ? 'eye' : 'eyeOff'} size={14} />
+            {showCancelled ? 'Showing Cancelled' : 'Show Cancelled'}
+          </button>
+
+          <div style={{ display: 'flex', gap: 2, background: 'var(--surface-muted)', borderRadius: 10, padding: 3, border: '1px solid var(--border)' }}>
+            {(['day', 'week', 'queue'] as const).map((v) => (
+              <button key={v} onClick={() => setView(v)}
+                style={{ padding: '5px 14px', borderRadius: 8, border: 'none', background: view === v ? 'var(--surface)' : 'transparent', color: view === v ? 'var(--text)' : 'var(--text-muted)', fontSize: 12, fontWeight: view === v ? 600 : 400, cursor: 'pointer', textTransform: 'capitalize' }}>
+                {v}
+              </button>
+            ))}
+          </div>
         </div>
 
         <button onClick={() => canBook && setShowBook(true)}
@@ -318,53 +500,102 @@ export function AppointmentsScreen() {
 
       <div style={{ flex: 1, overflow: 'hidden', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
         {view === 'day' && (
-          <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-            <div style={{ width: 60, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', overflowY: 'auto' }}>
+          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', background: 'var(--bg)', position: 'relative' }}>
+            {/* Labels column */}
+            <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', position: 'relative', minHeight: getHourTop(20) }}>
               {HOURS.map((h) => (
-                <div key={h} style={{ height: HOUR_H, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', paddingRight: 10, paddingTop: 6, fontSize: 11, color: 'var(--text-subtle)', fontVariantNumeric: 'tabular-nums', borderBottom: '1px solid var(--border)', boxSizing: 'border-box' }}>
-                  {String(h).padStart(2, '0')}:00
+                <div key={h} style={{ position: 'absolute', top: getHourTop(h), left: 0, right: 0, height: getHourH(h), borderBottom: '1px solid var(--border)', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ height: h === expandedHour ? EXPANDED_H / 4 : HOUR_H, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', paddingRight: 8, paddingTop: 6, fontSize: 11, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+                    {String(h).padStart(2, '0')}:00
+                  </div>
+                  {h === expandedHour && (['15', '30', '45'] as const).map((m) => (
+                    <div key={m} style={{ height: EXPANDED_H / 4, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', paddingRight: 8, paddingTop: 6, fontSize: 10, color: 'var(--text-subtle)', fontVariantNumeric: 'tabular-nums' }}>
+                      {String(h).padStart(2, '0')}:{m}
+                    </div>
+                  ))}
                 </div>
               ))}
             </div>
-            <div style={{ flex: 1, position: 'relative', background: 'var(--bg)', overflowY: 'auto' }}>
+
+            {/* Grid and Appointments */}
+            <div style={{ flex: 1, position: 'relative', minHeight: getHourTop(20) }}>
               {HOURS.map((h) => (
-                <div key={h} style={{ position: 'absolute', left: 0, right: 0, top: (h - 8) * HOUR_H, height: HOUR_H, borderBottom: '1px solid var(--border)', boxSizing: 'border-box' }} />
-              ))}
-              {loading && (
-                <>
-                  {[
-                    { hh: 1, dur: 0.5 },
-                    { hh: 2.5, dur: 0.75 },
-                    { hh: 4, dur: 1 },
-                    { hh: 6, dur: 0.5 },
-                    { hh: 8.5, dur: 0.75 },
-                  ].map((s, i) => (
-                    <Skeleton key={i} radius={8}
-                      style={{ position: 'absolute', left: 6, right: 6, top: s.hh * HOUR_H + 2, height: s.dur * HOUR_H - 4 }} />
+                <div key={h}
+                  onClick={() => setExpandedHour(expandedHour === h ? null : h)}
+                  style={{
+                    position: 'absolute', left: 0, right: 0, top: getHourTop(h), height: getHourH(h),
+                    borderBottom: '1px solid var(--border)', boxSizing: 'border-box',
+                    cursor: 'zoom-in', transition: 'background 0.2s',
+                    background: expandedHour === h ? 'rgba(59,130,246,0.02)' : 'transparent'
+                  }}>
+                  {h === expandedHour && (['15', '30', '45'] as const).map((m) => (
+                    <div key={m} style={{ position: 'absolute', left: 0, right: 0, top: (parseInt(m) / 60) * EXPANDED_H, height: 1, borderTop: '1px dashed var(--border)' }} />
                   ))}
-                </>
+                </div>
+              ))}
+
+              {loading && (
+                <div style={{ padding: 20 }}>
+                  <Spinner />
+                </div>
               )}
+
               {!loading && dayAppts.length === 0 && !error && (
                 <div style={{ padding: '60px 24px', textAlign: 'center', color: 'var(--text-subtle)' }}>
                   <EmptyState icon="calendar" title="No time-based appointments" hint="Use the Book button to create one." />
                 </div>
               )}
-              {!loading && dayAppts.map((a) => {
-                const startMin = isoToMin(a.startAt);
-                const endMin = isoToMin(a.endAt);
-                const dur = Math.max(endMin - startMin, 15);
-                const top = (startMin - 8 * 60) / 60 * HOUR_H;
-                if (top < 0) return null;
-                const height = Math.max(dur / 60 * HOUR_H - 2, 28);
-                const col = STATUS_COLORS[statusKey(a.status)] ?? STATUS_COLORS.BOOKED;
-                return (
-                  <div key={a._id} onClick={() => setSelected(a)}
-                    style={{ position: 'absolute', left: 4, right: 4, top, height, background: col.bg, border: `1.5px solid ${col.border}`, borderRadius: 8, padding: '4px 8px', cursor: 'pointer', overflow: 'hidden', zIndex: 1 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: col.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{getName(a.patientId)}</div>
-                    {height > 38 && <div style={{ fontSize: 10, color: col.text, opacity: 0.8, marginTop: 1 }}>{isoToTime(a.startAt)} → {isoToTime(a.endAt)}</div>}
-                  </div>
-                );
-              })}
+
+              {(() => {
+                const dayLayout = computeDayLayout(dayAppts);
+                return dayAppts.map((a) => {
+                  const startMin = isoToMin(a.startAt);
+                  const hStart = Math.floor(startMin / 60);
+                  const isExpanded = hStart === expandedHour;
+
+                  const top = getTimeTop(a.startAt);
+                  const bottom = getTimeTop(a.endAt);
+                  const height = Math.max(bottom - top, isExpanded ? 32 : 6);
+
+                  if (top < 0) return null;
+
+                  const col = STATUS_COLORS[statusKey(a.status)] ?? STATUS_COLORS.BOOKED;
+                  const layout = dayLayout.get(a._id) ?? { left: '8px', width: 'calc(100% - 16px)' };
+
+                  if (!isExpanded) {
+                    return (
+                      <div key={a._id}
+                        title={`${getName(a.patientId)} (${isoToTime(a.startAt)})`}
+                        style={{
+                          position: 'absolute', left: layout.left, width: layout.width,
+                          top: top + (HOUR_H / 2) - 3, height: 6,
+                          background: col.border, borderRadius: 3, opacity: 0.6, cursor: 'pointer',
+                          zIndex: 1
+                        }}
+                        onClick={(e) => { e.stopPropagation(); setExpandedHour(hStart); }}
+                      />
+                    );
+                  }
+
+                  return (
+                    <div key={a._id} onClick={(e) => { e.stopPropagation(); setSelected(a); }}
+                      style={{
+                        position: 'absolute', left: layout.left, width: layout.width,
+                        top: top + 2, height: height - 4,
+                        background: col.bg, border: `1.5px solid ${col.border}`,
+                        borderRadius: 10, padding: '6px 10px', cursor: 'pointer', overflow: 'hidden', zIndex: 2,
+                        boxShadow: 'var(--e1)', display: 'flex', flexDirection: 'column', gap: 2
+                      }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: col.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {getName(a.patientId)}
+                      </div>
+                      <div style={{ fontSize: 10, color: col.text, opacity: 0.8 }}>
+                        {isoToTime(a.startAt)} → {isoToTime(a.endAt)}
+                      </div>
+                    </div>
+                  );
+                });
+              })()}
             </div>
           </div>
         )}
@@ -377,6 +608,7 @@ export function AppointmentsScreen() {
             getName={getName}
             onSelect={setSelected}
             onPickDay={(d) => { setDate(d); setView('day'); }}
+            showCancelled={showCancelled}
           />
         )}
 
@@ -402,7 +634,9 @@ export function AppointmentsScreen() {
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{getName(a.patientId)}</div>
-                      <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>Doctor {a.doctorId.slice(-6)}</div>
+                      <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>
+                        {doctors.get(a.doctorId) ? `Dr. ${doctors.get(a.doctorId)}` : `Doctor #${a.doctorId.slice(-8).toUpperCase()}`}
+                      </div>
                     </div>
                     <StatusPill status={statusToken(a.status)} small />
                   </div>
@@ -414,7 +648,12 @@ export function AppointmentsScreen() {
       </div>
 
       {selected && (
-        <ApptSheet appt={selected} patientName={getName(selected.patientId)} onClose={() => setSelected(null)}
+        <ApptSheet
+          appt={selected}
+          patientName={getName(selected.patientId)}
+          doctorName={doctors.get(selected.doctorId)}
+          patientRef={patientRefLabel(patients.get(selected.patientId), selected.patientId)}
+          onClose={() => setSelected(null)}
           onChanged={() => { setSelected(null); void load(); }} />
       )}
 
@@ -430,7 +669,16 @@ export function AppointmentsScreen() {
   );
 }
 
-function ApptSheet({ appt, patientName, onClose, onChanged }: { appt: Appointment; patientName: string; onClose: () => void; onChanged: () => void }) {
+function ApptSheet({
+  appt, patientName, doctorName, patientRef, onClose, onChanged,
+}: {
+  appt: Appointment;
+  patientName: string;
+  doctorName?: string;
+  patientRef?: string;
+  onClose: () => void;
+  onChanged: () => void;
+}) {
   const { ctx, setScreen, setSelectedAppointmentId } = useApp();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
@@ -488,14 +736,14 @@ function ApptSheet({ appt, patientName, onClose, onChanged }: { appt: Appointmen
             <Avatar name={patientName} size={44} />
             <div>
               <div style={{ fontWeight: 600, fontSize: 15, color: 'var(--text)' }}>{patientName}</div>
-              <div style={{ fontSize: 12, color: 'var(--text-subtle)', fontFamily: 'monospace' }}>{appt.patientId.slice(-12)}</div>
+              <div style={{ fontSize: 12, color: 'var(--text-subtle)', fontFamily: 'monospace' }}>{patientRef ?? `#${appt.patientId.slice(-6)}`}</div>
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <Cell label="Doctor" value={appt.doctorId.slice(-8)} />
+            <Cell label="Doctor" value={doctorName ? `Dr. ${doctorName}` : appt.doctorId.slice(-8)} />
             <Cell label="Status" value={statusToken(appt.status)} />
             <Cell label="Type" value={appt.type} />
-            <Cell label="ID" value={appt._id.slice(-8)} />
+            <Cell label="ID" value={`#${appt._id.slice(-8).toUpperCase()}`} />
           </div>
           <div><StatusPill status={statusToken(appt.status)} /></div>
           {appt.notes && <div style={{ fontSize: 13, color: 'var(--text-muted)', background: 'var(--surface-muted)', padding: 12, borderRadius: 10 }}>{appt.notes}</div>}
@@ -549,7 +797,15 @@ const APPT_TYPES = ['Consultation', 'Follow-up', 'Procedure', 'Telemedicine'] as
 const ROOMS = ['Room 1', 'Room 2', 'Room 3'] as const;
 const DURATIONS = [15, 20, 30, 45, 60] as const;
 
-type SlotChoice = { startAt: string; endAt: string; label: string };
+type SlotStatus = 'available' | 'booked' | 'past' | 'too-short';
+
+type SlotChoice = {
+  startAt: string;
+  endAt: string;
+  label: string;
+  status: SlotStatus;
+  bookedBy?: { apptId: string; patientName: string | null; status: string } | null;
+};
 
 function getAge(dob?: string): number | null {
   if (!dob) return null;
@@ -609,8 +865,12 @@ function BookSheet({
   const [slotMinutes, setSlotMinutes] = useState<number>(15);
   const [apptType, setApptType] = useState<typeof APPT_TYPES[number]>('Consultation');
   const [duration, setDuration] = useState<number>(30);
-  const [doctorId] = useState(ctx.userId);
-  const [doctorName, setDoctorName] = useState(ctx.fullName ? `Dr. ${ctx.fullName}` : 'Doctor');
+  // Doctor identity is what the slot endpoint queries availability for.
+  // It defaults to the signed-in user (the common single-doctor case) but
+  // is editable so a receptionist booking on someone else's behalf doesn't
+  // silently query the wrong doctor's hours — the bug we shipped this for.
+  const [doctorId, setDoctorId] = useState(ctx.userId);
+  const [doctors, setDoctors] = useState<Array<{ _id: string; name: string }>>([]);
   const [room, setRoom] = useState<typeof ROOMS[number]>('Room 1');
   const [notes, setNotes] = useState('');
 
@@ -642,44 +902,80 @@ function BookSheet({
       .catch(() => undefined);
   }, [defaultPatientId, ctx]);
 
-  // Load doctor name (best effort) — /me wraps the user under .user
+  // Pull the clinic's user list so the doctor picker has names instead of
+  // raw ObjectIds. Falls back gracefully if the caller lacks user:read —
+  // in that case the picker degrades to a one-option list (the signed-in
+  // user), which preserves the previous behavior.
   useEffect(() => {
-    if (!doctorId.trim() || ctx.fullName) return;
-    apiGet<{ user?: { name?: string; fullName?: string } }>(ctx, `/me`).then((res) => {
-      const n = res.user?.fullName ?? res.user?.name;
-      if (n) setDoctorName(`Dr. ${n}`);
-    }).catch(() => undefined);
-  }, [doctorId, ctx]);
+    apiGet<Array<{ _id: string; name: string }>>(ctx, '/users')
+      .then((list) => setDoctors(list))
+      .catch(() => setDoctors([]));
+  }, [ctx.clinicId, ctx.accessToken]);
 
-  // Whenever ctx.fullName becomes available (e.g., after /me lands), update label
-  useEffect(() => {
-    if (ctx.fullName) setDoctorName(`Dr. ${ctx.fullName}`);
-  }, [ctx.fullName]);
+  // Resolve the picked doctor's display label. Prefer the users list (so
+  // switching the picker updates the label), then fall back to ctx.fullName
+  // when the picked doctor is the signed-in user, then to a generic label.
+  const doctorName = useMemo(() => {
+    const match = doctors.find((d) => d._id === doctorId);
+    if (match) return `Dr. ${match.name}`;
+    if (doctorId === ctx.userId && ctx.fullName) return `Dr. ${ctx.fullName}`;
+    return 'Doctor';
+  }, [doctorId, doctors, ctx.userId, ctx.fullName]);
 
-  // Load available slots (step 2) when doctor / date changes (TIME only)
+  // Load slots (step 2) when doctor / date / duration changes (TIME only).
+  // The duration is sent to the backend so each slot's status reflects
+  // whether the chosen length actually fits before the next conflict /
+  // window-end. Without this the picker would show "available" for slots
+  // that would 409 on submit because the duration spills past a booking.
   useEffect(() => {
     if (step !== 2 || apptKind !== 'TIME' || !doctorId.trim() || !date || !ctx.branchId) {
       setSlots([]);
       return;
     }
     setSlotsLoading(true);
-    const qs = new URLSearchParams({ branchId: ctx.branchId, date });
-    apiGet<{ slotMinutes?: number; slots: { startAt: string; endAt: string }[] }>(
-      ctx,
-      `/availability/doctors/${doctorId.trim()}/day?${qs.toString()}`,
-    )
+    const qs = new URLSearchParams({
+      branchId: ctx.branchId,
+      date,
+      doctorId: doctorId.trim(),
+      duration: String(duration),
+    });
+    apiGet<{
+      slotMinutes?: number;
+      durationMinutes?: number;
+      slots: Array<{
+        startAt: string;
+        endAt: string;
+        status?: SlotStatus;
+        bookedBy?: { apptId: string; patientName: string | null; status: string };
+      }>;
+    }>(ctx, `/appointments/slots?${qs.toString()}`)
       .then((r) => {
-        const labeled = (r.slots ?? []).map((s) => ({ ...s, label: fmtSlotLabel(s.startAt) }));
+        const labeled: SlotChoice[] = (r.slots ?? []).map((s) => ({
+          startAt: s.startAt,
+          endAt: s.endAt,
+          label: fmtSlotLabel(s.startAt),
+          status: (s.status ?? 'available') as SlotStatus,
+          bookedBy: s.bookedBy ?? null,
+        }));
         setSlots(labeled);
         if (typeof r.slotMinutes === 'number' && r.slotMinutes > 0) setSlotMinutes(r.slotMinutes);
-        if (labeled.length && !labeled.find((s) => s.label === slotStart)) {
-          setSlotStart(labeled[0].label);
+        // Auto-pick the first AVAILABLE slot — never booked, past, or
+        // too-short. If the receptionist switches duration and their
+        // selected slot becomes unavailable, we rotate to a still-valid one.
+        const firstAvail = labeled.find((s) => s.status === 'available');
+        const stillValid = labeled.find(
+          (s) => s.label === slotStart && s.status === 'available',
+        );
+        if (firstAvail && !stillValid) {
+          setSlotStart(firstAvail.label);
+        } else if (!firstAvail) {
+          setSlotStart('');
         }
       })
       .catch(() => setSlots([]))
       .finally(() => setSlotsLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, apptKind, doctorId, date, ctx.branchId]);
+  }, [step, apptKind, doctorId, date, ctx.branchId, duration]);
 
   function continueFromStep1() {
     if (!selectedPatient) return;
@@ -712,6 +1008,14 @@ function BookSheet({
         if (!slotStart) { setError('Time slot is required.'); setSaving(false); return; }
         const start = combineToIso(date, slotStart);
         const end = new Date(start.getTime() + duration * 60_000);
+        // Defence-in-depth — if the modal sat open across midnight, or
+        // a slot polled "available" minutes ago is now in the past, fail
+        // before the round-trip rather than waiting for a 400.
+        if (start.getTime() < Date.now()) {
+          setError('That time slot is in the past — pick a future slot.');
+          setSaving(false);
+          return;
+        }
         const composedNotes = [apptType, room, notes.trim()].filter(Boolean).join(' · ');
         await apiPost(ctx, '/appointments', {
           type: 'TIME',
@@ -778,6 +1082,8 @@ function BookSheet({
               slots={slots} slotsLoading={slotsLoading} slotMinutes={slotMinutes}
               apptType={apptType} setApptType={setApptType}
               duration={duration} setDuration={setDuration}
+              doctorId={doctorId} setDoctorId={setDoctorId}
+              doctors={doctors}
               doctorName={doctorName}
               room={room} setRoom={setRoom}
               notes={notes} setNotes={setNotes}
@@ -907,7 +1213,8 @@ function DetailsStep({
   apptKind, setApptKind,
   date, setDate, slotStart, setSlotStart, slots, slotsLoading, slotMinutes,
   apptType, setApptType, duration, setDuration,
-  doctorName, room, setRoom, notes, setNotes,
+  doctorId, setDoctorId, doctors, doctorName,
+  room, setRoom, notes, setNotes,
 }: {
   patient: PatientLite | null;
   onChangePatient: () => void;
@@ -917,6 +1224,8 @@ function DetailsStep({
   slots: SlotChoice[]; slotsLoading: boolean; slotMinutes: number;
   apptType: typeof APPT_TYPES[number]; setApptType: (v: typeof APPT_TYPES[number]) => void;
   duration: number; setDuration: (v: number) => void;
+  doctorId: string; setDoctorId: (v: string) => void;
+  doctors: Array<{ _id: string; name: string }>;
   doctorName: string;
   room: typeof ROOMS[number]; setRoom: (v: typeof ROOMS[number]) => void;
   notes: string; setNotes: (v: string) => void;
@@ -1020,9 +1329,12 @@ function DetailsStep({
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
           <div>
             <label style={labelStyle}>Doctor</label>
-            <select value={doctorName} disabled style={{ ...selectStyle, opacity: 0.85 }}>
-              <option>{doctorName}</option>
-            </select>
+            <DoctorPicker
+              doctorId={doctorId}
+              setDoctorId={setDoctorId}
+              doctors={doctors}
+              fallbackLabel={doctorName}
+            />
           </div>
           <div>
             <label style={labelStyle}>Room</label>
@@ -1034,9 +1346,12 @@ function DetailsStep({
       ) : (
         <div>
           <label style={labelStyle}>Doctor</label>
-          <select value={doctorName} disabled style={{ ...selectStyle, opacity: 0.85 }}>
-            <option>{doctorName}</option>
-          </select>
+          <DoctorPicker
+            doctorId={doctorId}
+            setDoctorId={setDoctorId}
+            doctors={doctors}
+            fallbackLabel={doctorName}
+          />
         </div>
       )}
 
@@ -1065,8 +1380,10 @@ function TimeSlotGrid({
   value: string;
   onChange: (v: string) => void;
 }) {
-  // Day window: 08:00–20:00 in `slotMinutes` increments. Wide enough for typical
-  // clinic hours; ones outside the doctor's rules render faded/disabled.
+  // Day window: 08:00–20:00 in `slotMinutes` increments. Wide enough for
+  // typical clinic hours; slots the doctor's rules don't cover render as
+  // dim "off-hours" cells. Backend-returned slots that fall outside this
+  // window get added so we never silently hide the doctor's actual hours.
   const startMin = 8 * 60;
   const endMin = 20 * 60;
   const step = Math.max(5, Math.min(180, slotMinutes || 15));
@@ -1074,50 +1391,204 @@ function TimeSlotGrid({
   for (let m = startMin; m + step <= endMin; m += step) {
     grid.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
   }
-  // Make sure any backend-returned slots that fall outside the default window still appear.
   for (const s of available) if (!grid.includes(s.label)) grid.push(s.label);
   grid.sort();
 
-  const availSet = new Set(available.map((s) => s.label));
+  // O(1) lookup from grid label → slot status / metadata.
+  const slotByLabel = new Map(available.map((s) => [s.label, s]));
 
   return (
-    <div style={{
-      display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 6,
-      maxHeight: 240, overflowY: 'auto',
-      padding: 8, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
-    }}>
-      {grid.map((t) => {
-        const isAvail = availSet.has(t);
-        const isSelected = isAvail && t === value;
-        return (
-          <button
-            key={t}
-            type="button"
-            disabled={!isAvail}
-            onClick={() => isAvail && onChange(t)}
-            style={{
-              padding: '7px 4px',
-              border: `1.5px solid ${isSelected ? 'var(--brand-500)' : (isAvail ? 'var(--border)' : 'transparent')}`,
-              borderRadius: 8,
-              background: isSelected ? 'var(--brand-50)' : 'var(--surface)',
-              color: isSelected ? 'var(--brand-600)' : 'var(--text)',
-              opacity: isAvail ? 1 : 0.32,
-              fontSize: 12,
-              fontFamily: 'monospace',
-              fontWeight: isSelected ? 700 : 600,
-              cursor: isAvail ? 'pointer' : 'not-allowed',
-              transition: 'all 120ms',
-            }}>
-            {t}
-          </button>
-        );
-      })}
-      {grid.length === 0 && (
-        <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 12, fontSize: 12, color: 'var(--text-subtle)' }}>
-          No slots configured.
-        </div>
-      )}
+    <div>
+      <div style={{
+        display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 6,
+        maxHeight: 240, overflowY: 'auto',
+        padding: 8, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
+      }}>
+        {grid.map((t) => {
+          const slot = slotByLabel.get(t);
+          // The doctor doesn't have rules for this minute → off-hours.
+          // Render a dim placeholder so the grid keeps its rhythm without
+          // looking like a bookable slot.
+          if (!slot) {
+            return (
+              <button
+                key={t}
+                type="button"
+                disabled
+                title="Doctor not available"
+                style={offHoursStyle}>
+                {t}
+              </button>
+            );
+          }
+
+          const isSelected = slot.status === 'available' && t === value;
+          const isClickable = slot.status === 'available';
+          const tooltip =
+            slot.status === 'booked'
+              ? `Booked${slot.bookedBy?.patientName ? ` · ${slot.bookedBy.patientName}` : ''}`
+              : slot.status === 'past'
+                ? 'Past time'
+                : slot.status === 'too-short'
+                  ? "Doesn't fit selected duration"
+                  : undefined;
+
+          return (
+            <button
+              key={t}
+              type="button"
+              disabled={!isClickable}
+              title={tooltip}
+              onClick={() => isClickable && onChange(t)}
+              style={slotStyle(slot.status, isSelected)}>
+              <span style={{ display: 'block', lineHeight: 1.1 }}>{t}</span>
+              {slot.status === 'booked' && (
+                <span style={{ display: 'block', fontSize: 9, fontWeight: 700, color: 'var(--danger-500)', marginTop: 1, letterSpacing: '0.04em' }}>
+                  {slot.bookedBy?.patientName
+                    ? slot.bookedBy.patientName
+                      .split(/\s+/)
+                      .map((p) => p[0])
+                      .filter(Boolean)
+                      .slice(0, 2)
+                      .join('')
+                      .toUpperCase()
+                    : 'BOOKED'}
+                </span>
+              )}
+            </button>
+          );
+        })}
+        {grid.length === 0 && (
+          <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 12, fontSize: 12, color: 'var(--text-subtle)' }}>
+            No slots configured.
+          </div>
+        )}
+      </div>
+
+      <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11, color: 'var(--text-subtle)', flexWrap: 'wrap' }}>
+        <Legend swatch="var(--surface)" border="var(--border)" label="Available" />
+        <Legend swatch="rgba(239,68,68,0.12)" border="rgba(239,68,68,0.4)" label="Booked" />
+        <Legend swatch="var(--surface-muted)" border="var(--border)" label="Past" />
+        <Legend swatch="rgba(245,158,11,0.08)" border="rgba(245,158,11,0.35)" label="Won't fit duration" />
+      </div>
     </div>
+  );
+}
+
+const offHoursStyle: React.CSSProperties = {
+  padding: '7px 4px',
+  border: '1.5px dashed var(--border)',
+  borderRadius: 8,
+  background: 'transparent',
+  color: 'var(--text-subtle)',
+  opacity: 0.35,
+  fontSize: 12,
+  fontFamily: 'monospace',
+  fontWeight: 500,
+  cursor: 'not-allowed',
+  textDecoration: 'line-through',
+};
+
+function slotStyle(status: SlotStatus, isSelected: boolean): React.CSSProperties {
+  const base: React.CSSProperties = {
+    padding: '7px 4px',
+    borderRadius: 8,
+    fontSize: 12,
+    fontFamily: 'monospace',
+    transition: 'all 120ms',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+  };
+  if (status === 'available') {
+    return {
+      ...base,
+      border: `1.5px solid ${isSelected ? 'var(--brand-500)' : 'var(--border)'}`,
+      background: isSelected ? 'var(--brand-50)' : 'var(--surface)',
+      color: isSelected ? 'var(--brand-600)' : 'var(--text)',
+      fontWeight: isSelected ? 700 : 600,
+      cursor: 'pointer',
+    };
+  }
+  if (status === 'booked') {
+    // A clear "this is taken" affordance — soft red wash + dashed
+    // border so it visually reads as occupied without looking like an
+    // error. Patient initials render below; full name is in the tooltip.
+    return {
+      ...base,
+      border: '1.5px solid rgba(239,68,68,0.4)',
+      background: 'rgba(239,68,68,0.08)',
+      color: 'var(--danger-500)',
+      fontWeight: 600,
+      cursor: 'not-allowed',
+    };
+  }
+  if (status === 'too-short') {
+    // Distinct from "past" so the operator immediately sees that the
+    // current duration choice is the reason — switch to a shorter
+    // duration and these slots come back as available.
+    return {
+      ...base,
+      border: '1.5px dashed rgba(245,158,11,0.35)',
+      background: 'rgba(245,158,11,0.06)',
+      color: 'var(--text-subtle)',
+      fontWeight: 500,
+      cursor: 'not-allowed',
+      opacity: 0.7,
+    };
+  }
+  // past
+  return {
+    ...base,
+    border: '1.5px solid var(--border)',
+    background: 'var(--surface-muted)',
+    color: 'var(--text-subtle)',
+    fontWeight: 500,
+    cursor: 'not-allowed',
+    textDecoration: 'line-through',
+    opacity: 0.55,
+  };
+}
+
+function Legend({ swatch, border, label }: { swatch: string; border: string; label: string }) {
+  return (
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}>
+      <span style={{ width: 12, height: 12, borderRadius: 3, background: swatch, border: `1.5px solid ${border}`, display: 'inline-block' }} />
+      {label}
+    </span>
+  );
+}
+
+function DoctorPicker({
+  doctorId, setDoctorId, doctors, fallbackLabel,
+}: {
+  doctorId: string;
+  setDoctorId: (v: string) => void;
+  doctors: Array<{ _id: string; name: string }>;
+  fallbackLabel: string;
+}) {
+  // If the current doctorId isn't in the fetched list (e.g., the caller
+  // lacks user:read or the list hasn't landed yet), surface a synthetic
+  // option so the picker shows *something* coherent instead of going
+  // blank — the value attribute drives the selection.
+  const inList = doctors.some((d) => d._id === doctorId);
+  return (
+    <select
+      value={doctorId}
+      onChange={(e) => setDoctorId(e.target.value)}
+      style={selectStyle}
+    >
+      {!inList && doctorId && (
+        <option value={doctorId}>{fallbackLabel}</option>
+      )}
+      {doctors.map((d) => (
+        <option key={d._id} value={d._id}>Dr. {d.name}</option>
+      ))}
+      {doctors.length === 0 && !doctorId && (
+        <option value="">— no doctors available —</option>
+      )}
+    </select>
   );
 }
 
@@ -1131,19 +1602,19 @@ function ConfirmStep({
 }) {
   const rows: { label: string; value: string; icon: 'user' | 'calendar' | 'clock' | 'clipboard' | 'stethoscope' | 'mapPin' }[] = apptKind === 'QUEUE'
     ? [
-        { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
-        { label: 'Date',    value: date || '—',              icon: 'calendar' },
-        { label: 'Type',    value: 'Walk-in queue',          icon: 'clipboard' },
-        { label: 'Doctor',  value: doctorName,               icon: 'stethoscope' },
-      ]
+      { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
+      { label: 'Date', value: date || '—', icon: 'calendar' },
+      { label: 'Type', value: 'Walk-in queue', icon: 'clipboard' },
+      { label: 'Doctor', value: doctorName, icon: 'stethoscope' },
+    ]
     : [
-        { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
-        { label: 'Date',    value: date || '—',                icon: 'calendar' },
-        { label: 'Time',    value: `${time || '—'} · ${duration} min`, icon: 'clock' },
-        { label: 'Type',    value: apptType,                   icon: 'clipboard' },
-        { label: 'Doctor',  value: doctorName,                 icon: 'stethoscope' },
-        { label: 'Room',    value: room,                       icon: 'mapPin' },
-      ];
+      { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
+      { label: 'Date', value: date || '—', icon: 'calendar' },
+      { label: 'Time', value: `${time || '—'} · ${duration} min`, icon: 'clock' },
+      { label: 'Type', value: apptType, icon: 'clipboard' },
+      { label: 'Doctor', value: doctorName, icon: 'stethoscope' },
+      { label: 'Room', value: room, icon: 'mapPin' },
+    ];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
       <div style={{ width: 64, height: 64, borderRadius: 16, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginTop: 4 }}>

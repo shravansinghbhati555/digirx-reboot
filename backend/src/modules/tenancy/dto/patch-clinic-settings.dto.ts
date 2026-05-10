@@ -7,8 +7,10 @@ import {
   IsString,
   IsUrl,
   Length,
+  Matches,
   Max,
   Min,
+  ValidateIf,
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
@@ -37,6 +39,24 @@ class PatchChannelToggleDto {
   enabled?: boolean;
 }
 
+// HH:MM 24-hour. `null` = clear that side of the window. Both null = quiet
+// hours disabled. Mirroring the QuietHours type in clinic-settings.types.ts.
+const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+class PatchQuietHoursDto {
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @Matches(HHMM, { message: 'start must be HH:MM (24-hour) or null' })
+  start?: string | null;
+
+  @IsOptional()
+  @ValidateIf((_, v) => v !== null)
+  @IsString()
+  @Matches(HHMM, { message: 'end must be HH:MM (24-hour) or null' })
+  end?: string | null;
+}
+
 class PatchNotificationsDto {
   @IsOptional()
   @ValidateNested()
@@ -47,6 +67,11 @@ class PatchNotificationsDto {
   @ValidateNested()
   @Type(() => PatchChannelToggleDto)
   whatsapp?: PatchChannelToggleDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PatchQuietHoursDto)
+  quietHours?: PatchQuietHoursDto;
 }
 
 class PatchModulesDto {

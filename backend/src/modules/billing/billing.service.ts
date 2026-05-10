@@ -1,17 +1,24 @@
 import {
   BadRequestException,
+  forwardRef,
+  Inject,
   Injectable,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { computeTotals } from './billing.utils';
+import { BillNumberingService } from './bill-numbering.service';
+import { CreditNotesService } from '../credit-notes/credit-notes.service';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
 import { Bill, BillLineItem, BillStatus } from './schemas/bill.schema';
 import { Payment } from './schemas/payment.schema';
 import { ServiceCatalogItem } from './schemas/service-catalog-item.schema';
+import { Clinic } from '../tenancy/schemas/clinic.schema';
+
+const CURRENCY_RE = /^[A-Z]{3}$/;
 
 @Injectable()
 export class BillingService {
@@ -20,6 +27,13 @@ export class BillingService {
     @InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
     @InjectModel(ServiceCatalogItem.name)
     private readonly serviceModel: Model<ServiceCatalogItem>,
+    @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
+    private readonly numbering: BillNumberingService,
+    // forwardRef breaks the BillingModule ↔ CreditNotesModule cycle: each
+    // depends on the other (this for void-blocking; CN service for the Bill
+    // schema). Nest resolves it after both modules have initialized.
+    @Inject(forwardRef(() => CreditNotesService))
+    private readonly creditNotes: CreditNotesService,
   ) {}
 
   async createBill(
@@ -43,8 +57,7 @@ export class BillingService {
       tax: dto.tax,
     });
 
-    const currency = (dto.currency ?? 'INR').trim();
-    if (!currency) throw new BadRequestException('currency is required');
+    const currency = await this.resolveCurrency(clinicId, dto.currency);
 
     return await this.billModel.create({
       clinicId,
@@ -98,18 +111,102 @@ export class BillingService {
 
   async issueBill(clinicId: Types.ObjectId, id: string) {
     const bill = await this.getBill(clinicId, id);
-    if (bill.status !== BillStatus.Draft)
+    if (bill.status !== BillStatus.Draft) {
       throw new BadRequestException('Only draft bills can be issued');
+    }
 
-    // Basic billNo generation: BRANCHID-YYYYMMDD-<shortId>. Replace with configurable rules later.
-    const d = new Date();
-    const ymd = `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, '0')}${String(d.getUTCDate()).padStart(2, '0')}`;
-    bill.billNo = `${bill.branchId.toHexString().slice(-6).toUpperCase()}-${ymd}-${bill._id.toHexString().slice(-6).toUpperCase()}`;
-    bill.status = BillStatus.Issued;
-    bill.issuedAt = new Date();
+    const issuedAt = new Date();
+    const billNo = await this.numbering.mint(
+      clinicId,
+      bill.branchId,
+      issuedAt,
+    );
 
-    await bill.save();
-    return bill;
+    // Status-gated atomic update so two concurrent issue calls on the same
+    // DRAFT bill don't both set a billNo. The "loser" sees a null match
+    // and returns the bill as it stands; the minted number on the loser's
+    // counter is wasted (sequence may have a gap) — auditors prefer gaps
+    // to duplicates.
+    const updated = await this.billModel.findOneAndUpdate(
+      { _id: bill._id, clinicId, status: BillStatus.Draft },
+      { $set: { billNo, status: BillStatus.Issued, issuedAt } },
+      { new: true },
+    );
+    if (updated) return updated;
+
+    return await this.getBill(clinicId, id);
+  }
+
+  /**
+   * Void a bill with a required reason. Allowed transitions:
+   *   - DRAFT  → 400 (delete the draft instead — voiding it would muddy reports)
+   *   - ISSUED → VOID  (cash, if any, stays recorded; refund via credit note)
+   *   - PAID   → VOID  (same — voiding does NOT refund)
+   *   - VOID   → idempotent no-op, returns the existing void record
+   */
+  async voidBill(
+    clinicId: Types.ObjectId,
+    actorUserId: Types.ObjectId | undefined,
+    id: string,
+    reason: string,
+  ): Promise<Bill> {
+    const bill = await this.getBill(clinicId, id);
+
+    if (bill.status === BillStatus.Void) {
+      // Idempotent: a retry that finds the bill already voided gets the same
+      // record back without bumping voidedAt or overwriting the reason.
+      return bill;
+    }
+    if (bill.status === BillStatus.Draft) {
+      throw new BadRequestException(
+        'Cannot void a draft bill — delete it instead, or issue it first',
+      );
+    }
+
+    const trimmed = reason.trim();
+    if (!trimmed) throw new BadRequestException('reason is required');
+
+    // Block void when active credit notes exist. Voiding here would leave
+    // the books unbalanced — the CN amount counts as a refund obligation
+    // against a bill that no longer exists for revenue purposes. Operators
+    // must explicitly cancel any ISSUED CNs before voiding the bill.
+    const credited = await this.creditNotes.sumActiveCredits(
+      clinicId,
+      bill._id,
+    );
+    if (credited > 0) {
+      throw new BadRequestException(
+        `Cannot void: bill has active credit notes totalling ${credited.toFixed(
+          2,
+        )}. Refund or cancel them first.`,
+      );
+    }
+
+    // Status-gated atomic update so a concurrent payment / second void can't
+    // race past us. The CAS filter accepts ISSUED|PAID; any other transition
+    // (DRAFT, VOID) was already handled above.
+    const updated = await this.billModel.findOneAndUpdate(
+      {
+        _id: bill._id,
+        clinicId,
+        status: { $in: [BillStatus.Issued, BillStatus.Paid] },
+      },
+      {
+        $set: {
+          status: BillStatus.Void,
+          voidReason: trimmed,
+          voidedAt: new Date(),
+          voidedBy: actorUserId,
+        },
+      },
+      { new: true },
+    );
+    if (!updated) {
+      // Lost a race — re-fetch and let the idempotent VOID branch above
+      // (called by the caller's retry, if any) handle it.
+      return await this.getBill(clinicId, id);
+    }
+    return updated;
   }
 
   async addPayment(
@@ -193,11 +290,17 @@ export class BillingService {
 
   async listBills(
     clinicId: Types.ObjectId,
-    opts: { branchId?: string; status?: string; limit?: number } = {},
+    opts: { branchId?: string; patientId?: string; status?: string; limit?: number } = {},
   ) {
-    const { branchId, status, limit = 100 } = opts;
+    const { branchId, patientId, status, limit = 100 } = opts;
     const match: Record<string, unknown> = { clinicId };
     if (branchId) match.branchId = new Types.ObjectId(branchId);
+    // Patient filter — without this, /bills?patientId=… returned every bill
+    // in the clinic and the FE rendered them under whichever patient was
+    // currently selected. Real cross-patient leak inside a tenant.
+    if (patientId && Types.ObjectId.isValid(patientId)) {
+      match.patientId = new Types.ObjectId(patientId);
+    }
     if (status) {
       const upper = status.toUpperCase();
       if (
@@ -269,11 +372,62 @@ export class BillingService {
     });
   }
 
-  async listServices(clinicId: Types.ObjectId) {
+  async listServices(
+    clinicId: Types.ObjectId,
+    opts: { query?: string; activeOnly?: boolean; limit?: number } = {},
+  ) {
+    const limit = Math.max(1, Math.min(200, opts.limit ?? 200));
+    const filter: Record<string, unknown> = { clinicId };
+    if (opts.activeOnly !== false) filter.active = true;
+
+    const q = (opts.query ?? '').trim();
+    if (q) {
+      // Try the text index first (matches whole-word tokens). If it returns
+      // nothing — common for 2-3 char autocomplete prefixes that the text
+      // index doesn't tokenise — fall back to a regex prefix match.
+      const textHits = await this.serviceModel
+        .find(
+          { ...filter, $text: { $search: q } },
+          { score: { $meta: 'textScore' } },
+        )
+        .sort({ score: { $meta: 'textScore' } })
+        .limit(limit);
+      if (textHits.length) return textHits;
+
+      const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      return await this.serviceModel
+        .find({ ...filter, name: { $regex: escaped, $options: 'i' } })
+        .sort({ name: 1 })
+        .limit(limit);
+    }
+
     return await this.serviceModel
-      .find({ clinicId, active: true })
+      .find(filter)
       .sort({ name: 1 })
-      .limit(200);
+      .limit(limit);
+  }
+
+  /**
+   * If the caller passes a currency, validate it's an ISO-4217 3-letter
+   * code; otherwise default to the clinic's configured currency. Final
+   * fallback is 'INR' so the service is never blocked on a clinic doc
+   * that's missing the field.
+   */
+  private async resolveCurrency(
+    clinicId: Types.ObjectId,
+    requested: string | undefined,
+  ): Promise<string> {
+    if (requested !== undefined) {
+      const upper = requested.trim().toUpperCase();
+      if (!CURRENCY_RE.test(upper)) {
+        throw new BadRequestException(
+          'currency must be a 3-letter ISO 4217 code (e.g. INR, USD)',
+        );
+      }
+      return upper;
+    }
+    const clinic = await this.clinicModel.findById(clinicId);
+    return (clinic?.currency || 'INR').toUpperCase();
   }
 
   private async mapItems(

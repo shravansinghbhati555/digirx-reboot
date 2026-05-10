@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   NotFoundException,
@@ -7,10 +8,22 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Permission } from './permissions';
-import { Role } from './schemas/role.schema';
+import { Role, type RoleDocument } from './schemas/role.schema';
 
 const ADMIN_ROLE_NAME = 'Admin';
 const ALL_PERMISSIONS = new Set<string>(Object.values(Permission));
+
+function validatePermissionList(permissions: string[]): Permission[] {
+  const unknown = permissions.filter((p) => !ALL_PERMISSIONS.has(p));
+  if (unknown.length) {
+    throw new BadRequestException(
+      `Unknown permission(s): ${unknown.join(', ')}`,
+    );
+  }
+  // De-duplicate while preserving order so callers can read back exactly what
+  // the role will store.
+  return Array.from(new Set(permissions)) as Permission[];
+}
 
 @Injectable()
 export class RolesService {
@@ -31,6 +44,44 @@ export class RolesService {
     }));
   }
 
+  async create(clinicId: Types.ObjectId, name: string, permissions: string[]) {
+    const trimmed = name.trim();
+    if (!trimmed) throw new BadRequestException('name is required');
+    if (trimmed === ADMIN_ROLE_NAME) {
+      // The seed script provisions Admin with the full enum; preventing
+      // creation here keeps the "Admin is immutable" invariant intact.
+      throw new BadRequestException(
+        `'${ADMIN_ROLE_NAME}' is reserved and cannot be created`,
+      );
+    }
+    const validated = validatePermissionList(permissions);
+
+    // Mongoose's `create()` overloads include an array form, which makes the
+    // inferred return type a union; pin it to a single doc explicitly.
+    let role: RoleDocument;
+    try {
+      role = (await this.roleModel.create({
+        clinicId,
+        name: trimmed,
+        permissions: validated,
+      })) as RoleDocument;
+    } catch (err: any) {
+      if (err?.code === 11000) {
+        throw new ConflictException(
+          `A role named '${trimmed}' already exists in this clinic`,
+        );
+      }
+      throw err;
+    }
+
+    return {
+      _id: String(role._id),
+      name: role.name,
+      permissions: role.permissions,
+      immutable: false,
+    };
+  }
+
   async updatePermissions(
     clinicId: Types.ObjectId,
     id: string,
@@ -46,15 +97,7 @@ export class RolesService {
       throw new ForbiddenException('Admin role permissions cannot be edited');
     }
 
-    const unknown = permissions.filter((p) => !ALL_PERMISSIONS.has(p));
-    if (unknown.length) {
-      throw new BadRequestException(
-        `Unknown permission(s): ${unknown.join(', ')}`,
-      );
-    }
-
-    // De-duplicate while preserving order.
-    role.permissions = Array.from(new Set(permissions)) as Permission[];
+    role.permissions = validatePermissionList(permissions);
     await role.save();
 
     return {

@@ -14,6 +14,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'encounters',    label: 'Encounters',   icon: 'clipboard' },
   { id: 'billing',       label: 'Billing',      icon: 'receipt' },
   { id: 'documents',     label: 'Documents',    icon: 'folder' },
+  { id: 'inventory',     label: 'Inventory',    icon: 'pill' },
   { id: 'reports',       label: 'Reports',      icon: 'barChart' },
   { id: 'notifications', label: 'Notifications', icon: 'bell' },
 ];
@@ -34,6 +35,7 @@ const ALL_CMD: { label: string; action: ScreenKey; icon: IconName }[] = [
   { label: 'Book appointment',   action: 'appointments', icon: 'plus' },
   { label: 'New bill',           action: 'billing',      icon: 'plus' },
   { label: 'Go to Documents',    action: 'documents',    icon: 'folder' },
+  { label: 'Go to Inventory',    action: 'inventory',    icon: 'pill' },
   { label: 'Go to Reports',      action: 'reports',      icon: 'barChart' },
   { label: 'Go to Notifications', action: 'notifications', icon: 'bell' },
   { label: 'Go to Settings',     action: 'settings',     icon: 'settings' },
@@ -272,8 +274,8 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
 
         {/* Content */}
-        <div style={{ flex: 1, overflowY: 'auto', background: 'var(--bg)' }}>
-          <div key={screen} style={{ animation: 'slideUp 200ms var(--ease-out)', minHeight: '100%' }}>
+        <div style={{ flex: 1, overflow: 'hidden', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
+          <div key={screen} style={{ animation: 'slideUp 200ms var(--ease-out)', flex: 1, display: 'flex', flexDirection: 'column', minHeight: 0 }}>
             {children}
           </div>
         </div>

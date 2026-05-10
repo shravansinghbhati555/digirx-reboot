@@ -43,6 +43,18 @@ export class PrescriptionsController {
     );
   }
 
+  @Get('encounters/:id/prescriptions')
+  @RequirePermissions(Permission.PatientRead)
+  async getForEncounter(
+    @Req() req: AppRequest,
+    @Param('id') encounterId: string,
+  ) {
+    return await this.prescriptions.findByEncounter(
+      req.context!.clinicId,
+      encounterId,
+    );
+  }
+
   @Get('prescriptions/:id')
   @RequirePermissions(Permission.PatientRead)
   async get(@Req() req: AppRequest, @Param('id') id: string) {
@@ -56,11 +68,11 @@ export class PrescriptionsController {
     @Param('id') id: string,
     @Body() body: SharePrescriptionDto,
   ) {
-    return await this.prescriptions.share(
-      req.context!.clinicId,
-      id,
-      body.expiresInSeconds,
-    );
+    return await this.prescriptions.share(req.context!.clinicId, id, {
+      expiresInSeconds: body.expiresInSeconds,
+      sendVia: body.sendVia,
+      to: body.to,
+    });
   }
 
   @Post('prescriptions/:id/share/revoke')

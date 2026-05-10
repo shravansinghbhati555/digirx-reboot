@@ -13,6 +13,9 @@ import {
 } from './schemas/queue-counter.schema';
 import { AvailabilityModule } from '../availability/availability.module';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
+import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
+import { User, UserSchema } from '../authz/schemas/user.schema';
+import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
 
 @Module({
   imports: [
@@ -21,6 +24,9 @@ import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
       { name: DoctorProfile.name, schema: DoctorProfileSchema },
       { name: QueueCounter.name, schema: QueueCounterSchema },
       { name: Clinic.name, schema: ClinicSchema },
+      { name: Branch.name, schema: BranchSchema },
+      { name: User.name, schema: UserSchema },
+      { name: Patient.name, schema: PatientSchema },
     ]),
     AvailabilityModule,
   ],

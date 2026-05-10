@@ -18,6 +18,10 @@ export const Perm = {
   DocumentWrite: 'document:write',
   NotificationRead: 'notification:read',
   NotificationWrite: 'notification:write',
+  AuditRead: 'audit:read',
+  AccessLogRead: 'accesslog:read',
+  InventoryRead: 'inventory:read',
+  InventoryWrite: 'inventory:write',
 } as const;
 
 export type PermName = typeof Perm[keyof typeof Perm];
@@ -33,11 +37,10 @@ export const SCREEN_REQUIRED: Record<ScreenKey, PermName[] | null> = {
   documents:     [Perm.DocumentRead],
   reports:       [Perm.BillingRead],
   notifications: [Perm.NotificationRead],
-  branches:      [Perm.BranchRead],
-  users:         [Perm.UserWrite],
-  roles:         [Perm.ClinicWrite],
+  inventory:     [Perm.InventoryRead],
+  users:         [Perm.UserRead],
+  roles:         [Perm.UserRead],
   settings:      [Perm.ClinicRead],
-  audit:         [Perm.UserRead],
 };
 
 export function hasPerm(set: Set<string>, perm: PermName): boolean {

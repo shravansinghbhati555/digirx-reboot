@@ -1,4 +1,5 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
@@ -12,14 +13,18 @@ import { Public } from '../../common/public.decorator';
 export class TenancyController {
   constructor(private readonly tenancy: TenancyService) {}
 
+  // Public for the multi-step login flow (clinic picker before sign-in).
+  // Capped at 10/min per IP to make bulk enumeration impractical.
   @Get('clinic/search')
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async search(@Query('q') q: string) {
     return await this.tenancy.searchClinics(q);
   }
 
   @Get('clinic/:id/branches')
   @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async listBranches(@Param('id') id: string) {
     return await this.tenancy.listBranches(id);
   }
@@ -43,14 +48,14 @@ export class TenancyController {
   }
 
   @Get('clinics/:id/branches')
-  @RequirePermissions(Permission.ClinicRead)
+  @RequirePermissions(Permission.BranchRead)
   async listBranchesAdmin(@Req() req: AppRequest, @Param('id') id: string) {
     const clinicId = this.tenancy.assertTenantMatch(id, req.context!.clinicId);
     return await this.tenancy.listBranchesAdmin(clinicId);
   }
 
   @Post('clinics/:id/branches')
-  @RequirePermissions(Permission.ClinicWrite)
+  @RequirePermissions(Permission.BranchWrite)
   async createBranch(
     @Req() req: AppRequest,
     @Param('id') id: string,
@@ -61,7 +66,7 @@ export class TenancyController {
   }
 
   @Patch('clinics/:id/branches/:branchId')
-  @RequirePermissions(Permission.ClinicWrite)
+  @RequirePermissions(Permission.BranchWrite)
   async updateBranch(
     @Req() req: AppRequest,
     @Param('id') id: string,

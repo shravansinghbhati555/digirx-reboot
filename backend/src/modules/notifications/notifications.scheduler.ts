@@ -12,11 +12,13 @@ import { Patient } from '../patients/schemas/patient.schema';
 import { User } from '../authz/schemas/user.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
 import { Branch } from '../tenancy/schemas/branch.schema';
+import { mergeClinicSettings } from '../tenancy/clinic-settings.types';
 import { NotificationsService } from './notifications.service';
 import {
   NotificationChannel,
   NotificationTemplate,
 } from './schemas/notification-template.schema';
+import { isWithinQuietHours } from './quiet-hours';
 import { renderTemplate } from './template.utils';
 
 const ACTIVE_STATUSES: AppointmentStatus[] = [
@@ -125,6 +127,7 @@ export class NotificationsScheduler {
     let enqueued = 0;
     let skippedNoPhone = 0;
     let skippedDup = 0;
+    let skippedQuiet = 0;
     let failed = 0;
 
     for (const a of appts) {
@@ -147,6 +150,22 @@ export class NotificationsScheduler {
         const doctor = doctorById.get(a.doctorId.toHexString());
 
         const tz = clinic?.timezone || 'UTC';
+
+        // Quiet hours: skip reminders that would fire during the clinic's
+        // configured quiet window. The cron runs every 5 min, so once the
+        // window ends the next firing window will pick up reminders that
+        // are still in their target band.
+        const settings = mergeClinicSettings(clinic?.settings);
+        if (
+          isWithinQuietHours(
+            new Date(now),
+            tz,
+            settings.modules.notifications.quietHours,
+          )
+        ) {
+          skippedQuiet += 1;
+          continue;
+        }
         const startLocal = a.startAt
           ? DateTime.fromJSDate(a.startAt).setZone(tz)
           : null;
@@ -212,7 +231,7 @@ export class NotificationsScheduler {
     }
 
     this.logger.log(
-      `[${minutes}m] matched=${appts.length} enqueued=${enqueued} skippedNoPhone=${skippedNoPhone} skippedDup=${skippedDup} failed=${failed}`,
+      `[${minutes}m] matched=${appts.length} enqueued=${enqueued} skippedNoPhone=${skippedNoPhone} skippedDup=${skippedDup} skippedQuiet=${skippedQuiet} failed=${failed}`,
     );
   }
 }

@@ -18,9 +18,27 @@ import { QueueCounter } from './schemas/queue-counter.schema';
 import { AvailabilityService } from '../availability/availability.service';
 import { DateTime } from 'luxon';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
+import { User } from '../authz/schemas/user.schema';
+import { Patient } from '../patients/schemas/patient.schema';
 import { computeClinicDayRange } from '../../common/clinic-time';
 
 const ACTIVE_TIME_STATUSES: AppointmentStatus[] = [
+  AppointmentStatus.Booked,
+  AppointmentStatus.CheckedIn,
+  AppointmentStatus.InProgress,
+];
+
+export type EnrichedSlot =
+  | { startAt: string; endAt: string; status: 'available' }
+  | { startAt: string; endAt: string; status: 'past' }
+  | {
+      startAt: string;
+      endAt: string;
+      status: 'booked';
+      bookedBy: { apptId: string; patientName: string | null; status: string };
+    };
+
+const CANCELLABLE_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.Booked,
   AppointmentStatus.CheckedIn,
   AppointmentStatus.InProgress,
@@ -94,6 +112,8 @@ export class AppointmentsService {
     @InjectModel(QueueCounter.name)
     private readonly counterModel: Model<QueueCounter>,
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
+    @InjectModel(User.name) private readonly userModel: Model<User>,
+    @InjectModel(Patient.name) private readonly patientModel: Model<Patient>,
     @InjectConnection() private readonly connection: Connection,
     private readonly availability: AvailabilityService,
   ) {}
@@ -108,6 +128,11 @@ export class AppointmentsService {
     const patientId = new Types.ObjectId(dto.patientId);
     const source = dto.source ?? AppointmentSource.FrontDesk;
 
+    // Membership asserts run before any availability/queue work — they're
+    // cheap two-field lookups and fail fast on misuse.
+    await this.assertDoctorAtBranch(clinicId, doctorId, branchId);
+    await this.assertPatientInClinic(clinicId, patientId);
+
     if (dto.type === AppointmentType.Time) {
       if (!dto.startAt || !dto.endAt)
         throw new BadRequestException(
@@ -121,6 +146,15 @@ export class AppointmentsService {
         throw new BadRequestException('Invalid endAt');
       if (endAt <= startAt)
         throw new BadRequestException('endAt must be after startAt');
+      // No backdating. The booking calendar already disables past slots
+      // in the UI; this guard is the server-side fence so a stale modal
+      // (open across midnight, or a malicious client) can't slip an
+      // appointment into yesterday.
+      if (startAt.getTime() < Date.now()) {
+        throw new BadRequestException(
+          'Cannot book an appointment in the past',
+        );
+      }
 
       // Enforce doctor availability (branch + clinic timezone)
       await this.availability.assertTimeSlotAllowed({
@@ -153,7 +187,12 @@ export class AppointmentsService {
               .session(session);
 
             if (overlap) {
-              throw new ConflictException('Time slot is already booked');
+              throw await this.buildOverlapConflict({
+                clinicId,
+                branchId,
+                doctorId,
+                requestedStartAt: startAt,
+              });
             }
 
             created = await this.apptModel
@@ -197,7 +236,14 @@ export class AppointmentsService {
         startAt: { $lt: endAt },
         endAt: { $gt: startAt },
       });
-      if (overlap) throw new ConflictException('Time slot is already booked');
+      if (overlap) {
+        throw await this.buildOverlapConflict({
+          clinicId,
+          branchId,
+          doctorId,
+          requestedStartAt: startAt,
+        });
+      }
 
       return await this.apptModel.create({
         clinicId,
@@ -340,11 +386,26 @@ export class AppointmentsService {
       .sort({ startAt: 1, queueNumber: 1 });
   }
 
+  /**
+   * Returns every slot for the doctor's day with its real status. The
+   * front-desk needs to *see* booked slots (so they can read the doctor's
+   * day at a glance) — they're not filtered out, just marked.
+   *
+   * Slot status:
+   *   - `past`      — slot's startAt is before now. Cannot be booked.
+   *   - `booked`    — an active TIME appointment overlaps this slot.
+   *   - `available` — open. Default.
+   *
+   * `booked` slots include a `bookedBy` ref so the UI can surface a
+   * patient-name tooltip without a second fetch. `populate('patientId')`
+   * with a `fullName` projection avoids leaking PHI we don't need.
+   */
   async availableSlots(input: {
     clinicId: Types.ObjectId;
     branchId: string;
     doctorId: string;
     date: string;
+    duration?: number;
   }) {
     const branchObjId = new Types.ObjectId(input.branchId);
     const doctorObjId = new Types.ObjectId(input.doctorId);
@@ -354,9 +415,12 @@ export class AppointmentsService {
       branchId: branchObjId,
       doctorUserId: doctorObjId,
       date: input.date,
+      duration: input.duration,
     });
 
-    if (!daySlots.slots.length) return daySlots;
+    if (!daySlots.slots.length) {
+      return { ...daySlots, slots: [] as EnrichedSlot[] };
+    }
 
     const clinic = await this.clinicModel.findById(input.clinicId);
     const tz = clinic?.timezone || daySlots.timezone || 'UTC';
@@ -364,23 +428,69 @@ export class AppointmentsService {
     const dayStartUtc = day.startOf('day').toUTC().toJSDate();
     const dayEndUtc = day.endOf('day').toUTC().toJSDate();
 
-    const booked = await this.apptModel.find({
-      clinicId: input.clinicId,
-      branchId: branchObjId,
-      doctorId: doctorObjId,
-      type: AppointmentType.Time,
-      status: { $in: ACTIVE_TIME_STATUSES },
-      startAt: { $gte: dayStartUtc, $lte: dayEndUtc },
+    const booked = await this.apptModel
+      .find({
+        clinicId: input.clinicId,
+        branchId: branchObjId,
+        doctorId: doctorObjId,
+        type: AppointmentType.Time,
+        status: { $in: ACTIVE_TIME_STATUSES },
+        startAt: { $gte: dayStartUtc, $lte: dayEndUtc },
+      })
+      .populate({ path: 'patientId', select: 'fullName' });
+
+    // Build a lookup keyed on `startAt|endAt` so a slot match is O(1).
+    // Two booked appts at the same exact slot is structurally impossible
+    // (the partial unique index in the schema enforces that), so the
+    // map is safe to be 1:1.
+    const bookedByKey = new Map<
+      string,
+      { apptId: string; patientName: string | null; status: string }
+    >();
+    for (const a of booked) {
+      if (!a.startAt || !a.endAt) continue;
+      const key = `${a.startAt.toISOString()}|${a.endAt.toISOString()}`;
+      const populatedPatient = a.patientId as unknown as
+        | { fullName?: string }
+        | null;
+      bookedByKey.set(key, {
+        apptId: a._id.toHexString(),
+        patientName: populatedPatient?.fullName ?? null,
+        status: a.status,
+      });
+    }
+
+    // Use Luxon for "now" so the comparison is in the same timezone context
+    // as slot generation — both anchored to the clinic's IANA zone.
+    // A 30-second grace window prevents a slot from flickering to "past"
+    // while the receptionist is mid-click.
+    const nowDt = DateTime.now().setZone(tz).minus({ seconds: 30 });
+    const slots: EnrichedSlot[] = daySlots.slots.map((s) => {
+      const key = `${s.startAt}|${s.endAt}`;
+      const slotStartDt = DateTime.fromISO(s.startAt, { zone: 'utc' }).setZone(tz);
+      const conflict = bookedByKey.get(key);
+      if (conflict) {
+        return {
+          startAt: s.startAt,
+          endAt: s.endAt,
+          status: 'booked' as const,
+          bookedBy: conflict,
+        };
+      }
+      if (slotStartDt.isValid && slotStartDt < nowDt) {
+        return {
+          startAt: s.startAt,
+          endAt: s.endAt,
+          status: 'past' as const,
+        };
+      }
+      return {
+        startAt: s.startAt,
+        endAt: s.endAt,
+        status: 'available' as const,
+      };
     });
 
-    const bookedSet = new Set(
-      booked.map(
-        (a) => `${a.startAt?.toISOString()}|${a.endAt?.toISOString()}`,
-      ),
-    );
-    const slots = daySlots.slots.filter(
-      (s) => !bookedSet.has(`${s.startAt}|${s.endAt}`),
-    );
     return { ...daySlots, slots };
   }
 
@@ -424,7 +534,14 @@ export class AppointmentsService {
         startAt: { $lt: endAt },
         endAt: { $gt: startAt },
       });
-      if (overlap) throw new ConflictException('Time slot is already booked');
+      if (overlap) {
+        throw await this.buildOverlapConflict({
+          clinicId,
+          branchId: appt.branchId,
+          doctorId: appt.doctorId,
+          requestedStartAt: startAt,
+        });
+      }
 
       appt.startAt = startAt;
       appt.endAt = endAt;
@@ -457,5 +574,124 @@ export class AppointmentsService {
     appt.status = AppointmentStatus.CheckedIn;
     await appt.save();
     return appt;
+  }
+
+  async cancel(
+    clinicId: Types.ObjectId,
+    id: string,
+    actorUserId: Types.ObjectId | undefined,
+    reason: string,
+  ) {
+    const appt = await this.apptModel.findOne({ _id: id, clinicId });
+    if (!appt) throw new NotFoundException('Appointment not found');
+
+    if (!CANCELLABLE_STATUSES.includes(appt.status)) {
+      throw new BadRequestException(
+        `Cannot cancel appointment in status ${appt.status}`,
+      );
+    }
+    assertAllowedTransition(appt.status, AppointmentStatus.Cancelled);
+
+    appt.status = AppointmentStatus.Cancelled;
+    appt.cancellationReason = reason.trim();
+    appt.cancelledAt = new Date();
+    appt.cancelledBy = actorUserId;
+    await appt.save();
+    return appt;
+  }
+
+  // --- internals ----------------------------------------------------------
+
+  private async assertDoctorAtBranch(
+    clinicId: Types.ObjectId,
+    doctorId: Types.ObjectId,
+    branchId: Types.ObjectId,
+  ) {
+    const doctor = await this.userModel.findOne({
+      _id: doctorId,
+      clinicId,
+    });
+    if (!doctor) {
+      // 400 (not 404) so the front-desk gets a clear "this doctor doesn't
+      // belong to this clinic" message rather than a generic not-found.
+      throw new BadRequestException('Doctor not found in this clinic');
+    }
+    const branchIds = (doctor.branchIds ?? []).map((b) => String(b));
+    if (!branchIds.includes(String(branchId))) {
+      throw new BadRequestException(
+        'Doctor is not assigned to this branch',
+      );
+    }
+  }
+
+  private async assertPatientInClinic(
+    clinicId: Types.ObjectId,
+    patientId: Types.ObjectId,
+  ) {
+    const exists = await this.patientModel.exists({
+      _id: patientId,
+      clinicId,
+    });
+    if (!exists) {
+      throw new BadRequestException('Patient not found in this clinic');
+    }
+  }
+
+  /**
+   * Produce a 409 with a `alternatives` payload containing the next 3 free
+   * slots for this doctor on the requested local day. The FE can offer
+   * one-click rebooking into any of them.
+   */
+  private async buildOverlapConflict(input: {
+    clinicId: Types.ObjectId;
+    branchId: Types.ObjectId;
+    doctorId: Types.ObjectId;
+    requestedStartAt: Date;
+  }): Promise<ConflictException> {
+    const clinic = await this.clinicModel.findById(input.clinicId);
+    const tz = clinic?.timezone || 'UTC';
+    const date = DateTime.fromJSDate(input.requestedStartAt, { zone: 'utc' })
+      .setZone(tz)
+      .toISODate();
+
+    let alternatives: { startAt: string; endAt: string }[] = [];
+    if (date) {
+      try {
+        const day = await this.availableSlots({
+          clinicId: input.clinicId,
+          branchId: input.branchId.toHexString(),
+          doctorId: input.doctorId.toHexString(),
+          date,
+        });
+        const requestedIso = DateTime.fromJSDate(input.requestedStartAt, {
+          zone: 'utc',
+        }).toISO();
+        // Prefer slots starting at-or-after the requested time so the front
+        // desk can offer "the next slot," not slots earlier in the day.
+        alternatives = day.slots
+          .filter((s) => !requestedIso || s.startAt >= requestedIso)
+          .slice(0, 3);
+        if (alternatives.length < 3) {
+          // Pad with any earlier free slots so we always offer up to 3.
+          const filler = day.slots
+            .filter(
+              (s) =>
+                !alternatives.some(
+                  (a) => a.startAt === s.startAt && a.endAt === s.endAt,
+                ),
+            )
+            .slice(0, 3 - alternatives.length);
+          alternatives = [...alternatives, ...filler];
+        }
+      } catch {
+        // Availability lookup is best-effort — never let it mask the 409.
+      }
+    }
+
+    return new ConflictException({
+      statusCode: 409,
+      message: 'Time slot is already booked',
+      alternatives,
+    });
   }
 }

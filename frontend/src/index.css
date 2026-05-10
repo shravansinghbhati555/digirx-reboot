@@ -125,6 +125,10 @@ input, select, textarea { font-family: inherit; }
   from { opacity: 0; transform: translateY(-8px) translateX(-50%); }
   to   { opacity: 1; transform: translateY(0) translateX(-50%); }
 }
+@keyframes pickerIn {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
 
 @keyframes shimmer {
   0%   { background-position: -400px 0; }
@@ -202,7 +206,48 @@ button {
   }
 }
 
-::-webkit-scrollbar { width: 10px; height: 10px; }
+/* Custom scrollbars: thin, subtle, and hidden until interaction. */
+::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: var(--border); border-radius: 6px; border: 2px solid var(--bg); }
-::-webkit-scrollbar-thumb:hover { background: var(--border-strong); }
+::-webkit-scrollbar-thumb { background: transparent; border-radius: 10px; transition: background 0.2s; }
+*:hover::-webkit-scrollbar-thumb { background: var(--border-strong); }
+::-webkit-scrollbar-thumb:hover { background: var(--text-subtle) !important; }
+
+/* Utility for screens to fill the AppShell content area perfectly. */
+.fill-shell {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Scrollable container with auto-hiding feel (thin by default) */
+.scroll-y {
+  overflow-y: auto;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-strong) transparent;
+}
+
+.row-hover {
+  transition: background var(--dur-fast) var(--ease-out);
+}
+.row-hover:hover {
+  background: rgba(59, 130, 246, 0.03) !important;
+}
+[data-theme='dark'] .row-hover:hover {
+  background: rgba(59, 130, 246, 0.06) !important;
+}
+
+.time-picker-custom {
+  color-scheme: light;
+  accent-color: var(--brand-500);
+}
+[data-theme='dark'] .time-picker-custom {
+  color-scheme: dark;
+  accent-color: var(--brand-500);
+}
+/* Hide the native black clock icon on the right */
+.time-picker-custom::-webkit-calendar-picker-indicator {
+  display: none !important;
+  -webkit-appearance: none;
+}

@@ -1,16 +1,40 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
+import { Logger } from 'nestjs-pino';
 import { AppModule } from './app.module';
 import * as dotenv from 'dotenv';
 import cookieParser from 'cookie-parser';
+import helmet from 'helmet';
 import { validateEnv } from './common/config';
 
 async function bootstrap() {
   dotenv.config();
   validateEnv();
 
-  const app = await NestFactory.create(AppModule);
+  // bufferLogs so pino can drain queued startup messages once it's wired.
+  const app = await NestFactory.create(AppModule, { bufferLogs: true });
+  app.useLogger(app.get(Logger));
   app.use(cookieParser());
+
+  // Security headers. The defaults from helmet cover X-Content-Type-Options,
+  // X-Frame-Options (= DENY), Strict-Transport-Security in HTTPS contexts,
+  // Referrer-Policy, and X-DNS-Prefetch-Control. CSP is disabled because
+  // this is an API server returning JSON — no inline scripts to allow,
+  // and CSP for a public-share document URL would block the browser
+  // following our presigned-GET redirect to MinIO/S3.
+  //
+  // `crossOriginResourcePolicy` is loosened to `cross-origin` so the FE
+  // (different origin than the API in dev) can read JSON responses.
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginResourcePolicy: { policy: 'cross-origin' },
+      hsts:
+        process.env.NODE_ENV === 'production'
+          ? { maxAge: 31_536_000, includeSubDomains: true, preload: true }
+          : false,
+    }),
+  );
 
   app.useGlobalPipes(
     new ValidationPipe({

@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post, Req } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
@@ -16,10 +16,37 @@ export class EncountersController {
     return await this.encounters.create(req.context!.clinicId, dto);
   }
 
+  @Get()
+  @RequirePermissions(Permission.PatientRead)
+  async list(
+    @Req() req: AppRequest,
+    @Query('branchId') branchId?: string,
+    @Query('limit') limit?: string,
+    @Query('offset') offset?: string,
+  ) {
+    return await this.encounters.findAll(req.context!.clinicId, {
+      branchId,
+      limit: limit ? Number(limit) : undefined,
+      offset: offset ? Number(offset) : undefined,
+    });
+  }
+
   @Get(':id')
   @RequirePermissions(Permission.PatientRead)
   async get(@Req() req: AppRequest, @Param('id') id: string) {
     return await this.encounters.getById(req.context!.clinicId, id);
+  }
+
+  @Get('by-appointment/:appointmentId')
+  @RequirePermissions(Permission.PatientRead)
+  async getByAppointment(
+    @Req() req: AppRequest,
+    @Param('appointmentId') appointmentId: string,
+  ) {
+    return await this.encounters.findByAppointment(
+      req.context!.clinicId,
+      appointmentId,
+    );
   }
 
   @Patch(':id')

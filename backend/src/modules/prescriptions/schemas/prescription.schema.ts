@@ -20,13 +20,13 @@ export class Prescription {
   @Prop({ type: Types.ObjectId, required: true, index: true })
   branchId!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, required: true, index: true })
+  @Prop({ type: Types.ObjectId, required: true, index: true, ref: 'User' })
   doctorId!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, required: true, index: true })
+  @Prop({ type: Types.ObjectId, required: true, index: true, ref: 'Patient' })
   patientId!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, required: true, index: true })
+  @Prop({ type: Types.ObjectId, required: true, index: true, ref: 'Encounter' })
   encounterId!: Types.ObjectId;
 
   @Prop({ type: Array, default: [] })

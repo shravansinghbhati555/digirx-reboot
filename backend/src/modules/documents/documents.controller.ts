@@ -1,4 +1,13 @@
-import { Body, Controller, Get, Param, Post, Query, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
@@ -47,6 +56,14 @@ export class DocumentsController {
   async download(@Req() req: AppRequest, @Param('id') id: string) {
     const doc = await this.documents.getById(req.context!.clinicId, id);
     const url = await this.storage.presignGet({ key: doc.storageKey });
+    // Fire-and-forget per-document audit so a logging blip can't sink the
+    // download. Trace fields are best-effort — `req.ip` requires `trust
+    // proxy` in production for accurate values.
+    void this.documents.recordDownload(req.context!.clinicId, doc._id, {
+      actorUserId: req.context!.actorUserId,
+      ip: req.ip,
+      userAgent: req.header('user-agent') ?? undefined,
+    });
     return { url, expiresInSeconds: 300 };
   }
 
@@ -63,6 +80,11 @@ export class DocumentsController {
       expiresInSeconds: body.expiresInSeconds,
       maxViews: body.maxViews,
       createdBy: req.context!.actorUserId,
+      trace: {
+        actorUserId: req.context!.actorUserId,
+        ip: req.ip,
+        userAgent: req.header('user-agent') ?? undefined,
+      },
     });
     return { token: out.token, expiresAt: out.expiresAt, maxViews: out.maxViews };
   }
@@ -70,15 +92,55 @@ export class DocumentsController {
   @Post('documents/:id/share/revoke')
   @RequirePermissions(Permission.DocumentWrite)
   async revoke(@Req() req: AppRequest, @Param('id') id: string) {
-    const out = await this.documents.revokeShare(req.context!.clinicId, id);
+    const out = await this.documents.revokeShare(req.context!.clinicId, id, {
+      actorUserId: req.context!.actorUserId,
+      ip: req.ip,
+      userAgent: req.header('user-agent') ?? undefined,
+    });
     return { revokedAt: out.revokedAt };
+  }
+
+  @Delete('documents/:id')
+  @RequirePermissions(Permission.DocumentWrite)
+  async softDelete(@Req() req: AppRequest, @Param('id') id: string) {
+    return await this.documents.softDelete(
+      req.context!.clinicId,
+      id,
+      req.context!.actorUserId,
+    );
+  }
+
+  /**
+   * Per-document audit trail. Same permission gate as download — anyone
+   * who can read the doc can see who else has touched it.
+   */
+  @Get('documents/:id/access-log')
+  @RequirePermissions(Permission.DocumentRead)
+  async accessLog(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @Query('limit') limitRaw?: string,
+    @Query('before') before?: string,
+  ) {
+    const limit = Number(limitRaw ?? 50) || 50;
+    return await this.documents.listAccessLog(req.context!.clinicId, id, {
+      limit,
+      before,
+    });
   }
 
   @Get('share/:token')
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
-  async shareDownload(@Param('token') token: string, @Query('inline') inline?: string) {
-    const share = await this.documents.shareDownload(token);
+  async shareDownload(
+    @Req() req: AppRequest,
+    @Param('token') token: string,
+    @Query('inline') inline?: string,
+  ) {
+    const share = await this.documents.shareDownload(token, {
+      ip: req.ip,
+      userAgent: req.header('user-agent') ?? undefined,
+    });
     const doc = await this.documents.getById(share.clinicId, share.documentId.toHexString());
     const url = await this.storage.presignGet({ key: doc.storageKey });
     return { url, expiresInSeconds: 300, inline: inline === 'true' };

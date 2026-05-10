@@ -19,7 +19,10 @@ export class NotificationLog {
   @Prop({ type: Types.ObjectId })
   branchId?: Types.ObjectId;
 
-  @Prop({ required: true, enum: NotificationChannel, index: true })
+  // Explicit `type: String` so ts-jest with `isolatedModules: true` doesn't
+  // need cross-file decorator metadata to infer the field type — without
+  // this `@nestjs/mongoose` falls back to `Object` and refuses to register.
+  @Prop({ type: String, required: true, enum: NotificationChannel, index: true })
   channel!: NotificationChannel;
 
   @Prop({ required: true, trim: true })
@@ -35,6 +38,7 @@ export class NotificationLog {
   templateKey?: string;
 
   @Prop({
+    type: String,
     required: true,
     enum: NotificationStatus,
     default: NotificationStatus.Queued,

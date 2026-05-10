@@ -7,14 +7,25 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { randomBytes } from 'crypto';
+import { RetentionService } from '../../common/retention/retention.service';
 import {
   Document,
   DocumentAccess,
   DocumentOwnerType,
 } from './schemas/document.schema';
 import { DocumentShare } from './schemas/document-share.schema';
+import {
+  DocumentAccessAction,
+  DocumentAccessLog,
+} from './schemas/document-access-log.schema';
 
 const DEFAULT_SHARE_EXPIRY_SECONDS = 7 * 24 * 60 * 60;
+
+export type AccessTrace = {
+  actorUserId?: Types.ObjectId;
+  ip?: string;
+  userAgent?: string;
+};
 
 @Injectable()
 export class DocumentsService {
@@ -22,6 +33,9 @@ export class DocumentsService {
     @InjectModel(Document.name) private readonly docModel: Model<Document>,
     @InjectModel(DocumentShare.name)
     private readonly shareModel: Model<DocumentShare>,
+    @InjectModel(DocumentAccessLog.name)
+    private readonly accessLogModel: Model<DocumentAccessLog>,
+    private readonly retention: RetentionService,
   ) {}
 
   async createForOwner(input: {
@@ -41,10 +55,58 @@ export class DocumentsService {
     });
   }
 
+  /**
+   * Tenant-scoped lookup for a live document. Soft-deleted rows are
+   * filtered out so a download attempt after deletion is indistinguishable
+   * from a genuinely missing doc (404, not 410 — we don't want a "gone but
+   * I knew about it" leak to a non-clinic caller).
+   */
   async getById(clinicId: Types.ObjectId, id: string) {
-    const doc = await this.docModel.findOne({ _id: id, clinicId }).exec();
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('Document not found');
+    }
+    const doc = await this.docModel
+      .findOne({ _id: id, clinicId, deletedAt: null })
+      .exec();
     if (!doc) throw new NotFoundException('Document not found');
     return doc;
+  }
+
+  /**
+   * Soft-delete: stamps `deletedAt` + `deletedBy`, leaves the row in place
+   * so audit / access-log / billing references that hold the documentId
+   * still resolve (with the doc marked deleted). Idempotent — calling it
+   * on an already-deleted doc returns 404 just like a missing doc.
+   *
+   * Active share tokens are revoked at the same time so a public link
+   * doesn't keep working after the operator deletes the underlying file.
+   */
+  async softDelete(
+    clinicId: Types.ObjectId,
+    id: string,
+    actorUserId?: Types.ObjectId,
+  ) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('Document not found');
+    }
+    const updated = await this.docModel.findOneAndUpdate(
+      { _id: id, clinicId, deletedAt: null },
+      { $set: { deletedAt: new Date(), deletedBy: actorUserId } },
+      { new: true },
+    );
+    if (!updated) throw new NotFoundException('Document not found');
+
+    // Revoke any active public shares so the link stops working immediately.
+    await this.shareModel.updateMany(
+      {
+        clinicId,
+        documentId: updated._id,
+        revokedAt: null,
+      },
+      { $set: { revokedAt: new Date() } },
+    );
+
+    return { ok: true as const, deletedAt: updated.deletedAt };
   }
 
   async createShare(input: {
@@ -53,9 +115,14 @@ export class DocumentsService {
     expiresInSeconds?: number;
     maxViews?: number;
     createdBy?: Types.ObjectId;
+    trace?: AccessTrace;
   }) {
     const doc = await this.docModel
-      .findOne({ _id: input.documentId, clinicId: input.clinicId })
+      .findOne({
+        _id: input.documentId,
+        clinicId: input.clinicId,
+        deletedAt: null,
+      })
       .exec();
     if (!doc) throw new NotFoundException('Document not found');
     if (doc.access === DocumentAccess.InternalOnly) {
@@ -81,6 +148,14 @@ export class DocumentsService {
       createdBy: input.createdBy,
     });
 
+    void this.recordAccess(input.clinicId, doc._id, {
+      action: DocumentAccessAction.ShareCreate,
+      actorUserId: input.createdBy,
+      shareTokenSuffix: tail(token),
+      ip: input.trace?.ip,
+      userAgent: input.trace?.userAgent,
+    });
+
     return { _id: share._id, token, expiresAt, maxViews: input.maxViews };
   }
 
@@ -89,7 +164,7 @@ export class DocumentsService {
    * Throws NotFoundException for invalid / revoked / expired tokens.
    * Throws GoneException when maxViews is set and already reached.
    */
-  async shareDownload(token: string) {
+  async shareDownload(token: string, trace?: AccessTrace) {
     const now = new Date();
 
     const share = await this.shareModel.findOneAndUpdate(
@@ -117,7 +192,25 @@ export class DocumentsService {
       { new: true },
     );
 
-    if (share) return share;
+    if (share) {
+      // Defence-in-depth: if the underlying Document was soft-deleted after
+      // the share was created (and before our revoke ran for some race-y
+      // reason), block the download.
+      const live = await this.docModel.exists({
+        _id: share.documentId,
+        clinicId: share.clinicId,
+        deletedAt: null,
+      });
+      if (!live) throw new NotFoundException('Invalid token');
+
+      void this.recordAccess(share.clinicId, share.documentId, {
+        action: DocumentAccessAction.ShareView,
+        shareTokenSuffix: tail(token),
+        ip: trace?.ip,
+        userAgent: trace?.userAgent,
+      });
+      return share;
+    }
 
     // Disambiguate between 404 and 410.
     const raw = await this.shareModel.findOne({ token }).exec();
@@ -133,7 +226,11 @@ export class DocumentsService {
     throw new NotFoundException('Invalid token');
   }
 
-  async revokeShare(clinicId: Types.ObjectId, documentId: string) {
+  async revokeShare(
+    clinicId: Types.ObjectId,
+    documentId: string,
+    trace?: AccessTrace,
+  ) {
     const share = await this.shareModel.findOneAndUpdate(
       {
         clinicId,
@@ -144,6 +241,96 @@ export class DocumentsService {
       { new: true },
     );
     if (!share) throw new NotFoundException('Active share not found');
+
+    void this.recordAccess(clinicId, share.documentId, {
+      action: DocumentAccessAction.ShareRevoke,
+      actorUserId: trace?.actorUserId,
+      shareTokenSuffix: share.token ? tail(share.token) : undefined,
+      ip: trace?.ip,
+      userAgent: trace?.userAgent,
+    });
+
     return share;
   }
+
+  /**
+   * Records a download against the per-document trail. Called from the
+   * `/documents/:id/download` controller after the presigned URL is minted
+   * — failure to log must not break the download itself, so the call is
+   * fire-and-forget at the controller layer.
+   */
+  async recordDownload(
+    clinicId: Types.ObjectId,
+    documentId: Types.ObjectId,
+    trace: AccessTrace,
+  ) {
+    return await this.recordAccess(clinicId, documentId, {
+      action: DocumentAccessAction.Download,
+      actorUserId: trace.actorUserId,
+      ip: trace.ip,
+      userAgent: trace.userAgent,
+    });
+  }
+
+  /** List the per-document audit rows for a single document. */
+  async listAccessLog(
+    clinicId: Types.ObjectId,
+    documentId: string,
+    opts: { limit?: number; before?: string } = {},
+  ) {
+    if (!Types.ObjectId.isValid(documentId)) {
+      throw new NotFoundException('Document not found');
+    }
+    const limit = Math.max(1, Math.min(200, opts.limit ?? 50));
+    const filter: Record<string, unknown> = {
+      clinicId,
+      documentId: new Types.ObjectId(documentId),
+    };
+    if (opts.before) {
+      const d = new Date(opts.before);
+      if (!isNaN(d.getTime())) filter.createdAt = { $lt: d };
+    }
+    const rows = await this.accessLogModel
+      .find(filter)
+      .sort({ createdAt: -1 })
+      .limit(limit);
+    const last = rows.length ? rows[rows.length - 1] : undefined;
+    const nextBefore =
+      last && (last as any).createdAt instanceof Date
+        ? ((last as any).createdAt as Date).toISOString()
+        : undefined;
+    return { rows, nextBefore };
+  }
+
+  // --- internal -----------------------------------------------------------
+
+  private async recordAccess(
+    clinicId: Types.ObjectId,
+    documentId: Types.ObjectId,
+    payload: {
+      action: DocumentAccessAction;
+      actorUserId?: Types.ObjectId;
+      shareTokenSuffix?: string;
+      ip?: string;
+      userAgent?: string;
+    },
+  ) {
+    try {
+      const expiresAt = await this.retention.expiresAt(clinicId);
+      await this.accessLogModel.create({
+        clinicId,
+        documentId,
+        ...payload,
+        expiresAt,
+      });
+    } catch {
+      // Never let audit failure surface to the caller. The retention cache
+      // shields the hot path from clinic-lookup blips; if even that fails,
+      // we silently drop the row rather than 500 a download.
+    }
+  }
+}
+
+function tail(token: string): string {
+  return token.length > 8 ? token.slice(-8) : token;
 }

@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiGet, apiPost } from '../../app/api';
+import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
-import { Avatar, EmptyState, Field, Spinner, StatusPill, formatDate, formatINR, labelStyle, useToast } from '../shared/primitives';
+import { Avatar, EmptyState, Field, Spinner, StatusPill, formatDate, formatMoney, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
 import { AnimatedTabs } from '../shared/AnimatedTabs';
-import { ListItemSkeleton } from '../shared/Skeleton';
+import { Skeleton, ListItemSkeleton } from '../shared/Skeleton';
 import { useShake } from '../shared/useShake';
 
 type Patient = {
   _id: string;
+  // MRN is auto-minted on registration (clinic-configurable format) and is
+  // the human-readable identifier the front desk should reference. The raw
+  // `_id` is an implementation detail — never surface it to operators.
+  mrn?: string;
   fullName: string;
   gender?: 'MALE' | 'FEMALE' | 'OTHER' | string;
   dob?: string;
@@ -20,14 +24,77 @@ type Patient = {
   createdAt?: string;
 };
 
+// Single source of truth for patient-ref display. Prefer the MRN; fall
+// back to a short tail of `_id` only when the MRN hasn't been minted (old
+// rows from before MRN auto-gen, or tests).
+function patientRef(p: { mrn?: string; _id: string }): string {
+  return p.mrn ?? `#${p._id.slice(-6)}`;
+}
+
 type Bill = {
   _id: string;
   billNo?: string;
   status: string;
   total: number;
-  paidAmount?: number;
+  currency?: string;
+  totalPaid?: number;
+  outstanding?: number;
   createdAt?: string;
+  issuedAt?: string;
   patientId: string;
+  appointmentId?: string;
+  branchName?: string | null;
+  voidedAt?: string;
+  voidReason?: string;
+};
+
+type DiagnosisItem = { code?: string; description: string; primary?: boolean };
+
+type PrescriptionSummary = {
+  _id: string;
+  itemCount: number;
+  createdAt?: string;
+};
+
+type Encounter = {
+  _id: string;
+  appointmentId?: string;
+  visitedAt: string;
+  chiefComplaint?: string;
+  notes?: string;
+  /** Legacy free-text diagnosis (pre-1.2 encounters). */
+  diagnosis?: string;
+  /** Typed multi-entry diagnosis (post-1.2). */
+  diagnoses?: DiagnosisItem[];
+  vitals?: Record<string, unknown>;
+  followUpAt?: string;
+  followUpNotes?: string;
+  status: 'DRAFT' | 'SIGNED' | string;
+  signedAt?: string;
+  doctorName?: string | null;
+  branchName?: string | null;
+  prescriptions?: PrescriptionSummary[];
+};
+
+type Appointment = {
+  _id: string;
+  type?: 'TIME' | 'QUEUE' | string;
+  startAt?: string;
+  endAt?: string;
+  queueDate?: string;
+  queueNumber?: number;
+  status: string;
+  cancellationReason?: string;
+  cancelledAt?: string;
+  doctorName?: string | null;
+  branchName?: string | null;
+};
+
+type HistoryResponse = {
+  patientId: string;
+  appointments: Appointment[];
+  encounters: Encounter[];
+  bills: Bill[];
 };
 
 function ageFromDob(dob?: string): string {
@@ -67,6 +134,7 @@ export function PatientsScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
+  const [editing, setEditing] = useState<Patient | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [genderFilter, setGenderFilter] = useState<'ALL' | 'MALE' | 'FEMALE' | 'OTHER'>('ALL');
   const [tagFilter, setTagFilter] = useState<string>('');
@@ -163,42 +231,48 @@ export function PatientsScreen() {
           )}
         </div>
 
-        <div style={{ flex: 1, overflowY: 'auto' }}>
-          {loading && (
+        <div className="scroll-y" style={{ flex: 1 }}>
+          {loading ? (
             <div>
-              {Array.from({ length: 6 }).map((_, i) => <ListItemSkeleton key={i} />)}
+              {Array.from({ length: 10 }).map((_, i) => <ListItemSkeleton key={i} />)}
             </div>
-          )}
-          {error && <div style={{ padding: 16, color: 'var(--danger-500)', fontSize: 12 }}>{error}</div>}
-          {!loading && !error && visibleItems.length === 0 && (
-            <EmptyState illustration="patients" title="No patients found" hint={query || genderFilter !== 'ALL' || tagFilter ? 'Try clearing the filters.' : 'Register a new patient to get started.'} />
-          )}
-          {groups.map(([letter, patients]) => (
-            <div key={letter}>
-              <div style={{ padding: '6px 14px 3px', fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', position: 'sticky', top: 0, background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>{letter}</div>
-              {patients.map((p) => (
-                <div key={p._id} onClick={() => setSelected(p)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: 'pointer', background: selected?._id === p._id ? 'var(--brand-50)' : 'transparent', borderLeft: selected?._id === p._id ? '3px solid var(--brand-500)' : '3px solid transparent', transition: 'background 80ms' }}>
-                  <Avatar name={p.fullName} size={32} />
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: selected?._id === p._id ? 'var(--brand-700)' : 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.fullName}</div>
-                    <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {genderLabel(p.gender)} · {ageFromDob(p.dob)} · {p.phones?.[0] ?? '—'}
+          ) : (
+            <>
+              {error && <div style={{ padding: 16, color: 'var(--danger-500)', fontSize: 12 }}>{error}</div>}
+              {!error && visibleItems.length === 0 && (
+                <EmptyState illustration="patients" title="No patients found" hint={query || genderFilter !== 'ALL' || tagFilter ? 'Try clearing the filters.' : 'Register a new patient to get started.'} />
+              )}
+              {groups.map(([letter, patients]) => (
+                <div key={letter}>
+                  <div style={{ padding: '6px 14px 3px', fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', position: 'sticky', top: 0, background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>{letter}</div>
+                  {patients.map((p) => (
+                    <div key={p._id} onClick={() => setSelected(p)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: 'pointer', background: selected?._id === p._id ? 'var(--brand-50)' : 'transparent', borderLeft: selected?._id === p._id ? '3px solid var(--brand-500)' : '3px solid transparent', transition: 'background 80ms' }}>
+                      <Avatar name={p.fullName} size={32} />
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: selected?._id === p._id ? 'var(--brand-700)' : 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.fullName}</div>
+                          <div style={{ fontSize: 10, color: 'var(--text-subtle)', fontFamily: 'monospace', flexShrink: 0 }}>{patientRef(p)}</div>
+                        </div>
+                        <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {genderLabel(p.gender)} · {ageFromDob(p.dob)} · {p.phones?.[0] ?? '—'}
+                        </div>
+                      </div>
                     </div>
-                  </div>
+                  ))}
                 </div>
               ))}
-            </div>
-          ))}
+            </>
+          )}
         </div>
       </div>
 
       {/* Detail */}
       {selected ? (
-        <PatientDetail key={selected._id} patient={selected} />
+        <PatientDetail key={selected._id} patient={selected} onEdit={() => setEditing(selected)} />
       ) : (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-subtle)', fontSize: 14 }}>
-          Select a patient to view details
+        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+          <EmptyState illustration="patients" title="No patient selected" hint="Select a patient from the list on the left to view their profile, history, and billing." />
         </div>
       )}
 
@@ -213,25 +287,37 @@ export function PatientsScreen() {
           }}
         />
       )}
+      {editing && (
+        <EditPatientModal
+          patient={editing}
+          onClose={() => setEditing(null)}
+          onUpdated={(updated) => {
+            setEditing(null);
+            toast('Patient details updated', 'success');
+            setRefreshKey((k) => k + 1);
+            setSelected(updated);
+          }}
+        />
+      )}
     </div>
   );
 }
 
-function PatientDetail({ patient }: { patient: Patient }) {
+function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => void }) {
   const { ctx, setScreen, setSelectedPatientId } = useApp();
   const [tab, setTab] = useState<'overview' | 'history' | 'documents' | 'bills'>('overview');
   const [bills, setBills] = useState<Bill[] | null>(null);
-  const [history, setHistory] = useState<unknown>(null);
+  const [history, setHistory] = useState<HistoryResponse | null>(null);
 
   useEffect(() => {
     if (tab !== 'history' || history) return;
-    apiGet<unknown>(ctx, `/patients/${patient._id}/history`).then(setHistory).catch(() => setHistory({ error: true }));
+    apiGet<HistoryResponse>(ctx, `/patients/${patient._id}/history`).then(setHistory).catch(() => setHistory(null));
   }, [tab, ctx, patient._id, history]);
 
   useEffect(() => {
     if (tab !== 'bills' || bills) return;
-    apiGet<Bill[]>(ctx, `/bills?patientId=${patient._id}`)
-      .then(setBills)
+    apiGet<{ rows: Bill[] }>(ctx, `/bills?patientId=${patient._id}`)
+      .then((data) => setBills(data.rows))
       .catch(() => setBills([]));
   }, [tab, ctx, patient._id, bills]);
 
@@ -264,10 +350,16 @@ function PatientDetail({ patient }: { patient: Patient }) {
               ))}
             </div>
           </div>
-          <button onClick={bookForPatient}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', flexShrink: 0 }}>
-            <Icon name="plus" size={14} strokeWidth={2.5} /> Book
-          </button>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+            <button onClick={onEdit}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 16px', background: 'var(--surface-muted)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              <Icon name="edit" size={14} /> Edit
+            </button>
+            <button onClick={bookForPatient}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              <Icon name="plus" size={14} strokeWidth={2.5} /> Book
+            </button>
+          </div>
         </div>
 
         <div style={{ marginTop: 16 }}>
@@ -284,8 +376,7 @@ function PatientDetail({ patient }: { patient: Patient }) {
           />
         </div>
       </div>
-
-      <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px' }}>
+      <div className="scroll-y" style={{ flex: 1, padding: '20px 24px' }}>
         {tab === 'overview' && (
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
             {[
@@ -309,17 +400,21 @@ function PatientDetail({ patient }: { patient: Patient }) {
               </div>
             )}
             <div style={{ flex: '1 1 100%', fontSize: 11, color: 'var(--text-subtle)', fontFamily: 'monospace', marginTop: 8 }}>
-              ID: {patient._id}
+              MRN: {patient.mrn ?? <span style={{ fontStyle: 'italic' }}>not assigned</span>}
             </div>
           </div>
         )}
 
         {tab === 'history' && (
-          <div>
-            {!history ? <div style={{ padding: 24, color: 'var(--text-subtle)', fontSize: 13 }}>Loading history…</div> : (
-              <pre style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 16, fontSize: 11, overflow: 'auto', color: 'var(--text-muted)' }}>
-                {JSON.stringify(history, null, 2)}
-              </pre>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+            {!history ? (
+              <>
+                <Skeleton height={20} width="40%" />
+                <Skeleton height={100} />
+                <Skeleton height={80} />
+              </>
+            ) : (
+              <PatientTimeline history={history} />
             )}
           </div>
         )}
@@ -331,21 +426,34 @@ function PatientDetail({ patient }: { patient: Patient }) {
 
         {tab === 'bills' && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {bills === null && <div style={{ padding: 24, color: 'var(--text-subtle)', fontSize: 13 }}>Loading bills…</div>}
-            {bills && bills.length === 0 && <EmptyState icon="receipt" title="No bills yet" />}
-            {bills?.map((b) => (
-              <div key={b._id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', fontFamily: 'monospace' }}>{b.billNo ?? b._id.slice(-6)}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1 }}>{formatDate(b.createdAt)}</div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{formatINR(b.total)}</div>
-                  {(b.paidAmount ?? 0) < b.total && <div style={{ fontSize: 11, color: 'var(--danger-500)' }}>Balance: {formatINR(b.total - (b.paidAmount ?? 0))}</div>}
-                </div>
-                <StatusPill status={b.status?.toLowerCase()} small />
-              </div>
-            ))}
+            {bills === null ? (
+              <>
+                <BillSkeleton />
+                <BillSkeleton />
+                <BillSkeleton />
+              </>
+            ) : (
+              <>
+                {bills.length === 0 && <EmptyState icon="receipt" title="No bills yet" />}
+                {bills.map((b) => (
+                  <div key={b._id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+                    <div style={{ flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', fontFamily: 'monospace' }}>{b.billNo ?? b._id.slice(-6)}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1 }}>{formatDate(b.createdAt)}</div>
+                    </div>
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{formatMoney(b.total, b.currency)}</div>
+                      {(b.outstanding ?? Math.max(0, b.total - (b.totalPaid ?? 0))) > 0 && (
+                        <div style={{ fontSize: 11, color: 'var(--danger-500)' }}>
+                          Balance: {formatMoney(b.outstanding ?? Math.max(0, b.total - (b.totalPaid ?? 0)), b.currency)}
+                        </div>
+                      )}
+                    </div>
+                    <StatusPill status={b.status?.toLowerCase()} small />
+                  </div>
+                ))}
+              </>
+            )}
           </div>
         )}
       </div>
@@ -397,8 +505,13 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
       const tagList = form.tags.split(',').map((t) => t.trim()).filter(Boolean);
       if (tagList.length) body.tags = tagList;
       if (form.notes.trim()) body.notes = form.notes.trim();
-      const created = await apiPost<Patient>(ctx, '/patients', body);
-      onCreated(created);
+      const res = await apiPost<any>(ctx, '/patients', body);
+      if (res.duplicateCandidate) {
+        setDuplicate(res.existing?.[0] ?? null);
+        setError('A similar patient already exists.');
+        return;
+      }
+      onCreated(res.created);
     } catch (e) {
       shake();
       setError(e instanceof Error ? e.message : String(e));
@@ -492,4 +605,482 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
       </div>
     </div>
   );
+}
+function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; onClose: () => void; onUpdated: (p: Patient) => void }) {
+  const { ctx } = useApp();
+  const [form, setForm] = useState({
+    fullName: patient.fullName,
+    dob: patient.dob ? patient.dob.slice(0, 10) : '',
+    gender: patient.gender ?? '',
+    phone: patient.phones?.[0] ?? '',
+    email: patient.emails?.[0] ?? '',
+    tags: (patient.tags ?? []).join(', '),
+    notes: patient.notes ?? '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const { shakeProps, shake } = useShake();
+  const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+
+  async function submit() {
+    if (!form.fullName.trim()) { shake(); setError('Full name is required.'); return; }
+    setSaving(true);
+    setError(null);
+    try {
+      const body: Record<string, unknown> = { fullName: form.fullName.trim() };
+      body.dob = form.dob || null;
+      body.gender = form.gender ? form.gender.toUpperCase() : null;
+      body.phones = form.phone.trim() ? [form.phone.trim()] : [];
+      body.emails = form.email.trim() ? [form.email.trim()] : [];
+      body.tags = form.tags.split(',').map((t) => t.trim()).filter(Boolean);
+      body.notes = form.notes.trim() || null;
+
+      const updated = await apiPatch<Patient>(ctx, `/patients/${patient._id}`, body);
+      onUpdated(updated);
+    } catch (e) {
+      shake();
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)', animation: 'fadeIn 150ms ease-out' }} onClick={onClose}>
+      <div {...shakeProps}
+        style={{ background: 'var(--surface)', borderRadius: 20, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 500, overflow: 'hidden', animation: 'slideUp 200ms ease-out', ...shakeProps.style }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div>
+            <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Edit patient</div>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{patient.fullName} · {patientRef(patient)}</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}>
+            <Icon name="x" size={18} />
+          </button>
+        </div>
+
+        <div style={{ padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14, maxHeight: '70vh', overflowY: 'auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div style={{ gridColumn: 'span 2' }}>
+              <Field label="Full name" value={form.fullName} onChange={(v) => set('fullName', v)} />
+            </div>
+            <Field label="Date of birth" value={form.dob} onChange={(v) => set('dob', v)} placeholder="YYYY-MM-DD" />
+            <div>
+              <label style={labelStyle}>Gender</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {['MALE', 'FEMALE', 'OTHER'].map((g) => (
+                  <button key={g} onClick={() => set('gender', g)}
+                    style={{ flex: 1, height: 36, border: `1.5px solid ${form.gender === g ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 9, background: form.gender === g ? 'var(--brand-50)' : 'var(--surface-muted)', color: form.gender === g ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
+                    {g[0] + g.slice(1).toLowerCase()}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <Field label="Phone number" value={form.phone} onChange={(v) => set('phone', v)} prefix="+91" />
+            <Field label="Email address" value={form.email} onChange={(v) => set('email', v)} />
+            <div style={{ gridColumn: 'span 2' }}>
+              <Field label="Tags" value={form.tags} onChange={(v) => set('tags', v)} placeholder="comma-separated" />
+            </div>
+            <div style={{ gridColumn: 'span 2' }}>
+              <label style={labelStyle}>Notes</label>
+              <textarea value={form.notes} onChange={(e) => set('notes', e.target.value)}
+                style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box' }}
+              />
+            </div>
+          </div>
+          {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
+        </div>
+
+        <div style={{ padding: '0 24px 20px', display: 'flex', gap: 10 }}>
+          <button onClick={onClose}
+            style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
+            Cancel
+          </button>
+          <button onClick={submit} disabled={saving}
+            style={{ flex: 2, height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+            {saving ? <Spinner /> : 'Save changes'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+function BillSkeleton() {
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px', display: 'flex', alignItems: 'center', gap: 12 }}>
+      <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 6 }}>
+        <Skeleton width="40%" height={12} />
+        <Skeleton width="25%" height={10} />
+      </div>
+      <div style={{ width: 60, display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6 }}>
+        <Skeleton width="100%" height={14} />
+        <Skeleton width="70%" height={10} />
+      </div>
+      <Skeleton width={50} height={20} radius={100} />
+    </div>
+  );
+}
+
+/**
+ * Visit-shaped timeline. Each visit is a single moment in the patient's
+ * record where one or more of {appointment, encounter, bill} happened.
+ *
+ * Linkage rules:
+ *   - Encounters link to appointments via `appointmentId`. Walk-in
+ *     encounters (no appointment) get their own row.
+ *   - Bills link to appointments first, then encounters, then stand alone
+ *     when neither is present.
+ *   - The visit's anchor date is the most clinically meaningful one we
+ *     have: appointment.startAt > encounter.visitedAt > bill.issuedAt.
+ */
+type Visit = {
+  key: string;
+  date: string;
+  appt?: Appointment;
+  encounter?: Encounter;
+  bill?: Bill;
+};
+
+function buildVisits(history: HistoryResponse): Visit[] {
+  const byApptId = new Map<string, Visit>();
+  const byEncounterId = new Map<string, Visit>();
+  const out: Visit[] = [];
+
+  function visitDate(v: Visit): string {
+    return (
+      v.appt?.startAt ??
+      v.appt?.queueDate ??
+      v.encounter?.visitedAt ??
+      v.bill?.issuedAt ??
+      v.bill?.createdAt ??
+      new Date().toISOString()
+    );
+  }
+
+  for (const a of history.appointments) {
+    const v: Visit = { key: `appt:${a._id}`, date: a.startAt ?? a.queueDate ?? '', appt: a };
+    byApptId.set(a._id, v);
+    out.push(v);
+  }
+  for (const e of history.encounters) {
+    if (e.appointmentId && byApptId.has(e.appointmentId)) {
+      byApptId.get(e.appointmentId)!.encounter = e;
+    } else {
+      const v: Visit = { key: `enc:${e._id}`, date: e.visitedAt, encounter: e };
+      byEncounterId.set(e._id, v);
+      out.push(v);
+    }
+  }
+  for (const b of history.bills) {
+    let target: Visit | undefined;
+    if (b.appointmentId && byApptId.has(b.appointmentId)) {
+      target = byApptId.get(b.appointmentId);
+    } else {
+      // Try to attach to a same-day encounter if the bill has none of
+      // the obvious links — common when billing is done after encounter
+      // sign without storing the encounterId on the bill.
+      const sameDayEncounter = history.encounters.find((e) => {
+        const eDay = (e.visitedAt ?? '').slice(0, 10);
+        const bDay = (b.issuedAt ?? b.createdAt ?? '').slice(0, 10);
+        return eDay && bDay && eDay === bDay;
+      });
+      if (sameDayEncounter) {
+        target = byApptId.get(sameDayEncounter.appointmentId ?? '') ?? byEncounterId.get(sameDayEncounter._id);
+      }
+    }
+    if (target) {
+      target.bill = b;
+    } else {
+      out.push({ key: `bill:${b._id}`, date: b.issuedAt ?? b.createdAt ?? '', bill: b });
+    }
+  }
+
+  for (const v of out) v.date = visitDate(v);
+  return out.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+}
+
+function PatientTimeline({ history }: { history: HistoryResponse }) {
+  const visits = useMemo(() => buildVisits(history), [history]);
+
+  if (visits.length === 0) {
+    return (
+      <EmptyState
+        illustration="calendar"
+        title="No clinical history yet"
+        hint="Appointments, encounters, and bills will appear here as soon as the patient has any. Try the 'Book' button on the profile header to schedule their first visit."
+      />
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, position: 'relative', paddingLeft: 18 }}>
+      {/* The vertical rail behind the dots. */}
+      <div style={{ position: 'absolute', left: 25, top: 12, bottom: 12, width: 2, background: 'var(--border)', borderRadius: 1 }} />
+      {visits.map((v) => (
+        <VisitCard key={v.key} visit={v} />
+      ))}
+    </div>
+  );
+}
+
+function VisitCard({ visit }: { visit: Visit }) {
+  const v = visit;
+  const headlineDoctor = v.encounter?.doctorName ?? v.appt?.doctorName ?? null;
+  const headlineBranch = v.encounter?.branchName ?? v.appt?.branchName ?? v.bill?.branchName ?? null;
+  const dateObj = v.date ? new Date(v.date) : null;
+  const validDate = dateObj && !Number.isNaN(dateObj.getTime()) ? dateObj : null;
+  // Dot accent reflects the most-significant action that day.
+  const accent = v.encounter
+    ? 'var(--teal-500)'
+    : v.appt
+      ? 'var(--brand-500)'
+      : 'var(--warning-500)';
+
+  return (
+    <div style={{ display: 'flex', gap: 16, position: 'relative' }}>
+      <div style={{ width: 16, height: 16, borderRadius: '50%', background: accent, border: '4px solid var(--bg)', flexShrink: 0, marginTop: 4, zIndex: 1 }} />
+
+      <div style={{ flex: 1, minWidth: 0 }}>
+        {/* Day + time + doctor + branch — the "who/where/when" line. */}
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+          {validDate
+            ? validDate.toLocaleDateString('en-IN', { weekday: 'short', day: '2-digit', month: 'short', year: 'numeric' })
+            : 'Date unknown'}
+          {validDate && (
+            <span style={{ fontWeight: 400, color: 'var(--text-subtle)', marginLeft: 8 }}>
+              · {validDate.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginBottom: 8 }}>
+          {headlineDoctor ? <>with <b style={{ color: 'var(--text-muted)' }}>Dr. {headlineDoctor}</b></> : 'Doctor not recorded'}
+          {headlineBranch && <> · {headlineBranch}</>}
+        </div>
+
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16, display: 'flex', flexDirection: 'column', gap: 12 }}>
+          {v.appt && <AppointmentRow appt={v.appt} />}
+          {v.encounter && <EncounterRow encounter={v.encounter} />}
+          {v.bill && <BillRow bill={v.bill} />}
+          {!v.appt && !v.encounter && !v.bill && (
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>
+              Visit recorded but no detail available — check audit logs for what was deleted.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AppointmentRow({ appt }: { appt: Appointment }) {
+  const isQueue = appt.type === 'QUEUE';
+  const cancelled = appt.status === 'CANCELLED';
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+      <Icon name="calendar" size={14} style={{ color: 'var(--brand-500)', marginTop: 3 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+            {isQueue ? `Queue token #${appt.queueNumber ?? '—'}` : 'Time appointment'}
+          </span>
+          <StatusPill status={appt.status.toLowerCase().replace(/_/g, '-')} small />
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+          {appt.type === 'TIME' && appt.startAt && appt.endAt && (
+            <>
+              {new Date(appt.startAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+              {' – '}
+              {new Date(appt.endAt).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+            </>
+          )}
+          {appt.type === 'QUEUE' && appt.queueDate && <>For {appt.queueDate}</>}
+        </div>
+        {cancelled && appt.cancellationReason && (
+          <div style={{ marginTop: 6, fontSize: 11, color: 'var(--danger-500)' }}>
+            Cancelled — {appt.cancellationReason}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EncounterRow({ encounter: e }: { encounter: Encounter }) {
+  // Diagnosis can come from the legacy `diagnosis` string OR the typed
+  // `diagnoses` array. We render whichever is present; if both are
+  // there (transitional period), the typed array wins.
+  const diagnosisItems: DiagnosisItem[] =
+    Array.isArray(e.diagnoses) && e.diagnoses.length > 0
+      ? e.diagnoses
+      : e.diagnosis
+        ? [{ description: e.diagnosis, primary: true }]
+        : [];
+  const vitalEntries = pickVitalEntries(e.vitals);
+  const followUpDate = e.followUpAt ? new Date(e.followUpAt) : null;
+  const isSigned = e.status === 'SIGNED';
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', background: 'var(--surface-muted)', borderRadius: 10, border: '1px solid var(--border)' }}>
+      <Icon name="activity" size={14} style={{ color: 'var(--teal-500)', marginTop: 3 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Clinical encounter</span>
+          <span style={{ fontSize: 10, color: 'var(--text-subtle)', fontFamily: 'monospace' }}>#{e._id.slice(-8).toUpperCase()}</span>
+          <StatusPill status={isSigned ? 'signed' : 'draft'} small />
+          {isSigned && e.signedAt && (
+            <span style={{ fontSize: 10, color: 'var(--text-subtle)' }}>
+              · signed {new Date(e.signedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+            </span>
+          )}
+        </div>
+
+        {e.chiefComplaint && (
+          <div style={{ fontSize: 12, color: 'var(--text)', marginBottom: 6, lineHeight: 1.5 }}>
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginRight: 6 }}>Complaint</span>
+            {e.chiefComplaint}
+          </div>
+        )}
+
+        {diagnosisItems.length > 0 && (
+          <div style={{ marginBottom: 6 }}>
+            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 3 }}>
+              Diagnosis
+            </div>
+            <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--text)', lineHeight: 1.5 }}>
+              {diagnosisItems.map((d, i) => (
+                <li key={i}>
+                  {d.primary && <b>{d.description}</b>}
+                  {!d.primary && d.description}
+                  {d.code && <span style={{ color: 'var(--text-subtle)', fontFamily: 'monospace', marginLeft: 6 }}>({d.code})</span>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+
+        {vitalEntries.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 6 }}>
+            {vitalEntries.map(([label, value]) => (
+              <span key={label} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 100, background: 'var(--surface)', border: '1px solid var(--border)', fontSize: 11, color: 'var(--text-muted)' }}>
+                <span style={{ color: 'var(--text-subtle)' }}>{label}</span>
+                <span style={{ color: 'var(--text)', fontWeight: 600, fontVariantNumeric: 'tabular-nums' }}>{value}</span>
+              </span>
+            ))}
+          </div>
+        )}
+
+        {followUpDate && !Number.isNaN(followUpDate.getTime()) && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 8px', background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.2)', borderRadius: 8, fontSize: 11, color: 'var(--warning-text, var(--warning-500))', marginBottom: 6 }}>
+            <Icon name="clock" size={11} />
+            <span>
+              Follow-up {followUpDate.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+              {e.followUpNotes ? ` — ${e.followUpNotes}` : ''}
+            </span>
+          </div>
+        )}
+
+        {e.prescriptions && e.prescriptions.length > 0 && (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-muted)' }}>
+            <Icon name="pill" size={11} style={{ color: 'var(--brand-500)' }} />
+            {e.prescriptions.length === 1
+              ? `1 prescription · ${e.prescriptions[0].itemCount} medicine${e.prescriptions[0].itemCount === 1 ? '' : 's'}`
+              : `${e.prescriptions.length} prescriptions · ${e.prescriptions.reduce((s, r) => s + r.itemCount, 0)} medicines total`}
+          </div>
+        )}
+
+        {e.notes && (
+          <details style={{ marginTop: 6 }}>
+            <summary style={{ fontSize: 11, color: 'var(--text-subtle)', cursor: 'pointer' }}>Notes</summary>
+            <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.5, marginTop: 4, whiteSpace: 'pre-wrap' }}>
+              {e.notes}
+            </div>
+          </details>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function BillRow({ bill }: { bill: Bill }) {
+  const status = bill.status.toLowerCase();
+  const isVoid = bill.status === 'VOID';
+  const isPaid = bill.status === 'PAID' || (bill.outstanding === 0 && bill.totalPaid! > 0);
+  const outstanding = bill.outstanding ?? Math.max(0, bill.total - (bill.totalPaid ?? 0));
+  const currency = bill.currency ?? 'INR';
+  const hasPayment = (bill.totalPaid ?? 0) > 0;
+
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', border: `1px ${isVoid ? 'solid' : 'dashed'} ${isVoid ? 'rgba(239,68,68,0.3)' : 'var(--border)'}`, borderRadius: 10, background: isVoid ? 'rgba(239,68,68,0.04)' : 'transparent' }}>
+      <Icon name="receipt" size={14} style={{ color: isVoid ? 'var(--danger-500)' : isPaid ? 'var(--success-500)' : 'var(--warning-500)', marginTop: 3 }} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', fontFamily: 'monospace' }}>
+            {bill.billNo ?? `#${bill._id.slice(-6)}`}
+          </span>
+          <StatusPill status={status} small />
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, fontSize: 12 }}>
+          <span style={{ color: 'var(--text-muted)' }}>
+            Total <b style={{ color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{formatMoney(bill.total, currency)}</b>
+          </span>
+          {hasPayment && (
+            <span style={{ color: 'var(--success-500)' }}>
+              Paid <b style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(bill.totalPaid ?? 0, currency)}</b>
+            </span>
+          )}
+          {outstanding > 0 && !isVoid && (
+            <span style={{ color: 'var(--danger-500)' }}>
+              Outstanding <b style={{ fontVariantNumeric: 'tabular-nums' }}>{formatMoney(outstanding, currency)}</b>
+            </span>
+          )}
+        </div>
+        {isVoid && bill.voidReason && (
+          <div style={{ marginTop: 4, fontSize: 11, color: 'var(--danger-500)' }}>
+            Voided{bill.voidedAt ? ` on ${new Date(bill.voidedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}` : ''} — {bill.voidReason}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Picks the typed-vitals entries we know how to render with units. Falls
+ * back to a generic `key: value` rendering for any extra fields a clinic
+ * has tucked in there. Keeps the chip strip readable rather than dumping
+ * `{"bp":"120/80"}` raw.
+ */
+function pickVitalEntries(vitals: Record<string, unknown> | undefined): [string, string][] {
+  if (!vitals || typeof vitals !== 'object') return [];
+  const out: [string, string][] = [];
+  const v = vitals as Record<string, unknown>;
+  const num = (k: string): number | null => {
+    const n = Number((v as any)[k]);
+    return Number.isFinite(n) ? n : null;
+  };
+  // Typed shape from VitalsDto.
+  const sys = num('bpSystolic');
+  const dia = num('bpDiastolic');
+  if (sys != null && dia != null) out.push(['BP', `${sys}/${dia}`]);
+  const pulse = num('pulseBpm');
+  if (pulse != null) out.push(['Pulse', `${pulse}/min`]);
+  const temp = num('temperatureC');
+  if (temp != null) out.push(['Temp', `${temp}°C`]);
+  const spo2 = num('spo2');
+  if (spo2 != null) out.push(['SpO₂', `${spo2}%`]);
+  const rr = num('respiratoryRate');
+  if (rr != null) out.push(['RR', `${rr}/min`]);
+  const wt = num('weightKg');
+  if (wt != null) out.push(['Wt', `${wt} kg`]);
+  const ht = num('heightCm');
+  if (ht != null) out.push(['Ht', `${ht} cm`]);
+  // Legacy free-form fallback (pre-1.2 vitals object).
+  if (out.length === 0) {
+    for (const [k, val] of Object.entries(v)) {
+      if (val == null || val === '') continue;
+      out.push([k, String(val)]);
+      if (out.length >= 6) break;
+    }
+  }
+  return out;
 }

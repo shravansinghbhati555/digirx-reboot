@@ -1,8 +1,10 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apiGet, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
-import { EmptyState, Field, Spinner, formatDateTime, labelStyle, useToast } from '../shared/primitives';
+import { Avatar, EmptyState, Field, Spinner, formatDateTime, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
+
+type Patient = { _id: string; mrn?: string; fullName: string; gender?: string; dob?: string; phones?: string[] };
 
 type UploadResp = { documentId: string; storageKey: string; uploadUrl: string; expiresInSeconds: number };
 type DownloadResp = { url: string; expiresInSeconds: number };
@@ -39,6 +41,39 @@ export function DocumentsScreen() {
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sharing, setSharing] = useState<LocalDoc | null>(null);
+
+  // Patient search state
+  const [patientQuery, setPatientQuery] = useState('');
+  const [patientResults, setPatientResults] = useState<Patient[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [selectedPatient, setSelectedPatient] = useState<Patient | null>(null);
+
+  // Debounced search
+  useEffect(() => {
+    if (selectedPatient || ownerType !== 'PATIENT') { setPatientResults([]); return; }
+    if (!patientQuery.trim()) { setPatientResults([]); return; }
+    setSearching(true);
+    const t = setTimeout(() => {
+      const qs = new URLSearchParams({ query: patientQuery.trim(), limit: '10' });
+      apiGet<Patient[]>(ctx, `/patients?${qs.toString()}`)
+        .then(setPatientResults)
+        .catch(() => setPatientResults([]))
+        .finally(() => setSearching(false));
+    }, 200);
+    return () => clearTimeout(t);
+  }, [patientQuery, selectedPatient, ownerType, ctx]);
+
+  function pickPatient(p: Patient) {
+    setSelectedPatient(p);
+    setOwnerId(p._id);
+    setPatientQuery('');
+    setPatientResults([]);
+  }
+
+  function clearPatient() {
+    setSelectedPatient(null);
+    setOwnerId('');
+  }
 
   async function handleFile(file: File) {
     if (!ownerId.trim()) { setError('Set an Owner ID (e.g. patient ObjectId) first.'); return; }
@@ -93,7 +128,7 @@ export function DocumentsScreen() {
   }
 
   return (
-    <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 20, height: '100%', overflowY: 'auto' }}>
       <div>
         <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>Documents</h1>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Upload, share, and revoke. Recent uploads are tracked in this browser.</p>
@@ -109,7 +144,49 @@ export function DocumentsScreen() {
             </select>
           </div>
           <div style={{ flex: 2 }}>
-            <Field label="Owner ID (e.g. Patient ObjectId)" value={ownerId} onChange={setOwnerId} placeholder="ObjectId" />
+            {ownerType === 'PATIENT' ? (
+              <div>
+                <label style={labelStyle}>Patient</label>
+                {selectedPatient ? (
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', height: 40, background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 10 }}>
+                    <Avatar name={selectedPatient.fullName} size={28} />
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--brand-700)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedPatient.fullName}</div>
+                      <div style={{ fontSize: 10, color: 'var(--brand-600)' }}>{selectedPatient.mrn ?? `#${selectedPatient._id.slice(-6).toUpperCase()}`}</div>
+                    </div>
+                    <button onClick={clearPatient} style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Change</button>
+                  </div>
+                ) : (
+                  <div style={{ position: 'relative' }}>
+                    <div style={{ position: 'relative' }}>
+                      <Icon name="search" size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
+                      <input value={patientQuery} onChange={(e) => setPatientQuery(e.target.value)}
+                        placeholder="Search patient name, phone or MRN…"
+                        style={{ width: '100%', height: 40, padding: '0 12px 0 36px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' }}
+                      />
+                    </div>
+                    {patientQuery.trim() && (
+                      <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10, marginTop: 6, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)', boxShadow: 'var(--e3)', maxHeight: 240, overflowY: 'auto' }}>
+                        {searching && <div style={{ padding: 12, textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)' }}>Searching…</div>}
+                        {!searching && patientResults.length === 0 && <div style={{ padding: 12, textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)' }}>No results found</div>}
+                        {patientResults.map((p) => (
+                          <button key={p._id} onClick={() => pickPatient(p)}
+                            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
+                            <Avatar name={p.fullName} size={30} />
+                            <div style={{ flex: 1, minWidth: 0 }}>
+                              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{p.fullName}</div>
+                              <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{p.mrn ?? `#${p._id.slice(-6).toUpperCase()}`}</div>
+                            </div>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              <Field label={`Owner ID (e.g. ${ownerType.toLowerCase()} ID)`} value={ownerId} onChange={setOwnerId} placeholder="Paste ID here" />
+            )}
           </div>
         </div>
 

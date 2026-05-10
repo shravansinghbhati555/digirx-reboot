@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Get, NotFoundException, Param, Post, Query, Req } from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
@@ -6,7 +6,7 @@ import { TestNotificationDto } from './dto/test-notification.dto';
 import { UpsertTemplateDto } from './dto/upsert-template.dto';
 import { NotificationsService } from './notifications.service';
 import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { NotificationLog } from './schemas/notification-log.schema';
 import { NotificationTemplate } from './schemas/notification-template.schema';
 
@@ -40,6 +40,20 @@ export class NotificationsController {
       .find({ clinicId: req.context!.clinicId })
       .sort({ createdAt: -1 })
       .limit(limit);
+  }
+
+  @Get('logs/:id')
+  @RequirePermissions(Permission.NotificationRead)
+  async logById(@Req() req: AppRequest, @Param('id') id: string) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('Notification log not found');
+    }
+    const log = await this.logModel.findOne({
+      _id: id,
+      clinicId: req.context!.clinicId,
+    });
+    if (!log) throw new NotFoundException('Notification log not found');
+    return log;
   }
 
   @Get('templates')

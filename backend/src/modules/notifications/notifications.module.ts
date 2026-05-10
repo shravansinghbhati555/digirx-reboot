@@ -60,6 +60,11 @@ export class NotificationsModule {
     }
 
     return {
+      // Expose NotificationsService globally so feature modules (e.g.
+      // prescriptions, when sending the share link via SMS/WhatsApp) can
+      // inject it without each calling forRoot() again — repeated forRoot
+      // calls would re-register BullMQ queues.
+      global: true,
       module: NotificationsModule,
       imports,
       controllers: [NotificationsController],
