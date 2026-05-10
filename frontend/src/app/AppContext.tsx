@@ -61,6 +61,10 @@ type AppState = {
   setSelectedAppointmentId: (id: string | undefined) => void;
   selectedPatientId?: string;
   setSelectedPatientId: (id: string | undefined) => void;
+  selectedBillId?: string;
+  setSelectedBillId: (id: string | undefined) => void;
+  selectedEncounterId?: string;
+  setSelectedEncounterId: (id: string | undefined) => void;
   selectedDate: string; // YYYY-MM-DD
   setSelectedDate: (d: string) => void;
 };
@@ -94,6 +98,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [meError, setMeError] = useState<string | null>(null);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | undefined>();
   const [selectedPatientId, setSelectedPatientId] = useState<string | undefined>();
+  const [selectedBillId, setSelectedBillId] = useState<string | undefined>();
+  const [selectedEncounterId, setSelectedEncounterId] = useState<string | undefined>();
   const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
 
   function setCtx(next: DevContext) {
@@ -189,6 +195,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSelectedAppointmentId,
     selectedPatientId,
     setSelectedPatientId,
+    selectedBillId,
+    setSelectedBillId,
+    selectedEncounterId,
+    setSelectedEncounterId,
     selectedDate,
     setSelectedDate,
   };

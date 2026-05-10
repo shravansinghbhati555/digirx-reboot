@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiGet, apiPost } from '../../app/api';
+import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
 import { Avatar, EmptyState, Spinner, StatusPill, formatINR, labelStyle, useToast } from '../shared/primitives';
@@ -31,6 +31,8 @@ type Bill = {
   items: BillItem[];
   issuedAt?: string;
   createdAt?: string;
+  encounterId?: string;
+  appointmentId?: string;
 };
 
 type Payment = {
@@ -59,14 +61,18 @@ const PAYMENT_METHODS: { id: string; label: string; icon: IconName }[] = [
 ];
 
 export function BillingScreen() {
-  const { ctx } = useApp();
+  const { ctx, selectedAppointmentId, setSelectedAppointmentId, selectedEncounterId, setSelectedEncounterId, selectedBillId, setSelectedBillId } = useApp();
   const { has } = usePerm();
   const canCreateBill = has(Perm.BillingWrite);
   const [bills, setBills] = useState<BillRow[] | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'draft' | 'issued' | 'paid' | 'void'>('all');
-  const [selected, setSelected] = useState<Bill | null>(null);
+  const [selected, setSelected] = useState<BillRow | null>(null);
+  const [editingBill, setEditingBill] = useState<Bill | null>(null);
+  const isDraft = selected?.status === 'DRAFT';
+  const isVoid = selected?.status === 'VOID';
+  const isEditable = isDraft;
   const [showCreate, setShowCreate] = useState(false);
   const [lookupId, setLookupId] = useState('');
 
@@ -88,11 +94,24 @@ export function BillingScreen() {
 
   useEffect(() => { void loadBills(); }, [ctx.clinicId, ctx.branchId, filter]);
 
+  useEffect(() => {
+    if (selectedBillId) {
+      loadBill(selectedBillId);
+      setSelectedBillId(undefined);
+      setSelectedAppointmentId(undefined);
+      setSelectedEncounterId(undefined);
+    } else if (selectedAppointmentId || selectedEncounterId) {
+      setShowCreate(true);
+      // We don't clear them here immediately because CreateBillSheet reads them 
+      // from context when mounting. They get cleared when CreateBillSheet closes.
+    }
+  }, [selectedAppointmentId, selectedEncounterId, selectedBillId]);
+
   async function loadBill(id: string) {
     if (!id.trim()) return;
     setError(null);
     try {
-      const bill = await apiGet<Bill>(ctx, `/bills/${id.trim()}`);
+      const bill = await apiGet<BillRow>(ctx, `/bills/${id.trim()}`);
       setSelected(bill);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -185,20 +204,56 @@ export function BillingScreen() {
       </div>
 
       {selected && (
-        <BillDetail bill={selected} onClose={() => setSelected(null)} onChanged={(b) => { setSelected(b); void loadBills(); }} />
+        <BillDetail
+          bill={selected as any}
+          onClose={() => setSelected(null)}
+          onChanged={(b) => {
+            setSelected(b as BillRow);
+            void loadBills();
+          }}
+          onEdit={(b) => {
+            setEditingBill(b);
+            setShowCreate(true);
+          }}
+        />
       )}
 
       {showCreate && (
         <CreateBillSheet
-          onClose={() => setShowCreate(false)}
-          onCreated={(b) => { setShowCreate(false); setSelected(b); void loadBills(); }}
+          onClose={() => {
+            setShowCreate(false);
+            setEditingBill(null);
+            setSelectedAppointmentId(undefined);
+            setSelectedEncounterId(undefined);
+          }}
+          onCreated={(b) => {
+            setShowCreate(false);
+            setEditingBill(null);
+            setSelectedAppointmentId(undefined);
+            setSelectedEncounterId(undefined);
+            setSelected(b as BillRow);
+            void loadBills();
+          }}
+          initialEncounterId={selectedEncounterId}
+          initialAppointmentId={selectedAppointmentId}
+          initialBill={editingBill ?? undefined}
         />
       )}
     </div>
   );
 }
 
-function BillDetail({ bill, onClose, onChanged }: { bill: Bill; onClose: () => void; onChanged: (b: Bill) => void }) {
+function BillDetail({
+  bill,
+  onClose,
+  onChanged,
+  onEdit,
+}: {
+  bill: Bill;
+  onClose: () => void;
+  onChanged: (b: Bill) => void;
+  onEdit: (b: Bill) => void;
+}) {
   const { ctx } = useApp();
   const toast = useToast();
   const [payments, setPayments] = useState<Payment[] | null>(null);
@@ -268,6 +323,20 @@ function BillDetail({ bill, onClose, onChanged }: { bill: Bill; onClose: () => v
     }
   }
 
+  async function voidBill() {
+    if (!window.confirm('Are you sure you want to VOID this bill? This cannot be undone.')) return;
+    setBusy(true);
+    try {
+      const updated = await apiPatch<Bill>(ctx, `/bills/${bill._id}`, { status: 'VOID' });
+      onChanged(updated);
+      toast('Bill voided', 'success');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Void failed', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflowY: 'auto', animation: 'slideInRight 240ms ease-out' }}>
       <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -281,11 +350,38 @@ function BillDetail({ bill, onClose, onChanged }: { bill: Bill; onClose: () => v
           <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>{patientName ?? '—'} · {bill.currency}</div>
         </div>
         <StatusPill status={bill.status.toLowerCase()} />
-        {isDraft && <button onClick={issue} disabled={busy} style={{ height: 36, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: busy ? 'wait' : 'pointer' }}>Issue bill</button>}
-        {isIssued && balance > 0 && <button onClick={() => setShowPay(true)} style={{ height: 36, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Record payment</button>}
-        <button onClick={downloadPdf} title="PDF" style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 9, cursor: 'pointer', color: 'var(--text-muted)' }}>
-          <Icon name="download" size={14} />
-        </button>
+        <div style={{ display: 'flex', gap: 8 }}>
+          {isDraft && (
+            <button
+              onClick={() => onEdit(bill)}
+              style={{ height: 36, padding: '0 16px', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}
+            >
+              Edit draft
+            </button>
+          )}
+          {isDraft && (
+            <button onClick={issue} disabled={busy} style={{ height: 36, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: busy ? 'wait' : 'pointer' }}>
+              Issue bill
+            </button>
+          )}
+          {isIssued && balance > 0 && (
+            <button onClick={() => setShowPay(true)} style={{ height: 36, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+              Record payment
+            </button>
+          )}
+          {bill.status !== 'VOID' && bill.status !== 'PAID' && (
+            <button
+              onClick={voidBill}
+              disabled={busy}
+              style={{ height: 36, padding: '0 16px', background: 'none', border: '1px solid var(--error-500)', color: 'var(--error-500)', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: busy ? 'wait' : 'pointer' }}
+            >
+              Void
+            </button>
+          )}
+          <button onClick={downloadPdf} title="PDF" style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 9, cursor: 'pointer', color: 'var(--text-muted)' }}>
+            <Icon name="download" size={14} />
+          </button>
+        </div>
       </div>
 
       <div style={{ padding: '20px 24px', display: 'flex', gap: 20, alignItems: 'flex-start' }}>
@@ -480,7 +576,19 @@ type PatientHit = { _id: string; fullName: string; phones?: string[]; gender?: s
 
 type DraftItem = { name: string; serviceId?: string; qty: number; price: number };
 
-function CreateBillSheet({ onClose, onCreated }: { onClose: () => void; onCreated: (b: Bill) => void }) {
+function CreateBillSheet({
+  onClose,
+  onCreated,
+  initialEncounterId,
+  initialAppointmentId,
+  initialBill,
+}: {
+  onClose: () => void;
+  onCreated: (b: Bill) => void;
+  initialEncounterId?: string;
+  initialAppointmentId?: string;
+  initialBill?: Bill;
+}) {
   const { ctx } = useApp();
   const toast = useToast();
   const [services, setServices] = useState<Service[]>([]);
@@ -491,7 +599,7 @@ function CreateBillSheet({ onClose, onCreated }: { onClose: () => void; onCreate
   const [patientHits, setPatientHits] = useState<PatientHit[]>([]);
   const [patientFocused, setPatientFocused] = useState(false);
 
-  const [items, setItems] = useState<DraftItem[]>([{ name: 'Consultation', qty: 1, price: 800 }]);
+  const [items, setItems] = useState<DraftItem[]>([]);
   const [discount, setDiscount] = useState('0');
   const [notes, setNotes] = useState('');
   const [savingDraft, setSavingDraft] = useState(false);
@@ -499,11 +607,43 @@ function CreateBillSheet({ onClose, onCreated }: { onClose: () => void; onCreate
   const [error, setError] = useState<string | null>(null);
   const { shakeProps, shake } = useShake();
 
+  useEffect(() => {
+    if (initialBill) {
+      setItems(initialBill.items.map((it) => ({
+        name: it.customName || '',
+        serviceId: it.serviceCatalogItemId,
+        qty: it.quantity,
+        price: it.unitPrice,
+      })));
+      setDiscount(String(initialBill.discount || '0'));
+      setNotes(initialBill.notes || '');
+      apiGet<PatientHit>(ctx, `/patients/${initialBill.patientId}`).then(setPatient).catch(() => undefined);
+    } else {
+      setItems([{ name: 'Consultation', qty: 1, price: 800 }]);
+      setDiscount('0');
+      setNotes('');
+      setPatient(null);
+    }
+  }, [initialBill, ctx]);
+
   const subtitle = [ctx.clinicName, formatHeaderDate(new Date())].filter(Boolean).join(' · ');
 
   useEffect(() => {
     apiGet<Service[]>(ctx, '/catalog/services').then(setServices).catch(() => setServices([]));
   }, [ctx]);
+
+  // Pre-load patient if encounter/appointment provided
+  useEffect(() => {
+    if (initialEncounterId) {
+      apiGet<any>(ctx, `/encounters/${initialEncounterId}`).then((enc) => {
+        apiGet<PatientHit>(ctx, `/patients/${enc.patientId}`).then(setPatient);
+      }).catch(() => undefined);
+    } else if (initialAppointmentId) {
+      apiGet<any>(ctx, `/appointments/${initialAppointmentId}`).then((appt) => {
+        apiGet<PatientHit>(ctx, `/patients/${appt.patientId}`).then(setPatient);
+      }).catch(() => undefined);
+    }
+  }, [initialEncounterId, initialAppointmentId, ctx]);
 
   // Patient search
   useEffect(() => {
@@ -562,6 +702,8 @@ function CreateBillSheet({ onClose, onCreated }: { onClose: () => void; onCreate
       discount: discountNum,
       tax: 0,
       notes: notes.trim() || undefined,
+      encounterId: initialEncounterId || initialBill?.encounterId,
+      appointmentId: initialAppointmentId || initialBill?.appointmentId,
     };
     return await apiPost<Bill>(ctx, '/bills', body);
   }

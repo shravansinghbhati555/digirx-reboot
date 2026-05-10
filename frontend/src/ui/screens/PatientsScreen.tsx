@@ -7,6 +7,7 @@ import { Icon } from '../shared/Icon';
 import { AnimatedTabs } from '../shared/AnimatedTabs';
 import { Skeleton, ListItemSkeleton } from '../shared/Skeleton';
 import { useShake } from '../shared/useShake';
+import { DocumentsScreen } from './DocumentsScreen';
 
 type Patient = {
   _id: string;
@@ -377,8 +378,9 @@ function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => vo
         )}
 
         {tab === 'documents' && (
-          <EmptyState icon="folder" title="Open the Documents tab"
-            hint="Document uploads happen on the Documents screen, scoped to this patient." />
+          <div style={{ marginTop: -10 }}>
+            <DocumentsScreen fixedOwnerType="PATIENT" fixedOwnerId={patient._id} />
+          </div>
         )}
 
         {tab === 'bills' && (

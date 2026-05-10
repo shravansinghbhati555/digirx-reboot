@@ -282,7 +282,7 @@ function computeDayLayout(appts: Appointment[]) {
 
 
 export function AppointmentsScreen() {
-  const { ctx, selectedPatientId, setSelectedPatientId } = useApp();
+  const { ctx, selectedPatientId, setSelectedPatientId, setScreen, setSelectedAppointmentId, setSelectedBillId } = useApp();
   const { has } = usePerm();
   const canBook = has(Perm.AppointmentWrite);
   const toast = useToast();
@@ -569,9 +569,19 @@ export function AppointmentsScreen() {
 }
 
 function ApptSheet({ appt, patientName, onClose, onChanged }: { appt: Appointment; patientName: string; onClose: () => void; onChanged: () => void }) {
-  const { ctx, setScreen, setSelectedAppointmentId } = useApp();
+  const { ctx, setScreen, setSelectedAppointmentId, setSelectedBillId } = useApp();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  const [bill, setBill] = useState<any>(null);
+  const [billLoading, setBillLoading] = useState(true);
+
+  useEffect(() => {
+    setBillLoading(true);
+    apiGet<any>(ctx, `/bills/context/find?appointmentId=${appt._id}`)
+      .then(setBill)
+      .catch(() => setBill(null))
+      .finally(() => setBillLoading(false));
+  }, [appt._id, ctx]);
 
   async function checkIn() {
     setBusy(true);
@@ -589,6 +599,16 @@ function ApptSheet({ appt, patientName, onClose, onChanged }: { appt: Appointmen
   function startEncounter() {
     setSelectedAppointmentId(appt._id);
     setScreen('encounters');
+    onClose();
+  }
+
+  function goToBilling() {
+    if (bill && bill._id) {
+      setSelectedBillId(bill._id);
+    } else {
+      setSelectedAppointmentId(appt._id);
+    }
+    setScreen('billing');
     onClose();
   }
 
@@ -637,6 +657,29 @@ function ApptSheet({ appt, patientName, onClose, onChanged }: { appt: Appointmen
           </div>
           <div><StatusPill status={statusToken(appt.status)} /></div>
           {appt.notes && <div style={{ fontSize: 13, color: 'var(--text-muted)', background: 'var(--surface-muted)', padding: 12, borderRadius: 10 }}>{appt.notes}</div>}
+          
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Billing</div>
+            {billLoading ? (
+              <Skeleton height={42} width="100%" radius={12} />
+            ) : bill ? (
+              <div onClick={goToBilling} style={{ cursor: 'pointer', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 14px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{bill.billNo || 'Draft Bill'}</div>
+                  <div style={{ marginTop: 2, display: 'flex', gap: 6 }}><StatusPill status={bill.status.toLowerCase()} small /></div>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 4, color: 'var(--text-subtle)', fontSize: 12 }}>
+                  View <Icon name="chevronRight" size={14} />
+                </div>
+              </div>
+            ) : appt.status === 'DONE' ? (
+              <button onClick={goToBilling} style={{ width: '100%', height: 40, background: 'none', border: '1.5px dashed var(--border)', borderRadius: 12, color: 'var(--text-subtle)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <Icon name="receipt" size={14} /> Create Bill
+              </button>
+            ) : (
+              <div style={{ fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic', padding: '0 4px' }}>Complete the appointment to create a bill.</div>
+            )}
+          </div>
         </div>
         <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 8 }}>
           {status === 'BOOKED' && (

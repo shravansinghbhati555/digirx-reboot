@@ -3,6 +3,8 @@ import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Avatar, Spinner, StatusPill, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
+import { Skeleton } from '../shared/Skeleton';
+import { DocumentsScreen } from './DocumentsScreen';
 
 type Encounter = {
   _id: string;
@@ -293,9 +295,29 @@ function EncounterEditor({
 }: {
   encounter: Encounter; patient: Patient | null; onChanged: (e: Encounter) => void; onClose: () => void;
 }) {
-  const { ctx } = useApp();
+  const { ctx, setScreen, setSelectedEncounterId, setSelectedBillId } = useApp();
   const toast = useToast();
   const signed = encounter.status === 'SIGNED';
+
+  const [bill, setBill] = useState<any>(null);
+  const [billLoading, setBillLoading] = useState(true);
+
+  useEffect(() => {
+    setBillLoading(true);
+    apiGet<any>(ctx, `/bills/context/find?encounterId=${encounter._id}`)
+      .then(setBill)
+      .catch(() => setBill(null))
+      .finally(() => setBillLoading(false));
+  }, [encounter._id, ctx]);
+
+  function goToBilling() {
+    if (bill && bill._id) {
+      setSelectedBillId(bill._id);
+    } else {
+      setSelectedEncounterId(encounter._id);
+    }
+    setScreen('billing');
+  }
 
   const [vitals, setVitals] = useState<Record<string, string>>(() => ({
     bp: '', spo2: '', temp: '', pulse: '', rr: '', weight: '',
@@ -537,6 +559,25 @@ function EncounterEditor({
           <code style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-muted)', wordBreak: 'break-all' }}>{encounter._id}</code>
           <div style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 14, marginBottom: 6 }}>Visited</div>
           <div style={{ color: 'var(--text-muted)' }}>{new Date(encounter.visitedAt).toLocaleString('en-IN')}</div>
+          
+          <div style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 14, marginBottom: 8 }}>Billing</div>
+          {billLoading ? (
+            <Skeleton height={40} width="100%" radius={10} />
+          ) : bill ? (
+            <div onClick={goToBilling} style={{ cursor: 'pointer', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10, padding: 10 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>{bill.billNo || 'Draft Bill'}</div>
+                <Icon name="chevronRight" size={12} style={{ color: 'var(--text-subtle)' }} />
+              </div>
+              <div style={{ marginTop: 2 }}><StatusPill status={bill.status.toLowerCase()} small /></div>
+            </div>
+          ) : signed ? (
+            <button onClick={goToBilling} style={{ width: '100%', padding: '8px', background: 'none', border: '1.5px dashed var(--border)', borderRadius: 10, color: 'var(--text-subtle)', fontSize: 11, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              <Icon name="receipt" size={12} /> Create Bill
+            </button>
+          ) : (
+            <div style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>Encounter must be signed to create a bill.</div>
+          )}
         </div>
       </div>
 
@@ -727,6 +768,10 @@ function EncounterEditor({
             <textarea value={notes} onChange={(e) => setNotes(e.target.value)} disabled={signed}
               placeholder="Clinical notes, observations, or special instructions…"
               style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box', opacity: signed ? 0.7 : 1 }} />
+          </Section>
+
+          <Section title="Documents" icon="folder">
+            <DocumentsScreen fixedOwnerType="ENCOUNTER" fixedOwnerId={encounter._id} />
           </Section>
 
           {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
