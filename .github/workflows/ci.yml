@@ -1,0 +1,125 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-flight runs when a new commit lands on the same branch — saves
+# CI minutes and surfaces only the latest result.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PNPM_VERSION: 10.33.2
+  NODE_VERSION: 20
+
+jobs:
+  backend:
+    name: Backend — lint + typecheck + unit + e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: backend/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: backend
+        run: pnpm install --frozen-lockfile
+
+      - name: Lint
+        working-directory: backend
+        run: pnpm lint -- --max-warnings=0
+
+      - name: Typecheck
+        working-directory: backend
+        # `nest build` runs tsc with the production tsconfig — fastest
+        # way to verify the build also typechecks.
+        run: pnpm build
+
+      - name: Unit tests
+        working-directory: backend
+        run: pnpm test -- --ci
+
+      - name: E2E tests
+        working-directory: backend
+        # mongodb-memory-server downloads the Mongo binary on first call.
+        # Cache it across runs so we don't pay 30s every CI run.
+        run: pnpm test:e2e -- --ci
+        env:
+          MONGOMS_DOWNLOAD_DIR: ${{ runner.temp }}/mongodb-binaries
+
+      - name: Cache mongodb-memory-server binaries
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/mongodb-binaries
+          key: mongoms-${{ runner.os }}-${{ hashFiles('backend/pnpm-lock.yaml') }}
+
+  frontend:
+    name: Frontend — typecheck + build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build (also runs tsc)
+        working-directory: frontend
+        run: pnpm build
+
+  docker-build:
+    name: Docker — build images
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: [backend, frontend]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build but don't push — this just verifies the Dockerfiles still
+      # build cleanly. A separate workflow handles tagged-release pushes.
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./backend
+          file: ./backend/Dockerfile
+          push: false
+          tags: digirx/backend:ci
+
+      - name: Build frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./frontend
+          file: ./frontend/Dockerfile
+          push: false
+          tags: digirx/frontend:ci
+          build-args: |
+            VITE_API_BASE_URL=https://api.example.com

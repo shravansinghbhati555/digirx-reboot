@@ -1,0 +1,163 @@
+# Production-shaped compose for staging / single-node deployments. Differences
+# from the dev `docker-compose.yml`:
+#
+#   - 3-node Mongo replica set (so transactions actually commit, not fall
+#     back to the single-node path that dev uses).
+#   - Backend + frontend container images, both with healthchecks.
+#   - All ports bound to 127.0.0.1 — assume an upstream TLS terminator
+#     (nginx, caddy, ALB, Cloud Run ingress) handles 443.
+#   - Volumes pinned by name so a `docker compose down` doesn't take the
+#     data with it.
+#   - Secrets via env_file — never commit the .env.prod itself.
+#
+# To bring it up:
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d
+#   docker compose -f docker-compose.prod.yml exec mongo-primary \
+#     mongosh --eval 'rs.initiate({ _id: "rs0", members: [
+#       {_id:0, host:"mongo-primary:27017", priority:2},
+#       {_id:1, host:"mongo-secondary:27017"},
+#       {_id:2, host:"mongo-arbiter:27017", arbiterOnly:true}
+#     ]})'
+
+version: '3.9'
+
+x-mongo-common: &mongo-common
+  image: mongo:7
+  command:
+    - --replSet
+    - rs0
+    - --bind_ip_all
+    - --keyFile
+    - /etc/mongo/keyfile
+  restart: unless-stopped
+  healthcheck:
+    test:
+      - CMD
+      - mongosh
+      - --quiet
+      - --eval
+      - "db.adminCommand('ping').ok"
+    interval: 15s
+    timeout: 5s
+    retries: 5
+  # `keyfile` is required for an authenticated replica set. Generate once:
+  #   openssl rand -base64 756 > deploy/mongo-keyfile
+  #   chmod 400 deploy/mongo-keyfile
+  configs:
+    - source: mongo_keyfile
+      target: /etc/mongo/keyfile
+      mode: 0400
+
+services:
+  # ---- data plane --------------------------------------------------------
+  mongo-primary:
+    <<: *mongo-common
+    container_name: digirx-mongo-1
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USER:-root}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD}
+    volumes:
+      - mongo-data-1:/data/db
+    ports:
+      - '127.0.0.1:27017:27017'
+
+  mongo-secondary:
+    <<: *mongo-common
+    container_name: digirx-mongo-2
+    volumes:
+      - mongo-data-2:/data/db
+
+  mongo-arbiter:
+    <<: *mongo-common
+    container_name: digirx-mongo-3
+    volumes:
+      - mongo-data-3:/data/db
+
+  redis:
+    image: redis:7-alpine
+    container_name: digirx-redis
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --requirepass
+      - ${REDIS_PASSWORD}
+      - --appendonly
+      - 'yes'
+    volumes:
+      - redis-data:/data
+    ports:
+      - '127.0.0.1:6379:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', '-a', '${REDIS_PASSWORD}', 'ping']
+      interval: 15s
+      timeout: 3s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: digirx-minio
+    restart: unless-stopped
+    command: ['server', '/data', '--console-address', ':9001']
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+      # Server-side encryption with a fixed master key. Rotate annually;
+      # see docs/ops/key-rotation.md.
+      MINIO_KMS_SECRET_KEY: ${MINIO_KMS_SECRET_KEY}
+    volumes:
+      - minio-data:/data
+    ports:
+      - '127.0.0.1:9000:9000'
+      - '127.0.0.1:9001:9001'
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
+      interval: 15s
+      timeout: 5s
+      retries: 5
+
+  # ---- application -------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    image: digirx/backend:${BACKEND_TAG:-latest}
+    container_name: digirx-backend
+    restart: unless-stopped
+    depends_on:
+      mongo-primary: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      minio: { condition: service_healthy }
+    env_file:
+      - .env.prod
+    environment:
+      NODE_ENV: production
+      MONGODB_URI: mongodb://${MONGO_ROOT_USER:-root}:${MONGO_ROOT_PASSWORD}@mongo-primary:27017,mongo-secondary:27017,mongo-arbiter:27017/digirx?authSource=admin&replicaSet=rs0
+      REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379
+      S3_ENDPOINT: http://minio:9000
+    ports:
+      - '127.0.0.1:4000:4000'
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_API_BASE_URL: ${VITE_API_BASE_URL}
+    image: digirx/frontend:${FRONTEND_TAG:-latest}
+    container_name: digirx-frontend
+    restart: unless-stopped
+    depends_on:
+      backend: { condition: service_healthy }
+    ports:
+      - '127.0.0.1:8080:80'
+
+configs:
+  mongo_keyfile:
+    file: ./deploy/mongo-keyfile
+
+volumes:
+  mongo-data-1:
+  mongo-data-2:
+  mongo-data-3:
+  redis-data:
+  minio-data:

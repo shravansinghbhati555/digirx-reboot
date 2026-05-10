@@ -14,7 +14,7 @@ export class AuditController {
    * `before` cursor (last row's createdAt) + `limit`.
    */
   @Get()
-  @RequirePermissions(Permission.ClinicWrite)
+  @RequirePermissions(Permission.AuditRead)
   async list(
     @Req() req: AppRequest,
     @Query('limit') limitRaw?: string,

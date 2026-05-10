@@ -28,3 +28,10 @@ ServiceCatalogItemSchema.index(
   { clinicId: 1, name: 1 },
   { unique: true, name: 'service_catalog_unique_name_per_clinic' },
 );
+// Full-text index for service-name search (CreateBillSheet typeahead).
+// `default_language: 'none'` skips stemming so "X-ray" / "MRI Brain" /
+// "ECG-Stress" all tokenise predictably.
+ServiceCatalogItemSchema.index(
+  { name: 'text' },
+  { name: 'service_catalog_text_idx', default_language: 'none' },
+);

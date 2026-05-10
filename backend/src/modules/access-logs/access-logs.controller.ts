@@ -9,7 +9,7 @@ export class AccessLogsController {
   constructor(private readonly logs: AccessLogsService) {}
 
   @Get()
-  @RequirePermissions(Permission.ClinicRead)
+  @RequirePermissions(Permission.AccessLogRead)
   async list(
     @Req() req: AppRequest,
     @Query('limit') limitRaw?: string,
@@ -30,7 +30,7 @@ export class AccessLogsController {
   }
 
   @Get('export')
-  @RequirePermissions(Permission.ClinicRead)
+  @RequirePermissions(Permission.AccessLogRead)
   async export(
     @Req() req: AppRequest,
     @Query('limit') limitRaw?: string,

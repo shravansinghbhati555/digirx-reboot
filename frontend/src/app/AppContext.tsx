@@ -1,7 +1,12 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { apiGet, apiPost, AUTH_EXPIRED_EVENT } from './api';
 import { clearContext, isLoggedIn, loadContext, saveContext, type DevContext } from './context';
+import { SCREEN_PATHS, pathToScreen } from './screen-paths';
 
+// Top-level screens. `branches` and `audit` were here previously but they
+// live as tabs inside SettingsScreen, never as standalone shells —
+// navigating to them produced an empty AppShell. Removed.
 export type ScreenKey =
   | 'dashboard'
   | 'patients'
@@ -11,38 +16,10 @@ export type ScreenKey =
   | 'documents'
   | 'reports'
   | 'notifications'
-  | 'branches'
+  | 'inventory'
   | 'users'
   | 'roles'
-  | 'settings'
-  | 'audit';
-
-const SCREEN_STORAGE_KEY = 'digirx.screen.v1';
-const VALID_SCREENS: ReadonlySet<ScreenKey> = new Set<ScreenKey>([
-  'dashboard',
-  'patients',
-  'appointments',
-  'encounters',
-  'billing',
-  'documents',
-  'reports',
-  'notifications',
-  'branches',
-  'users',
-  'roles',
-  'settings',
-  'audit',
-]);
-
-function loadInitialScreen(): ScreenKey {
-  try {
-    const saved = localStorage.getItem(SCREEN_STORAGE_KEY);
-    if (saved && VALID_SCREENS.has(saved as ScreenKey)) return saved as ScreenKey;
-  } catch {
-    // ignore storage errors
-  }
-  return 'dashboard';
-}
+  | 'settings';
 
 type AppState = {
   ctx: DevContext;
@@ -79,16 +56,21 @@ export function useApp(): AppState {
 
 export function AppProvider({ children }: { children: ReactNode }) {
   const [ctx, setCtxState] = useState<DevContext>(() => loadContext());
-  const [screen, setScreenState] = useState<ScreenKey>(() => loadInitialScreen());
 
-  const setScreen = useCallback((s: ScreenKey) => {
-    setScreenState(s);
-    try {
-      localStorage.setItem(SCREEN_STORAGE_KEY, s);
-    } catch {
-      // ignore storage errors
-    }
-  }, []);
+  // Screen state is derived from the URL — gives us deep-linking and the
+  // browser back button for free. `setScreen` is preserved as a thin
+  // wrapper around `navigate` so existing call sites keep working without
+  // an audit of every component.
+  const location = useLocation();
+  const navigate = useNavigate();
+  const screen = useMemo(() => pathToScreen(location.pathname), [location.pathname]);
+  const setScreen = useCallback(
+    (s: ScreenKey) => {
+      navigate(SCREEN_PATHS[s]);
+    },
+    [navigate],
+  );
+
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('digirx.theme');
     return saved === 'dark' ? 'dark' : 'light';
@@ -124,11 +106,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCtxState(loadContext());
       setMeData(null);
       setMeError(null);
-      setScreen('dashboard');
+      navigate('/');
     }
     window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
-  }, []);
+  }, [navigate]);
 
   const loggedIn = isLoggedIn(ctx);
 
@@ -140,7 +122,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setLoadingMe(true);
     setMeError(null);
     try {
-      const data = await apiGet<{ permissions: string[]; user?: { name?: string; fullName?: string; email?: string } }>(ctx, '/me');
+      const data = await apiGet<{
+        permissions: string[];
+        user?: { name?: string; fullName?: string; email?: string };
+        clinic?: { name?: string; currency?: string };
+      }>(ctx, '/me');
       setMeData(data);
       // Persist email/fullName/permissions for header display.
       // The User schema uses `name`; keep `fullName` as a fallback for older clients.
@@ -149,6 +135,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         email: data.user?.email,
         fullName: data.user?.fullName ?? data.user?.name,
         permissions: data.permissions,
+        clinicName: data.clinic?.name ?? ctx.clinicName,
+        currency: data.clinic?.currency ?? ctx.currency,
       };
       saveContext(next);
       setCtxState(next);

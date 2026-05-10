@@ -35,7 +35,7 @@ export class PrescriptionsController {
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
     @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
     @InjectModel(Encounter.name) private readonly encounterModel: Model<Encounter>,
-  ) {}
+  ) { }
 
   @Post('encounters/:id/prescriptions')
   @RequirePermissions(Permission.PatientWrite)
@@ -91,11 +91,11 @@ export class PrescriptionsController {
     @Param('id') id: string,
     @Body() body: SharePrescriptionDto,
   ) {
-    return await this.prescriptions.share(
-      req.context!.clinicId,
-      id,
-      body.expiresInSeconds,
-    );
+    return await this.prescriptions.share(req.context!.clinicId, id, {
+      expiresInSeconds: body.expiresInSeconds,
+      sendVia: body.sendVia,
+      to: body.to,
+    });
   }
 
   @Post('prescriptions/:id/share/revoke')

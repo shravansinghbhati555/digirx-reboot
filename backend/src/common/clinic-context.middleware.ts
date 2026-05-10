@@ -1,6 +1,7 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { Response, NextFunction } from 'express';
+import { TokenExpiredError, JsonWebTokenError } from 'jsonwebtoken';
 import { AppRequest } from './types';
 import { parseObjectId } from './request-context';
 import type { JwtClaims } from '../modules/auth/auth.types';
@@ -70,6 +71,10 @@ export class ClinicContextMiddleware implements NestMiddleware {
 
       next();
     } catch (e) {
+      if (e instanceof TokenExpiredError || e instanceof JsonWebTokenError) {
+        res.status(401).json({ message: e.message });
+        return;
+      }
       res.status(400).json({
         message: e instanceof Error ? e.message : 'Invalid tenant context',
       });

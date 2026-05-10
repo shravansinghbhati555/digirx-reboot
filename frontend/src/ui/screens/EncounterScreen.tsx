@@ -8,7 +8,7 @@ import { DocumentsScreen } from './DocumentsScreen';
 
 type Encounter = {
   _id: string;
-  patientId: string;
+  patientId: string | { _id: string; fullName: string; mrn?: string };
   doctorId: string;
   branchId: string;
   status: 'DRAFT' | 'SIGNED';
@@ -21,9 +21,10 @@ type Encounter = {
   signedAt?: string;
   signedByUserId?: string;
   updatedAt?: string;
+  readableId?: string;
 };
 
-type Patient = { _id: string; fullName: string; gender?: string; dob?: string; phones?: string[]; tags?: string[] };
+type Patient = { _id: string; mrn?: string; fullName: string; gender?: string; dob?: string; phones?: string[]; tags?: string[] };
 
 type RxItem = { id: number; med: string; dose: string; freq: string; dur: string; note: string };
 
@@ -64,6 +65,9 @@ export function EncounterScreen() {
   const [patient, setPatient] = useState<Patient | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
+  const [recent, setRecent] = useState<(Encounter & { patientId: { fullName: string; mrn?: string } })[]>([]);
+  const [loadingRecent, setLoadingRecent] = useState(false);
+  const [recentQuery, setRecentQuery] = useState('');
 
   // Patient search (only used while no patient is selected)
   const [patientQuery, setPatientQuery] = useState('');
@@ -71,8 +75,8 @@ export function EncounterScreen() {
   const [searching, setSearching] = useState(false);
 
   // Doctor display (locked to current user — backend has no /users list endpoint yet)
-  const doctorName = ctx.fullName ? `Dr. ${ctx.fullName}` : 'Doctor';
-  const doctorSubtitle = ctx.email ?? `User ${doctorId.slice(-6)}`;
+  const doctorName = (ctx.fullName ?? '').toLowerCase().startsWith('dr.') ? ctx.fullName : (ctx.fullName ? `Dr. ${ctx.fullName}` : 'Doctor');
+  const doctorSubtitle = ctx.email ?? `User #${doctorId.slice(-8).toUpperCase()}`;
 
   // If we arrived from an appointment, pre-load the appointment to get patient/doctor
   useEffect(() => {
@@ -90,10 +94,21 @@ export function EncounterScreen() {
         if (enc) {
           setEncounter(enc);
           setEncounterId(enc._id);
+          const pid = typeof enc.patientId === 'object' ? enc.patientId._id : enc.patientId;
+          setPatientId(pid);
         }
       })
       .catch(() => undefined);
   }, [selectedAppointmentId, ctx]);
+
+  useEffect(() => {
+    if (encounter) return;
+    setLoadingRecent(true);
+    apiGet<(Encounter & { patientId: { fullName: string; mrn?: string } })[]>(ctx, '/encounters?limit=50')
+      .then(setRecent)
+      .catch(() => setRecent([]))
+      .finally(() => setLoadingRecent(false));
+  }, [encounter, ctx]);
 
   useEffect(() => {
     if (!patientId.trim()) { setPatient(null); return; }
@@ -133,7 +148,8 @@ export function EncounterScreen() {
       const enc = await apiGet<Encounter>(ctx, `/encounters/${id}`);
       setEncounter(enc);
       setEncounterId(enc._id);
-      setPatientId(enc.patientId);
+      const pid = typeof enc.patientId === 'object' ? enc.patientId._id : enc.patientId;
+      setPatientId(pid);
       setDoctorId(enc.doctorId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -155,6 +171,8 @@ export function EncounterScreen() {
       });
       setEncounter(created);
       setEncounterId(created._id);
+      const pid = typeof created.patientId === 'object' ? created.patientId._id : created.patientId;
+      setPatientId(pid);
       setSelectedAppointmentId(undefined);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -169,118 +187,174 @@ export function EncounterScreen() {
     const phone = patient?.phones?.[0];
     const meta = [gw, age != null ? `${age}y` : null, phone].filter(Boolean).join(' · ');
 
+    const filteredRecent = recent.filter(r => {
+      const q = recentQuery.toLowerCase().trim();
+      if (!q) return true;
+      const rId = (r.readableId ?? `#${r._id.slice(-8).toUpperCase()}`).toLowerCase();
+      const patientName = typeof r.patientId === 'object' ? r.patientId.fullName : '';
+      return (
+        rId.includes(q) ||
+        patientName.toLowerCase().includes(q) ||
+        (typeof r.patientId === 'object' && (r.patientId.mrn ?? '').toLowerCase().includes(q)) ||
+        r.status.toLowerCase().includes(q)
+      );
+    });
+
     return (
-      <div style={{ padding: '32px 32px', maxWidth: 720 }}>
+      <div style={{ padding: '32px 32px', maxWidth: 1080, height: '100%', overflowY: 'auto' }}>
         <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>Encounter</h1>
-        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Start a new encounter or load one by ID.</p>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Start a new clinical session or continue a recent one.</p>
 
-        <div style={{ marginTop: 24, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
-          {/* Patient picker */}
-          <div>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>Patient</label>
-
-            {patient ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 12 }}>
-                <Avatar name={patient.fullName} size={40} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--brand-700)' }}>{patient.fullName}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{meta || 'No details on file'}</div>
+        <div style={{ display: 'flex', gap: 32, marginTop: 24, alignItems: 'flex-start' }}>
+          {/* Left Side: Start New */}
+          <div style={{ flex: 1, minWidth: 380, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
+            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', marginBottom: -4 }}>Start session</div>
+            
+            {/* Patient picker */}
+            <div>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Patient</label>
+              {patient ? (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 12 }}>
+                  <Avatar name={patient.fullName} size={40} />
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--brand-700)' }}>{patient.fullName}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{meta || 'No details on file'}</div>
+                  </div>
+                  <button onClick={clearPatient}
+                    style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer', padding: '4px 8px' }}>
+                    Change
+                  </button>
                 </div>
-                <button onClick={clearPatient}
-                  style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer', padding: '4px 8px' }}>
-                  Change
-                </button>
-              </div>
-            ) : (
-              <div style={{ position: 'relative' }}>
+              ) : (
                 <div style={{ position: 'relative' }}>
-                  <Icon name="search" size={15} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
-                  <input value={patientQuery} onChange={(e) => setPatientQuery(e.target.value)}
-                    placeholder="Search by name or phone…"
-                    style={{
-                      width: '100%', height: 42, padding: '0 14px 0 40px',
-                      background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
-                      fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
-                    }}
-                    onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--brand-500)')}
-                    onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
-                  />
-                </div>
-                {patientQuery.trim() && (
-                  <div style={{ marginTop: 6, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)', maxHeight: 280, overflowY: 'auto' }}>
-                    {searching && patientResults.length === 0 && (
-                      <div style={{ padding: 14, textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)' }}>Searching…</div>
-                    )}
-                    {!searching && patientResults.length === 0 && (
-                      <div style={{ padding: 14, textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)' }}>No patients match.</div>
-                    )}
-                    {patientResults.map((p) => {
-                      const a = getAge(p.dob);
-                      const gword = genderWord(p.gender);
-                      const ph = p.phones?.[0];
-                      return (
+                  <div style={{ position: 'relative' }}>
+                    <Icon name="search" size={15} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
+                    <input value={patientQuery} onChange={(e) => setPatientQuery(e.target.value)}
+                      placeholder="Search by name or phone…"
+                      style={{
+                        width: '100%', height: 44, padding: '0 14px 0 40px',
+                        background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 12,
+                        fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
+                      }}
+                    />
+                  </div>
+                  {patientQuery.trim() && (
+                    <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10, marginTop: 6, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)', boxShadow: 'var(--e3)', maxHeight: 280, overflowY: 'auto' }}>
+                      {searching && <div style={{ padding: 14, textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)' }}>Searching…</div>}
+                      {!searching && patientResults.length === 0 && <div style={{ padding: 14, textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)' }}>No patients match.</div>}
+                      {patientResults.map((p) => (
                         <button key={p._id} onClick={() => pickPatient(p)}
                           style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
                           <Avatar name={p.fullName} size={32} />
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.fullName}</div>
-                            <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
-                              {[gword, a != null ? `${a}y` : null, ph].filter(Boolean).join(' · ') || '—'}
-                            </div>
+                            <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{p.fullName}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{p.mrn ?? `#${p._id.slice(-6)}`}</div>
                           </div>
-                          <Icon name="chevronRight" size={14} style={{ color: 'var(--text-subtle)', flexShrink: 0 }} />
                         </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
 
-          {/* Doctor (locked) */}
-          <div>
-            <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 6 }}>Doctor</label>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 12 }}>
-              <Avatar name={doctorName} size={36} />
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{doctorName}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{doctorSubtitle}</div>
+            {/* Doctor */}
+            <div>
+              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Doctor</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 12 }}>
+                <Avatar name={doctorName} size={36} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{doctorName}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{doctorSubtitle}</div>
+                </div>
               </div>
-              <span style={{ fontSize: 11, color: 'var(--text-subtle)', padding: '3px 9px', borderRadius: 100, background: 'var(--surface)', border: '1px solid var(--border)' }}>You</span>
+            </div>
+
+            {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
+
+            <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+              <button onClick={startEncounter} disabled={creating || !patient}
+                style={{
+                  flex: 2, height: 44, border: 'none', borderRadius: 12,
+                  background: (creating || !patient) ? 'rgba(99,102,241,0.4)' : 'var(--brand-500)',
+                  color: 'var(--brand-text)', fontSize: 14, fontWeight: 600,
+                  cursor: creating ? 'wait' : (!patient ? 'not-allowed' : 'pointer'),
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                }}>
+                {creating ? <Spinner /> : <><Icon name="plus" size={16} strokeWidth={2.5} /> Start encounter</>}
+              </button>
+              <button onClick={() => setScreen('appointments')}
+                style={{ flex: 1, height: 44, background: 'none', border: '1.5px solid var(--border)', borderRadius: 12, fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                Back
+              </button>
             </div>
           </div>
 
-          {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
+          {/* Right Side: Recent/Search */}
+          <div style={{ flex: 1.2, display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, display: 'flex', flexDirection: 'column', height: 500 }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Recent encounters</div>
+                <div style={{ position: 'relative', width: 220 }}>
+                  <Icon name="search" size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
+                  <input value={recentQuery} onChange={(e) => setRecentQuery(e.target.value)}
+                    placeholder="Search recent…"
+                    style={{
+                      width: '100%', height: 32, padding: '0 10px 0 30px',
+                      background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8,
+                      fontSize: 12, color: 'var(--text)', outline: 'none'
+                    }}
+                  />
+                </div>
+              </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={startEncounter} disabled={creating || !patient}
-              style={{
-                flex: 1, height: 42, border: 'none', borderRadius: 10,
-                background: (creating || !patient) ? 'rgba(99,102,241,0.4)' : 'var(--brand-500)',
-                color: 'var(--brand-text)', fontSize: 14, fontWeight: 600,
-                cursor: creating ? 'wait' : (!patient ? 'not-allowed' : 'pointer'),
-                display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-              }}>
-              {creating ? <Spinner /> : <><Icon name="plus" size={14} strokeWidth={2.5} /> Start encounter</>}
-            </button>
-            <button onClick={() => setScreen('appointments')}
-              style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
-              Back to Appointments
-            </button>
-          </div>
-        </div>
-
-        <div style={{ marginTop: 24, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
-          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>Load existing encounter</div>
-          <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginBottom: 10 }}>Paste an encounter ID to reopen it.</div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <input value={encounterId ?? ''} onChange={(e) => setEncounterId(e.target.value)} placeholder="Encounter ID"
-              style={{ flex: 1, height: 38, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none', fontFamily: 'monospace' }} />
-            <button onClick={() => encounterId && loadEncounter(encounterId)}
-              style={{ height: 38, padding: '0 16px', background: 'none', border: '1px solid var(--border)', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
-              Load
-            </button>
+              <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+                {loadingRecent ? (
+                  <div style={{ padding: 40, textAlign: 'center' }}><Spinner /></div>
+                ) : filteredRecent.length === 0 ? (
+                  <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>
+                    {recentQuery ? 'No matching encounters found.' : 'No recent encounters yet.'}
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {filteredRecent.map((r) => (
+                      <button key={r._id} onClick={() => loadEncounter(r._id)}
+                        style={{
+                          width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px',
+                          textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderRadius: 10,
+                          transition: 'background 100ms'
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-muted)')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+                      >
+                          <Avatar name={typeof r.patientId === 'object' ? r.patientId.fullName : '?'} size={36} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+                              {typeof r.patientId === 'object' ? r.patientId.fullName : (typeof r.patientId === 'string' ? `#${r.patientId.slice(-6)}` : '—')}
+                            </span>
+                            <StatusPill status={r.status.toLowerCase()} small />
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 2 }}>
+                            <code style={{ fontFamily: 'monospace', color: 'var(--brand-600)' }}>
+                              {r.readableId ?? `#${r._id.slice(-8).toUpperCase()}`}
+                            </code>
+                            {' · '}
+                            {new Date(r.visitedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                        </div>
+                        <Icon name="chevronRight" size={14} style={{ color: 'var(--text-subtle)' }} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+            
+            <div style={{ padding: '0 8px', fontSize: 11, color: 'var(--text-subtle)', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Icon name="info" size={12} />
+              Showing up to 50 most recent sessions from all branches.
+            </div>
           </div>
         </div>
       </div>
@@ -364,6 +438,32 @@ function EncounterEditor({
   const [signing, setSigning] = useState(false);
   const [justSigned, setJustSigned] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadingRx, setLoadingRx] = useState(false);
+
+  useEffect(() => {
+    if (!encounter._id) return;
+    setLoadingRx(true);
+    apiGet<any[]>(ctx, `/encounters/${encounter._id}/prescriptions`)
+      .then((data) => {
+        if (data && data.length > 0) {
+          const firstRx = data[0];
+          if (firstRx.items && firstRx.items.length > 0) {
+            const mapped = firstRx.items.map((it: any, i: number) => ({
+              id: i + 1,
+              med: it.customName || it.medicineCatalogItemId || 'Medicine',
+              dose: it.dosage || '',
+              freq: it.frequency || '',
+              dur: it.duration || '',
+              note: it.instructions || '',
+            }));
+            setRx(mapped);
+            nextRxId.current = mapped.length + 1;
+          }
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => setLoadingRx(false));
+  }, [encounter._id, ctx]);
 
   // Load existing prescription items when the encounter opens
   useEffect(() => {
@@ -554,9 +654,11 @@ function EncounterEditor({
           ))}
         </div>
 
-        <div style={{ padding: 16, fontSize: 11, color: 'var(--text-subtle)' }}>
+        <div style={{ padding: 16, fontSize: 11, color: 'var(--text-subtle)', marginTop: 'auto' }}>
           <div style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Encounter ID</div>
-          <code style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-muted)', wordBreak: 'break-all' }}>{encounter._id}</code>
+          <code style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--brand-600)', background: 'var(--brand-50)', padding: '2px 6px', borderRadius: 6 }}>
+            {encounter.readableId ?? `#${encounter._id.slice(-8).toUpperCase()}`}
+          </code>
           <div style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 14, marginBottom: 6 }}>Visited</div>
           <div style={{ color: 'var(--text-muted)' }}>{new Date(encounter.visitedAt).toLocaleString('en-IN')}</div>
           
@@ -584,25 +686,29 @@ function EncounterEditor({
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, transition: 'filter 600ms var(--ease-out)', filter: signed && justSigned ? 'saturate(0.6)' : 'saturate(1)' }}>
         {signed && (
           <div style={{
-            padding: '10px 20px',
-            background: 'rgba(16,185,129,0.08)',
-            borderBottom: '1px solid rgba(16,185,129,0.2)',
-            display: 'flex', alignItems: 'center', gap: 10,
+            padding: '12px 24px',
+            background: 'var(--success-bg)',
+            borderBottom: '1px solid var(--success-200)',
+            display: 'flex', alignItems: 'center', gap: 12,
             animation: justSigned ? 'successHalo 1000ms var(--ease-out)' : undefined,
+            flexShrink: 0,
           }}>
-            <span style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', width: 22, height: 22, borderRadius: '50%', background: 'rgba(16,185,129,0.18)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: 24, height: 24, borderRadius: '50%', background: 'var(--success-100)', color: 'var(--success-text)' }}>
               {justSigned ? (
-                <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="var(--success-500)" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="20 6 9 17 4 12" strokeDasharray="24" strokeDashoffset="24" style={{ animation: 'pathDraw 280ms var(--ease-out) forwards', ['--draw-len' as never]: 24 }} />
                 </svg>
               ) : (
-                <Icon name="checkCircle" size={14} style={{ color: 'var(--success-500)' }} />
+                <Icon name="checkCircle" size={15} />
               )}
-            </span>
-            <span style={{ fontSize: 13, color: 'var(--success-500)', fontWeight: 600 }}>
-              Signed by {signerLabel(encounter, ctx.fullName ?? ctx.email)} · {formatSignedAt(encounter.signedAt ?? encounter.updatedAt)}
-            </span>
-            <span style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 8 }}>
+            </div>
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 13, color: 'var(--success-text)', fontWeight: 700 }}>Record Signed & Locked</div>
+              <div style={{ fontSize: 11, color: 'var(--success-text)', opacity: 0.8, marginTop: 1 }}>
+                By {signerLabel(encounter, ctx.fullName ?? ctx.email)} · {formatSignedAt(encounter.signedAt ?? encounter.updatedAt)}
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
               <button
                 disabled={!branchInfo || !doctorInfo}
                 onClick={() => printPrescription({
@@ -631,7 +737,7 @@ function EncounterEditor({
                   background: 'var(--brand-500)',
                   border: '1.5px solid var(--brand-500)',
                   borderRadius: 8,
-                  color: '#ffffffff',
+                  color: '#ffffff',
                   fontSize: 12, fontWeight: 600,
                   cursor: (!branchInfo || !doctorInfo) ? 'wait' : 'pointer',
                   opacity: (!branchInfo || !doctorInfo) ? 0.6 : 1
@@ -655,120 +761,143 @@ function EncounterEditor({
                 {sharing ? <Spinner size={13} /> : <Icon name="share" size={13} />}
               </button>
               <StatusPill status="signed" small />
-            </span>
+            </div>
           </div>
         )}
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <Section title="Vitals" icon="activity" defaultOpen>
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
-              gap: 12
-            }}>
-              {VITAL_FIELDS.map((f) => (
-                <VitalInput key={f.key} label={f.label} unit={f.unit}
-                  value={vitals[f.key] ?? ''}
-                  onChange={(v) => setVitals((x) => ({ ...x, [f.key]: v }))}
-                  disabled={signed} />
-              ))}
-            </div>
-          </Section>
-
-          <Section title="Chief complaint" icon="stethoscope" defaultOpen>
-            <textarea value={complaint} onChange={(e) => setComplaint(e.target.value)} disabled={signed}
-              placeholder="Describe the patient's presenting complaint…"
-              style={{ width: '100%', minHeight: 72, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box', opacity: signed ? 0.7 : 1 }} />
-          </Section>
-
-          <Section title="Diagnosis" icon="fileText" defaultOpen>
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
-              {diags.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>No diagnoses yet.</div>}
-              {diags.map((d, i) => (
-                <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 100, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', color: 'var(--brand-700)', fontSize: 12, fontWeight: 500 }}>
-                  {d}
-                  {!signed && (
-                    <button onClick={() => removeDiag(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--brand-500)', display: 'flex', padding: 0 }}>
-                      <Icon name="x" size={11} strokeWidth={2.5} />
-                    </button>
-                  )}
-                </span>
-              ))}
-            </div>
-            {!signed && (
-              <div style={{ display: 'flex', gap: 8 }}>
-                <input value={diagInput} onChange={(e) => setDiagInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addDiag())}
-                  placeholder="Add ICD-10 code or diagnosis…"
-                  style={{ flex: 1, height: 36, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }} />
-                <button onClick={addDiag} style={{ height: 36, padding: '0 14px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 9, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Add</button>
+        <div style={{ flex: 1, overflowY: 'auto', padding: '24px 24px 60px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+          {(!signed || Object.values(vitals).some(v => !!v)) && (
+            <Section title="Vitals" icon="activity" defaultOpen={!signed}>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(110px, 1fr))',
+                gap: 12
+              }}>
+                {VITAL_FIELDS.map((f) => (
+                  <VitalInput key={f.key} label={f.label} unit={f.unit}
+                    value={vitals[f.key] ?? ''}
+                    onChange={(v) => setVitals((x) => ({ ...x, [f.key]: v }))}
+                    disabled={signed} />
+                ))}
               </div>
-            )}
-          </Section>
+            </Section>
+          )}
 
-          <Section title="Prescription" icon="pill" defaultOpen>
-            {!rxLoaded ? (
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 0', color: 'var(--text-subtle)', fontSize: 12 }}>
-                <Spinner size={14} /> Loading medicines…
+          {(!signed || complaint.trim()) && (
+            <Section title="Chief complaint" icon="stethoscope" defaultOpen={!signed}>
+              <textarea value={complaint} onChange={(e) => setComplaint(e.target.value)} disabled={signed}
+                placeholder="Describe the patient's presenting complaint…"
+                style={{ width: '100%', minHeight: 72, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box', opacity: signed ? 0.7 : 1 }} />
+            </Section>
+          )}
+
+          {(!signed || diagnosis.trim()) && (
+            <Section title="Diagnosis" icon="fileText" defaultOpen={!signed}>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 10 }}>
+                {diags.length === 0 && <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>No diagnoses yet.</div>}
+                {diags.map((d, i) => (
+                  <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 100, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', color: 'var(--brand-700)', fontSize: 12, fontWeight: 500 }}>
+                    {d}
+                    {!signed && (
+                      <button onClick={() => removeDiag(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--brand-500)', display: 'flex', padding: 0 }}>
+                        <Icon name="x" size={11} strokeWidth={2.5} />
+                      </button>
+                    )}
+                  </span>
+                ))}
               </div>
-            ) : (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                <div style={{ display: 'flex', gap: 8, padding: '0 12px 6px', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
-                  <span style={{ flex: '0 0 30%' }}>Medicine</span>
-                  <span style={{ flex: '0 0 16%' }}>Dose</span>
-                  <span style={{ flex: '0 0 14%' }}>Freq</span>
-                  <span style={{ flex: '0 0 14%' }}>Duration</span>
-                  <span style={{ flex: 1 }}>Instructions</span>
+              {!signed && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <input value={diagInput} onChange={(e) => setDiagInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addDiag())}
+                    placeholder="Add ICD-10 code or diagnosis…"
+                    style={{ flex: 1, height: 36, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }} />
+                  <button onClick={addDiag} style={{ height: 36, padding: '0 14px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 9, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Add</button>
                 </div>
-                {rx.map((item) => (
-                  <div key={item.id} style={{ display: 'flex', gap: 8, padding: '10px 12px', background: 'var(--surface-muted)', borderRadius: 10, border: '1px solid var(--border)', alignItems: 'flex-start' }}>
-                    <div style={{ flex: '0 0 30%' }}>
+              )}
+            </Section>
+          )}
+
+          {(!signed || rx.some(r => r.med.trim())) && (
+            <Section title="Prescription" icon="pill" defaultOpen={!signed || rx.some(r => r.med.trim())}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {rx.some(r => r.med.trim()) && (
+                  <div style={{ 
+                    display: 'grid', 
+                    gridTemplateColumns: 'minmax(200px, 2fr) 100px 100px 100px minmax(200px, 2.5fr) 40px', 
+                    gap: 12, 
+                    padding: '0 12px 4px', 
+                    fontSize: 10, 
+                    fontWeight: 700, 
+                    color: 'var(--text-subtle)', 
+                    textTransform: 'uppercase', 
+                    letterSpacing: '0.06em' 
+                  }}>
+                    <span>Medicine</span>
+                    <span>Dose</span>
+                    <span>Freq</span>
+                    <span>Duration</span>
+                    <span>Instructions</span>
+                    <span />
+                  </div>
+                )}
+
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {rx.filter(r => !signed || r.med.trim()).map((item) => (
+                    <div key={item.id} style={{ 
+                      display: 'grid', 
+                      gridTemplateColumns: 'minmax(200px, 2fr) 100px 100px 100px minmax(200px, 2.5fr) 40px', 
+                      gap: 12, 
+                      padding: '8px 12px', 
+                      background: 'var(--surface-muted)', 
+                      borderRadius: 12, 
+                      border: '1px solid var(--border)', 
+                      alignItems: 'center' 
+                    }}>
                       <input value={item.med} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, med: e.target.value } : x))} disabled={signed} placeholder="Medicine name" style={rxInputStyle} />
-                    </div>
-                    <div style={{ flex: '0 0 16%' }}>
                       <input value={item.dose} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dose: e.target.value } : x))} disabled={signed} placeholder="1 tab" style={rxInputStyle} />
-                    </div>
-                    <div style={{ flex: '0 0 14%' }}>
                       <select value={item.freq} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, freq: e.target.value } : x))} disabled={signed} style={{ ...rxInputStyle, cursor: 'pointer' }}>
                         <option value="">Freq</option>
                         <option>OD</option><option>BD</option><option>TDS</option><option>QID</option><option>SOS</option>
                       </select>
-                    </div>
-                    <div style={{ flex: '0 0 14%' }}>
                       <input value={item.dur} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dur: e.target.value } : x))} disabled={signed} placeholder="7 days" style={rxInputStyle} />
+                      <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} disabled={signed} placeholder="Special instructions" style={rxInputStyle} />
+                      
+                      {!signed ? (
+                        <button onClick={() => setRx((r) => r.filter((x) => x.id !== item.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-500)', padding: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Icon name="trash" size={15} />
+                        </button>
+                      ) : <span />}
                     </div>
-                    <div style={{ flex: 1 }}>
-                      <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} disabled={signed} placeholder="Instructions" style={rxInputStyle} />
-                    </div>
-                    {!signed && (
-                      <button onClick={() => setRx((r) => r.filter((x) => x.id !== item.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-500)', padding: '6px 4px', display: 'flex', marginTop: 1 }}>
-                        <Icon name="trash" size={14} />
-                      </button>
-                    )}
-                  </div>
-                ))}
+                  ))}
+                </div>
+
                 {!signed && (
                   <button onClick={() => setRx((r) => [...r, { id: nextRxId.current++, med: '', dose: '', freq: '', dur: '', note: '' }])}
-                    style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', background: 'none', border: '1.5px dashed var(--border)', borderRadius: 9, color: 'var(--text-subtle)', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
-                    <Icon name="plus" size={13} strokeWidth={2.5} /> Add medicine
+                    style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 8, height: 38, padding: '0 16px', background: 'var(--surface)', border: '1.5px dashed var(--border)', borderRadius: 10, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer', marginTop: 4 }}>
+                    <Icon name="plus" size={14} strokeWidth={2.5} /> Add medicine
                   </button>
                 )}
               </div>
-            )}
-          </Section>
+            </Section>
+          )}
 
-          <Section title="Follow-up" icon="calendar">
-            <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-              <input type="date" value={followUp} onChange={(e) => setFollowUp(e.target.value)} disabled={signed}
-                style={{ height: 38, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }} />
-              <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>Leave blank if no follow-up needed.</span>
-            </div>
-          </Section>
+          {(!signed || followUp) && (
+            <Section title="Follow-up" icon="calendar" defaultOpen={!!followUp}>
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
+                <input type="date" value={followUp} onChange={(e) => setFollowUp(e.target.value)} disabled={signed}
+                  style={{ height: 38, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }} />
+                {!signed && <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>Leave blank if no follow-up needed.</span>}
+              </div>
+            </Section>
+          )}
 
-          <Section title="Notes" icon="fileText">
-            <textarea value={notes} onChange={(e) => setNotes(e.target.value)} disabled={signed}
-              placeholder="Clinical notes, observations, or special instructions…"
-              style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box', opacity: signed ? 0.7 : 1 }} />
-          </Section>
+          {(!signed || notes.trim()) && (
+            <Section title="Notes" icon="fileText" defaultOpen={!!notes.trim()}>
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} disabled={signed}
+                placeholder="Clinical notes, observations, or special instructions…"
+                style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box', opacity: signed ? 0.7 : 1 }} />
+            </Section>
+          )}
 
           <Section title="Documents" icon="folder">
             <DocumentsScreen fixedOwnerType="ENCOUNTER" fixedOwnerId={encounter._id} />
@@ -879,8 +1008,14 @@ const rxInputStyle: React.CSSProperties = {
 
 function Section({ title, icon, children, defaultOpen }: { title: string; icon: IconName; children: ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(!!defaultOpen);
+  // flexShrink: 0 — without this, when many sections live in the column-flex
+  // parent at line 578 their total intrinsic height exceeds the container
+  // and flex squashes each child to fit instead of letting the parent scroll.
+  // Combined with the wrapper's overflow:hidden (kept here so rounded corners
+  // clip the inner border) that produced the "section title with empty body"
+  // bug. Holding our natural height makes the parent's overflowY:auto kick in.
   return (
-    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden', flexShrink: 0 }}>
       <button onClick={() => setOpen((o) => !o)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
         <div style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--brand-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <Icon name={icon} size={14} style={{ color: 'var(--brand-500)' }} />
@@ -895,7 +1030,7 @@ function Section({ title, icon, children, defaultOpen }: { title: string; icon: 
 
 function signerLabel(enc: Encounter, fallback?: string): string {
   if (fallback) return `Dr. ${fallback}`;
-  if (enc.signedByUserId) return `User ${enc.signedByUserId.slice(-6)}`;
+  if (enc.signedByUserId) return `User #${enc.signedByUserId.slice(-8).toUpperCase()}`;
   return 'this user';
 }
 

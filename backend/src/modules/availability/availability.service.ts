@@ -202,6 +202,7 @@ export class AvailabilityService {
     branchId: Types.ObjectId;
     doctorUserId: Types.ObjectId;
     date: string;
+    duration?: number;
   }) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date))
       throw new BadRequestException('date must be YYYY-MM-DD');
@@ -260,6 +261,7 @@ export class AvailabilityService {
       windows = baseWindows;
     }
 
+    const slotDuration = input.duration ?? slotMinutes;
     const slots: { startAt: string; endAt: string }[] = [];
     const windowsUtc: { startAt: string; endAt: string }[] = [];
     for (const w of windows) {
@@ -269,11 +271,11 @@ export class AvailabilityService {
       });
       for (
         let m = w.startMinutes;
-        m + slotMinutes <= w.endMinutes;
+        m + slotDuration <= w.endMinutes;
         m += slotMinutes
       ) {
         const start = day.startOf('day').plus({ minutes: m });
-        const end = start.plus({ minutes: slotMinutes });
+        const end = start.plus({ minutes: slotDuration });
         slots.push({
           startAt: start.toUTC().toISO()!,
           endAt: end.toUTC().toISO()!,

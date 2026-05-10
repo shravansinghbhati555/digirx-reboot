@@ -4,11 +4,14 @@ import { useApp } from '../../app/AppContext';
 import { Avatar, EmptyState, Field, Spinner, formatDateTime, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
 
+type Patient = { _id: string; mrn?: string; fullName: string; gender?: string; dob?: string; phones?: string[] };
+type User = { _id: string; name: string; email?: string; phone?: string; status: string };
+
 type UploadResp = { documentId: string; storageKey: string; uploadUrl: string; expiresInSeconds: number };
 type DownloadResp = { url: string; expiresInSeconds: number };
 type ShareResp = { token: string; expiresAt: string | null; maxViews: number | null };
 
-const OWNER_TYPES = ['PATIENT', 'APPOINTMENT', 'ENCOUNTER', 'BILL', 'PRESCRIPTION'] as const;
+const OWNER_TYPES = ['PATIENT', 'USER', 'APPOINTMENT', 'ENCOUNTER', 'BILL', 'PRESCRIPTION'] as const;
 type OwnerType = typeof OWNER_TYPES[number];
 
 const DOCUMENT_CATEGORIES = [
@@ -33,10 +36,8 @@ type ServerDoc = {
   createdAt: string;
 };
 
-type Patient = { _id: string; fullName: string; gender?: string; dob?: string; phones?: string[] };
-
 export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerType?: OwnerType; fixedOwnerId?: string }) {
-  const { ctx, setScreen } = useApp();
+  const { ctx } = useApp();
   const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -85,7 +86,7 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
   }, [ctx, fixedOwnerId, fixedOwnerType, searchQuery]);
 
   async function handleFile(file: File) {
-    if (!ownerId.trim()) { setError('Please select a patient first.'); return; }
+    if (!ownerId.trim()) { setError(`Please select a ${ownerType.toLowerCase()} first.`); return; }
     setError(null);
     setProgress(0);
     try {
@@ -143,32 +144,57 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
   }
 
   return (
-    <div style={{ padding: isEmbedded ? 0 : '24px 32px', display: 'flex', flexDirection: 'column', gap: 24 }}>
+    <div style={{ padding: isEmbedded ? 0 : '24px 32px', display: 'flex', flexDirection: 'column', gap: 24, height: '100%', overflowY: 'auto' }}>
       {!isEmbedded && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 24, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.5px' }}>Document Center</h1>
-            <p style={{ fontSize: 14, color: 'var(--text-muted)', marginTop: 4 }}>Manage and archive clinical records across all patients.</p>
+            <p style={{ fontSize: 14, color: 'var(--text-muted)', marginTop: 4 }}>Manage and archive clinical records across all patients and staff.</p>
           </div>
         </div>
       )}
 
       {/* Uploader Section */}
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 24, boxShadow: 'var(--shadow-sm)' }}>
-        <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           {!isEmbedded && (
-            <div style={{ flex: '1 1 300px' }}>
-              <label style={labelStyle}>Assign to Patient</label>
-              <PatientSearch onSelect={(p) => { setOwnerId(p._id); setOwnerName(p.fullName); setOwnerType('PATIENT'); }} selectedName={ownerName} onClear={() => { setOwnerId(''); setOwnerName(''); }} />
+            <div style={{ flex: '1 1 140px' }}>
+              <label style={labelStyle}>Assign To</label>
+              <select value={ownerType} onChange={(e) => { setOwnerType(e.target.value as OwnerType); setOwnerId(''); setOwnerName(''); }}
+                style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, color: 'var(--text)', outline: 'none', cursor: 'pointer' }}>
+                {OWNER_TYPES.map(t => <option key={t} value={t}>{t.charAt(0) + t.slice(1).toLowerCase()}</option>)}
+              </select>
             </div>
           )}
+
+          {!isEmbedded && (
+            <div style={{ flex: '1 1 300px' }}>
+              {ownerType === 'PATIENT' ? (
+                <PatientSearch 
+                  onSelect={(p) => { setOwnerId(p._id); setOwnerName(p.fullName); }} 
+                  selectedName={ownerName} 
+                  onClear={() => { setOwnerId(''); setOwnerName(''); }} 
+                />
+              ) : ownerType === 'USER' ? (
+                <UserSearch 
+                  onSelect={(u) => { setOwnerId(u._id); setOwnerName(u.name); }} 
+                  selectedName={ownerName} 
+                  onClear={() => { setOwnerId(''); setOwnerName(''); }} 
+                />
+              ) : (
+                <Field label={`${ownerType.charAt(0) + ownerType.slice(1).toLowerCase()} ID`} value={ownerId} onChange={setOwnerId} placeholder="Enter ID here..." />
+              )}
+            </div>
+          )}
+
           <div style={{ flex: '1 1 200px' }}>
-            <label style={labelStyle}>Document Category</label>
+            <label style={labelStyle}>Category</label>
             <select value={category} onChange={(e) => setCategory(e.target.value as DocumentCategory)}
               style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, color: 'var(--text)', outline: 'none', cursor: 'pointer' }}>
               {DOCUMENT_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
             </select>
           </div>
+
           <div style={{ flex: '1 1 200px' }}>
             <label style={labelStyle}>Access Level</label>
             <select value={access} onChange={(e) => setAccess(e.target.value as any)}
@@ -198,7 +224,7 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
               </div>
               <div style={{ textAlign: 'center' }}>
                 <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
-                  {!ownerId && !isEmbedded ? 'Select a patient to start upload' : 'Click to upload or drag & drop'}
+                  {(!ownerId && !isEmbedded) ? `Select a ${ownerType.toLowerCase()} to start upload` : 'Click to upload or drag & drop'}
                 </div>
                 <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 4 }}>PDF, JPEG, PNG, or DICOM. Max 50MB.</div>
               </div>
@@ -228,12 +254,11 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
           {!isEmbedded && (
             <div style={{ position: 'relative', width: 260 }}>
               <Icon name="search" size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
-              <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search files or patients..."
+              <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search files or owners..."
                 style={{ width: '100%', height: 38, padding: '0 12px 0 34px', background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, outline: 'none', transition: 'border-color 0.2s' }}
                 onFocus={(e) => e.currentTarget.style.borderColor = 'var(--brand-500)'}
                 onBlur={(e) => e.currentTarget.style.borderColor = 'var(--border)'}
               />
-              {loadingDocs && <div style={{ position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)' }}><Spinner size={14} /></div>}
             </div>
           )}
         </div>
@@ -242,7 +267,7 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
           <EmptyState illustration="documents" title="No documents found" hint={searchQuery ? "Try a different search term." : "Upload clinical records to see them here."} />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
-            {documents.map((doc, i) => (
+            {documents.map((doc) => (
               <DocCard key={doc._id} doc={doc} onPreview={() => setPreviewing(doc)} onDownload={() => downloadDoc(doc)} onShare={() => setSharing(doc)} onDelete={() => deleteDoc(doc)} showOwner={!isEmbedded} />
             ))}
           </div>
@@ -277,7 +302,7 @@ function DocCard({ doc, onPreview, onDownload, onShare, onDelete, showOwner }: {
         </div>
         {showOwner && (
           <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 5 }}>
-            <Icon name="user" size={12} /> {doc.ownerName || 'Unknown Patient'}
+            <Icon name={doc.ownerType === 'PATIENT' ? 'user' : 'shield'} size={12} /> {doc.ownerName || 'Unknown Owner'}
           </div>
         )}
         <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 4 }}>{formatDateTime(doc.createdAt)}</div>
@@ -332,7 +357,7 @@ function DocumentViewer({ doc, onClose }: { doc: ServerDoc; onClose: () => void 
         </div>
 
         <div style={{ flex: 1, position: 'relative', background: '#1e293b', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          {loading && <Spinner size={40} color="#fff" />}
+          {loading && <Spinner size={40} />}
           {!loading && url && (
             isPdf ? (
               <iframe src={`${url}#toolbar=0`} style={{ width: '100%', height: '100%', border: 'none' }} title="PDF Preview" />
@@ -371,37 +396,104 @@ function PatientSearch({ onSelect, selectedName, onClear }: { onSelect: (p: Pati
         .then(setResults)
         .catch(() => setResults([]))
         .finally(() => setSearching(false));
-    }, 500); // Debounce patient search
+    }, 400);
     return () => clearTimeout(t);
   }, [query, ctx]);
 
   if (selectedName) {
     return (
-      <div style={{ height: 42, display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', background: 'var(--brand-50)', border: '1.5px solid var(--brand-200)', borderRadius: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', height: 42, background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 10 }}>
         <Avatar name={selectedName} size={28} />
-        <span style={{ flex: 1, fontSize: 14, fontWeight: 700, color: 'var(--brand-700)' }}>{selectedName}</span>
-        <button onClick={onClear} style={{ background: 'none', border: 'none', color: 'var(--brand-500)', cursor: 'pointer', padding: 4 }}><Icon name="x" size={16} /></button>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--brand-700)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedName}</div>
+          <div style={{ fontSize: 10, color: 'var(--brand-600)' }}>Selected Patient</div>
+        </div>
+        <button onClick={onClear} style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Change</button>
       </div>
     );
   }
 
   return (
     <div style={{ position: 'relative' }}>
-      <Icon name="search" size={16} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
-      <input value={query} onChange={(e) => { setQuery(e.target.value); setIsOpen(true); }} placeholder="Search patient name..."
-        style={{ width: '100%', height: 42, padding: '0 12px 0 40px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, outline: 'none' }} />
-      
+      <label style={labelStyle}>Assign to Patient</label>
+      <div style={{ position: 'relative' }}>
+        <Icon name="search" size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
+        <input value={query} onChange={(e) => { setQuery(e.target.value); setIsOpen(true); }}
+          placeholder="Search patient name or MRN…"
+          style={{ width: '100%', height: 42, padding: '0 12px 0 36px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' }}
+        />
+      </div>
       {isOpen && query.trim() && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, marginTop: 8, boxShadow: 'var(--shadow-lg)', maxHeight: 300, overflowY: 'auto' }}>
-          {searching && <div style={{ padding: 24, textAlign: 'center' }}><Spinner size={20} /></div>}
-          {!searching && results.length === 0 && <div style={{ padding: 16, textAlign: 'center', fontSize: 13, color: 'var(--text-subtle)' }}>No patients found</div>}
-          {results.map(p => (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10, marginTop: 6, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)', boxShadow: 'var(--shadow-lg)', maxHeight: 240, overflowY: 'auto' }}>
+          {searching && <div style={{ padding: 12, textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)' }}>Searching…</div>}
+          {results.map((p) => (
             <button key={p._id} onClick={() => { onSelect(p); setIsOpen(false); setQuery(''); }}
-              style={{ width: '100%', padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, background: 'none', border: 'none', borderBottom: '1px solid var(--border)', cursor: 'pointer', textAlign: 'left' }}>
-              <Avatar name={p.fullName} size={32} />
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{p.fullName}</div>
-                <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{p.phones?.[0] || 'No phone'}</div>
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
+              <Avatar name={p.fullName} size={30} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{p.fullName}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{p.mrn ?? `#${p._id.slice(-6).toUpperCase()}`}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function UserSearch({ onSelect, selectedName, onClear }: { onSelect: (u: User) => void; selectedName?: string; onClear: () => void }) {
+  const { ctx } = useApp();
+  const [query, setQuery] = useState('');
+  const [results, setResults] = useState<User[]>([]);
+  const [searching, setSearching] = useState(false);
+  const [isOpen, setIsOpen] = useState(false);
+
+  useEffect(() => {
+    if (!query.trim()) { setResults([]); return; }
+    setSearching(true);
+    const t = setTimeout(() => {
+      apiGet<User[]>(ctx, `/users?query=${encodeURIComponent(query.trim())}`)
+        .then(res => setResults(res.filter(u => u.name.toLowerCase().includes(query.toLowerCase()))))
+        .catch(() => setResults([]))
+        .finally(() => setSearching(false));
+    }, 400);
+    return () => clearTimeout(t);
+  }, [query, ctx]);
+
+  if (selectedName) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', height: 42, background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 10 }}>
+        <Avatar name={selectedName} size={28} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--brand-700)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedName}</div>
+          <div style={{ fontSize: 10, color: 'var(--brand-600)' }}>Selected User/Staff</div>
+        </div>
+        <button onClick={onClear} style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Change</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ position: 'relative' }}>
+      <label style={labelStyle}>Assign to Staff</label>
+      <div style={{ position: 'relative' }}>
+        <Icon name="search" size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
+        <input value={query} onChange={(e) => { setQuery(e.target.value); setIsOpen(true); }}
+          placeholder="Search staff name…"
+          style={{ width: '100%', height: 42, padding: '0 12px 0 36px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' }}
+        />
+      </div>
+      {isOpen && query.trim() && (
+        <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 10, marginTop: 6, border: '1px solid var(--border)', borderRadius: 10, overflow: 'hidden', background: 'var(--surface)', boxShadow: 'var(--shadow-lg)', maxHeight: 240, overflowY: 'auto' }}>
+          {searching && <div style={{ padding: 12, textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)' }}>Searching…</div>}
+          {results.map((u) => (
+            <button key={u._id} onClick={() => { onSelect(u); setIsOpen(false); setQuery(''); }}
+              style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderBottom: '1px solid var(--border)' }}>
+              <Avatar name={u.name} size={30} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{u.name}</div>
+                <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{u.email || u.phone || 'No contact info'}</div>
               </div>
             </button>
           ))}
@@ -415,7 +507,7 @@ function ShareDialog({ doc, onClose }: { doc: ServerDoc; onClose: () => void }) 
   const { ctx } = useApp();
   const toast = useToast();
   const [expiry, setExpiry] = useState<'1d' | '7d' | '30d' | 'never'>('7d');
-  const [maxViews, setMaxViews] = useState<'off' | '1' | '3' | '5'>('off');
+  const [maxViews] = useState<'off' | '1' | '3' | '5'>('off');
   const [generating, setGenerating] = useState(false);
   const [share, setShare] = useState<ShareResp | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -479,6 +571,7 @@ function ShareDialog({ doc, onClose }: { doc: ServerDoc; onClose: () => void }) 
             </div>
           </div>
 
+          {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
           {!share ? (
             <button onClick={generate} disabled={generating}
               style={{ height: 44, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: generating ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>

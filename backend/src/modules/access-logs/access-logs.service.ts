@@ -1,16 +1,21 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { RetentionService } from '../../common/retention/retention.service';
 import { AccessLog } from './schemas/access-log.schema';
 
 @Injectable()
 export class AccessLogsService {
   constructor(
     @InjectModel(AccessLog.name) private readonly model: Model<AccessLog>,
+    private readonly retention: RetentionService,
   ) {}
 
-  async write(entry: Omit<AccessLog, 'createdAt' | 'updatedAt'>) {
-    await this.model.create(entry);
+  async write(entry: Omit<AccessLog, 'createdAt' | 'updatedAt' | 'expiresAt'>) {
+    // expiresAt is stamped here from the per-clinic retention setting so the
+    // hot path (every HTTP request) doesn't have to know about TTL config.
+    const expiresAt = await this.retention.expiresAt(entry.clinicId);
+    await this.model.create({ ...entry, expiresAt });
   }
 
   async list(

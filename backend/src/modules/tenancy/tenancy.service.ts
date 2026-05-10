@@ -19,7 +19,7 @@ export class TenancyService {
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
     @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
-  ) {}
+  ) { }
 
   async getClinic(clinicId: Types.ObjectId) {
     const clinic = await this.clinicModel.findById(clinicId);
@@ -72,6 +72,22 @@ export class TenancyService {
           patch.appointments?.slotMinutesDefault ??
           current.appointments.slotMinutesDefault,
       },
+      // Patients settings — currently just the MRN format. Patch isn't yet
+      // wired into PatchClinicSettingsDto, so we always carry the current
+      // value forward; mergeClinicSettings handles the canonical default.
+      patients: {
+        mrnFormat: current.patients.mrnFormat,
+      },
+      // Billing settings — same pattern: not yet patchable from the FE,
+      // so carry forward whatever's stored. mergeClinicSettings backfills
+      // defaults if any field is missing/invalid.
+      billing: {
+        billNoFormat: current.billing.billNoFormat,
+        fiscalYearStartMonth: current.billing.fiscalYearStartMonth,
+        creditNoteNoFormat: current.billing.creditNoteNoFormat,
+      },
+      // Logs settings — carry forward (no FE patcher yet).
+      logs: { retentionDays: current.logs.retentionDays },
       modules: {
         inventory: {
           enabled:
@@ -88,6 +104,22 @@ export class TenancyService {
             enabled:
               patch.modules?.notifications?.whatsapp?.enabled ??
               current.modules.notifications.whatsapp.enabled,
+          },
+          // Quiet hours: each field is independently patchable. Receiving an
+          // explicit `null` clears that side; an absent field carries the
+          // current value forward. Both null after the merge means "no quiet
+          // window" — `mergeClinicSettings` already coerces invalid combos.
+          quietHours: {
+            start:
+              patch.modules?.notifications?.quietHours &&
+                'start' in patch.modules.notifications.quietHours
+                ? (patch.modules.notifications.quietHours.start ?? null)
+                : current.modules.notifications.quietHours.start,
+            end:
+              patch.modules?.notifications?.quietHours &&
+                'end' in patch.modules.notifications.quietHours
+                ? (patch.modules.notifications.quietHours.end ?? null)
+                : current.modules.notifications.quietHours.end,
           },
         },
       },
@@ -174,6 +206,7 @@ export class TenancyService {
     const created = await this.branchModel.create({
       clinicId,
       name: body.name.trim(),
+      code: body.code?.trim().toUpperCase() || undefined,
       addressLine: body.addressLine?.trim() || undefined,
       phone: body.phone?.trim() || undefined,
       workingHours: Object.keys(workingHours).length ? workingHours : undefined,
@@ -197,6 +230,9 @@ export class TenancyService {
         if (dup) throw new BadRequestException(`Branch "${trimmed}" already exists`);
         branch.name = trimmed;
       }
+    }
+    if (body.code !== undefined) {
+      branch.code = body.code.trim().toUpperCase() || undefined;
     }
     if (body.addressLine !== undefined) branch.addressLine = body.addressLine.trim() || undefined;
     if (body.phone !== undefined) branch.phone = body.phone.trim() || undefined;

@@ -1,3 +1,4 @@
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppProvider, useApp } from './app/AppContext';
 import { canAccessScreen } from './app/permissions';
 import { ToastProvider } from './ui/shared/primitives';
@@ -11,35 +12,57 @@ import { BillingScreen } from './ui/screens/BillingScreen';
 import { DocumentsScreen } from './ui/screens/DocumentsScreen';
 import { ReportsScreen } from './ui/screens/ReportsScreen';
 import { NotificationsScreen } from './ui/screens/NotificationsScreen';
+import { InventoryScreen } from './ui/screens/InventoryScreen';
 import { SettingsScreen } from './ui/screens/SettingsScreen';
 import { RolesScreen } from './ui/screens/RolesScreen';
 import { UsersScreen } from './ui/screens/UsersScreen';
 import { SharePrescriptionScreen } from './ui/screens/SharePrescriptionScreen';
 
-function Router() {
-  const { loggedIn, screen, permissions } = useApp();
+/**
+ * Permission-gated route wrapper. Renders nothing when the user lacks the
+ * required permission for `screenKey`; AppShell's redirect-on-blocked
+ * effect will bounce them somewhere they can see.
+ */
+function Guarded({
+  screenKey,
+  children,
+}: {
+  screenKey: Parameters<typeof canAccessScreen>[1];
+  children: React.ReactNode;
+}) {
+  const { permissions } = useApp();
+  return canAccessScreen(permissions, screenKey) ? <>{children}</> : null;
+}
 
-  if (!loggedIn) return <LoginScreen />;
-
-  // If the current screen is gated by a permission the user lacks, render
-  // nothing while AppShell's effect bounces us to an allowed screen.
-  const allowed = canAccessScreen(permissions, screen);
+function AuthedShell() {
+  const { loggedIn } = useApp();
+  if (!loggedIn) return <Navigate to="/login" replace />;
 
   return (
     <AppShell>
-      {allowed && screen === 'dashboard' && <DashboardScreen />}
-      {allowed && screen === 'patients' && <PatientsScreen />}
-      {allowed && screen === 'appointments' && <AppointmentsScreen />}
-      {allowed && screen === 'encounters' && <EncounterScreen />}
-      {allowed && screen === 'billing' && <BillingScreen />}
-      {allowed && screen === 'documents' && <DocumentsScreen />}
-      {allowed && screen === 'reports' && <ReportsScreen />}
-      {allowed && screen === 'notifications' && <NotificationsScreen />}
-      {allowed && screen === 'settings' && <SettingsScreen />}
-      {allowed && screen === 'roles' && <RolesScreen />}
-      {allowed && screen === 'users' && <UsersScreen />}
+      <Routes>
+        <Route path="/" element={<Guarded screenKey="dashboard"><DashboardScreen /></Guarded>} />
+        <Route path="/patients/*" element={<Guarded screenKey="patients"><PatientsScreen /></Guarded>} />
+        <Route path="/appointments/*" element={<Guarded screenKey="appointments"><AppointmentsScreen /></Guarded>} />
+        <Route path="/encounters/*" element={<Guarded screenKey="encounters"><EncounterScreen /></Guarded>} />
+        <Route path="/billing/*" element={<Guarded screenKey="billing"><BillingScreen /></Guarded>} />
+        <Route path="/documents/*" element={<Guarded screenKey="documents"><DocumentsScreen /></Guarded>} />
+        <Route path="/reports/*" element={<Guarded screenKey="reports"><ReportsScreen /></Guarded>} />
+        <Route path="/notifications/*" element={<Guarded screenKey="notifications"><NotificationsScreen /></Guarded>} />
+        <Route path="/inventory/*" element={<Guarded screenKey="inventory"><InventoryScreen /></Guarded>} />
+        <Route path="/users/*" element={<Guarded screenKey="users"><UsersScreen /></Guarded>} />
+        <Route path="/roles/*" element={<Guarded screenKey="roles"><RolesScreen /></Guarded>} />
+        <Route path="/settings/*" element={<Guarded screenKey="settings"><SettingsScreen /></Guarded>} />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
     </AppShell>
   );
+}
+
+function LoginGate() {
+  const { loggedIn } = useApp();
+  if (loggedIn) return <Navigate to="/" replace />;
+  return <LoginScreen />;
 }
 
 export function App() {
@@ -55,10 +78,15 @@ export function App() {
   }
 
   return (
-    <AppProvider>
-      <ToastProvider>
-        <Router />
-      </ToastProvider>
-    </AppProvider>
+    <BrowserRouter>
+      <AppProvider>
+        <ToastProvider>
+          <Routes>
+            <Route path="/login" element={<LoginGate />} />
+            <Route path="/*" element={<AuthedShell />} />
+          </Routes>
+        </ToastProvider>
+      </AppProvider>
+    </BrowserRouter>
   );
 }

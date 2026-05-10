@@ -176,10 +176,6 @@ function SignInStep({
   const [errors, setErrors] = useState<{ clinic?: string; email?: string; password?: string; general?: string }>({});
   const [btnState, setBtnState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [shakeKey, setShakeKey] = useState(0);
-  const [showAdvanced, setShowAdvanced] = useState(false);
-  const [manualClinicId, setManualClinicId] = useState(ctx.clinicId);
-  const [manualBranchId, setManualBranchId] = useState(ctx.branchId ?? '');
-  const [manualUserId, setManualUserId] = useState(ctx.userId);
 
   function validate() {
     const e: typeof errors = {};
@@ -211,21 +207,6 @@ function SignInStep({
     }
   }
 
-  function devBypass() {
-    if (!manualClinicId.trim() || !manualUserId.trim()) {
-      setErrors({ general: 'Dev bypass needs Clinic ID and User ID.' });
-      return;
-    }
-    setCtx({
-      ...ctx,
-      apiBaseUrl,
-      clinicId: manualClinicId.trim(),
-      branchId: manualBranchId.trim() || undefined,
-      userId: manualUserId.trim(),
-      accessToken: undefined,
-    });
-    toast('Dev context set', 'success');
-  }
 
   return (
     <div style={{ animation: 'slideUp 200ms var(--ease-out) both' }}>
@@ -299,27 +280,6 @@ function SignInStep({
         </button>
       </form>
 
-      <button type="button" onClick={() => setShowAdvanced((s) => !s)}
-        style={{ marginTop: 18, background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', fontSize: 11, textAlign: 'center', width: '100%', padding: 4 }}>
-        {showAdvanced ? '▴ Hide' : '▾ Show'} dev / advanced options
-      </button>
-
-      {showAdvanced && (
-        <div style={{ marginTop: 12, background: 'var(--surface-muted)', border: '1px dashed var(--border)', borderRadius: 12, padding: 16, display: 'flex', flexDirection: 'column', gap: 10 }}>
-          <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>API & Dev Bypass</div>
-          <SmallField label="API base URL" value={apiBaseUrl} onChange={setApiBaseUrl} />
-          <SmallField label="Clinic ID (manual)" value={manualClinicId} onChange={setManualClinicId} placeholder="ObjectId" />
-          <SmallField label="Branch ID (optional)" value={manualBranchId} onChange={setManualBranchId} placeholder="ObjectId" />
-          <SmallField label="User ID (dev bypass)" value={manualUserId} onChange={setManualUserId} placeholder="ObjectId" />
-          <button onClick={devBypass} type="button"
-            style={{ height: 36, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
-            Use dev headers (no JWT)
-          </button>
-          <div style={{ fontSize: 10, color: 'var(--text-subtle)', lineHeight: 1.5 }}>
-            Dev bypass uses <code style={{ fontFamily: 'monospace' }}>x-clinic-id</code> + <code style={{ fontFamily: 'monospace' }}>x-user-id</code>. Backend needs <code style={{ fontFamily: 'monospace' }}>ALLOW_DEV_AUTH_HEADERS=true</code>.
-          </div>
-        </div>
-      )}
     </div>
   );
 }

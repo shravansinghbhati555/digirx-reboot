@@ -59,7 +59,7 @@ export function NotificationsScreen() {
   const [tab, setTab] = useState<'logs' | 'templates'>('logs');
 
   return (
-    <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 20, height: '100%', overflowY: 'auto' }}>
       <div>
         <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>Notifications</h1>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>SMS · WhatsApp · Email — delivery logs and templates.</p>

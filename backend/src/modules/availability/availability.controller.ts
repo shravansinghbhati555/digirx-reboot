@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Param,
   Patch,
   Put,
@@ -20,7 +21,10 @@ import { UpsertDoctorOverrideDto } from './dto/upsert-override.dto';
 export class AvailabilityController {
   constructor(private readonly availability: AvailabilityService) {}
 
+  // `no-store`: availability rules can change at any time; the day view
+  // must always reflect the current rules + active overrides.
   @Get('doctors/:doctorUserId/day')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
   @RequirePermissions(Permission.ClinicRead)
   async getDay(
     @Req() req: AppRequest,

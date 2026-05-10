@@ -1,10 +1,9 @@
-import React, { useEffect, useState } from 'react';
-import { apiGet } from '../../app/api';
+import { useEffect, useState } from 'react';
 import { useApp } from '../../app/AppContext';
 import { Icon } from '../shared/Icon';
 
 export function SharePrescriptionScreen({ token }: { token: string }) {
-  const ctx = useApp();
+  const { ctx } = useApp();
   const [data, setData] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -61,7 +60,7 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
 
   const dateStr = new Date(data.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
   const filledVitals = Object.entries(data.vitals || {}).filter(([_, v]) => v);
-  const diagnosisList = (data.diagnosis || '').split('|').map(s => s.trim()).filter(Boolean);
+  const diagnosisList = (data.diagnosis || '').split('|').map((s: string) => s.trim()).filter(Boolean);
 
   return (
     <div style={{ background: '#f1f5f9', minHeight: '100vh', padding: '20px 0' }}>
@@ -193,7 +192,7 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
                 {filledVitals.map(([k, v]) => (
                   <div key={k} className="vital-box">
                     <span className="vital-lbl">{k.toUpperCase()}</span>
-                    <span className="vital-val">{v}</span>
+                    <span className="vital-val">{v as string}</span>
                   </div>
                 ))}
               </div>
@@ -211,7 +210,7 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
             <section className="section">
               <div className="section-title">Diagnosis</div>
               <div className="chips">
-                {diagnosisList.map((d, i) => <span key={i} className="chip">{d}</span>)}
+                {diagnosisList.map((d: string, i: number) => <span key={i} className="chip">{d}</span>)}
               </div>
             </section>
           )}

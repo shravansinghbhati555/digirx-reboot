@@ -15,10 +15,10 @@ type RevenueResp = {
 
 type ScheduleResp = {
   date: string; total: number;
-  items: { _id: string; type: string; status: string; doctorId: string; patientId: { _id: string; fullName: string } | string; startAt?: string; endAt?: string; queueNumber?: number }[];
+  items: { _id: string; type: string; status: string; doctorId: string; patientId: { _id: string; mrn?: string; fullName: string } | string; startAt?: string; endAt?: string; queueNumber?: number }[];
 };
 
-type PendingRow = { _id: string; billNo?: string; total: number; outstanding: number; status: string; patientId: string; patient?: { _id: string; fullName: string } };
+type PendingRow = { _id: string; billNo?: string; total: number; outstanding: number; status: string; patientId: string; patient?: { _id: string; mrn?: string; fullName: string } };
 type PendingResp = { branchId: string | null; count: number; rows: PendingRow[] };
 
 type AccessLog = { _id: string; method: string; path: string; statusCode: number; createdAt: string };
@@ -92,7 +92,7 @@ export function DashboardScreen() {
   const fauxSpark = [42, 38, 51, 47, 55, 49, 62, 58, 44, 67, 71, 65, 58, 74];
 
   return (
-    <div style={{ padding: '28px', display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 1400 }}>
+    <div style={{ padding: '28px', display: 'flex', flexDirection: 'column', gap: 20, maxWidth: 1400, height: '100%', overflowY: 'auto' }}>
       <div>
         <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>
           {isToday ? `${greeting}, ${ctx.fullName ?? 'Dr.'}` : `Dashboard for ${dateLabel}`}
@@ -153,7 +153,9 @@ export function DashboardScreen() {
                       </span>
                     </div>
                     <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {typeof a.patientId === 'object' ? a.patientId.fullName : a.patientId.slice(-8)}
+                      {typeof a.patientId === 'object'
+                        ? a.patientId.fullName
+                        : `#${a.patientId.slice(-6)}`}
                     </div>
                     <StatusPill status={(a.status || '').toLowerCase().replace(/_/g, '-')} small />
                   </div>
@@ -182,7 +184,7 @@ export function DashboardScreen() {
                   <tr key={b._id} style={{ borderTop: '1px solid var(--border)' }}>
                     <td style={{ padding: '10px 16px', fontSize: 12, color: 'var(--text-subtle)', fontFamily: 'monospace' }}>{b.billNo ?? b._id.slice(-6)}</td>
                     <td style={{ padding: '10px 16px', fontSize: 13, color: 'var(--text)' }}>
-                      {b.patient?.fullName ?? b.patientId.slice(-12)}
+                      {b.patient?.fullName ?? (b.patient?.mrn ?? `#${b.patientId.slice(-6)}`)}
                     </td>
                     <td style={{ padding: '10px 16px', fontSize: 13, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatINR(b.total)}</td>
                     <td style={{ padding: '10px 16px', fontSize: 13, color: 'var(--danger-500)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{formatINR(b.outstanding)}</td>

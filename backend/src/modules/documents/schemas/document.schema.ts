@@ -9,6 +9,7 @@ export enum DocumentOwnerType {
   Encounter = 'ENCOUNTER',
   Bill = 'BILL',
   Prescription = 'PRESCRIPTION',
+  User = 'USER',
 }
 
 export enum DocumentAccess {
@@ -80,6 +81,18 @@ export class Document {
 
   @Prop({ type: Types.ObjectId })
   createdBy?: Types.ObjectId;
+
+  /**
+   * Soft-delete anchor. Reads filter on `deletedAt: null`; the row stays
+   * around so audit/access trails referencing the documentId still resolve.
+   * A future hard-delete cron (or migration) can purge rows where
+   * `deletedAt < now - retentionDays`.
+   */
+  @Prop({ type: Date, default: null, index: true })
+  deletedAt?: Date | null;
+
+  @Prop({ type: Types.ObjectId })
+  deletedBy?: Types.ObjectId;
 }
 
 export const DocumentSchema = SchemaFactory.createForClass(Document);

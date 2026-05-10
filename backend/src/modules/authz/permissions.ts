@@ -22,4 +22,15 @@ export enum Permission {
 
   NotificationRead = 'notification:read',
   NotificationWrite = 'notification:write',
+
+  // Read-only access to immutable trails — separated from clinic:* so
+  // operators can grant audit visibility without granting clinic-config write.
+  AuditRead = 'audit:read',
+  AccessLogRead = 'accesslog:read',
+
+  // Inventory module — gated behind `modules.inventory.enabled` clinic
+  // setting at the controller level, so the permission alone isn't enough
+  // for clinics that haven't opted in.
+  InventoryRead = 'inventory:read',
+  InventoryWrite = 'inventory:write',
 }

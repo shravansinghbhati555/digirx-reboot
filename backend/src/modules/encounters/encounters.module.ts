@@ -8,11 +8,14 @@ import {
   AppointmentSchema,
 } from '../appointments/schemas/appointment.schema';
 
+import { EncounterCounter, EncounterCounterSchema } from './schemas/encounter-counter.schema';
+
 @Module({
   imports: [
     MongooseModule.forFeature([
       { name: Encounter.name, schema: EncounterSchema },
       { name: Appointment.name, schema: AppointmentSchema },
+      { name: EncounterCounter.name, schema: EncounterCounterSchema },
     ]),
   ],
   controllers: [EncountersController],

@@ -34,6 +34,14 @@ export class AccessLog {
 
   @Prop({ trim: true })
   ip?: string;
+
+  /**
+   * Per-row TTL anchor. Mongo's TTL monitor (~60s cadence) deletes the
+   * document once `expiresAt < now`. Stamped at write time from the
+   * clinic's `logs.retentionDays` setting.
+   */
+  @Prop({ type: Date, required: true })
+  expiresAt!: Date;
 }
 
 export const AccessLogSchema = SchemaFactory.createForClass(AccessLog);
@@ -45,4 +53,10 @@ AccessLogSchema.index(
 AccessLogSchema.index(
   { clinicId: 1, path: 1, createdAt: -1 },
   { name: 'accesslog_path_created_idx' },
+);
+// TTL — same pattern as audit-log.schema.ts. `expireAfterSeconds: 0` means
+// "the row dies exactly at the time stored in `expiresAt`".
+AccessLogSchema.index(
+  { expiresAt: 1 },
+  { expireAfterSeconds: 0, name: 'accesslog_ttl_idx' },
 );

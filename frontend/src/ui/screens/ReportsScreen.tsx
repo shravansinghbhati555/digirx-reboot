@@ -8,20 +8,30 @@ import { Counter } from '../shared/Counter';
 import { Skeleton } from '../shared/Skeleton';
 
 type RevenueResp = {
-  from?: string; to?: string; timezone: string; branchId: string | null;
+  from?: string; to?: string; timezone: string; branchId: string | null; branchName?: string | null;
   issuedBills: { count: number; totalBilled: number };
   payments: { count: number; totalPaid: number };
 };
 
 type ScheduleResp = {
-  date: string; timezone: string; branchId: string;
+  date: string; timezone: string; branchId: string; branchName?: string | null;
   total: number;
   byDoctor: Record<string, { total: number; byStatus: Record<string, number>; byType: Record<string, number> }>;
   items: { _id: string; type: string; status: string; doctorId: string; patientId: string; startAt?: string; endAt?: string; queueDate?: string; queueNumber?: number }[];
 };
 
-type PendingRow = { _id: string; billNo?: string; total: number; outstanding: number; totalPaid: number; status: string; patientId: string };
-type PendingResp = { branchId: string | null; count: number; rows: PendingRow[] };
+type PendingRow = { _id: string; billNo?: string; total: number; outstanding: number; totalPaid: number; status: string; patientId: string; patient?: { fullName: string; mrn?: string } };
+type PendingResp = { branchId: string | null; branchName?: string | null; count: number; rows: PendingRow[] };
+
+function formatId(id: string | { _id: string; fullName?: string; name?: string } | undefined, len = 8): string {
+  if (!id) return '—';
+  if (typeof id === 'object') {
+    if (id.fullName) return id.fullName;
+    if (id.name) return id.name;
+    return id._id.slice(-len).toUpperCase();
+  }
+  return id.slice(-len).toUpperCase();
+}
 
 function todayIso() {
   return new Date().toISOString().slice(0, 10);
@@ -45,7 +55,7 @@ export function ReportsScreen() {
   const [tab, setTab] = useState<ReportTab>('revenue');
 
   return (
-    <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 20, height: '100%', overflowY: 'auto' }}>
       <div>
         <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>Reports</h1>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Revenue, schedule, pending payments and doctor utilization.</p>
@@ -143,7 +153,7 @@ function RevenueTab() {
             <KpiTile label="Issued bills" value={<Counter value={data.issuedBills.count} />} sub={`${formatINR(data.issuedBills.totalBilled)} billed`} />
             <KpiTile label="Payments" value={<Counter value={data.payments.count} />} sub={`${formatINR(data.payments.totalPaid)} paid`} />
             <KpiTile label="Net collected" value={<Counter value={data.payments.totalPaid} format={(n) => formatINR(n)} />} sub={`${data.from} → ${data.to}`} />
-            <KpiTile label="Timezone" value={data.timezone} sub={data.branchId ? `Branch: ${data.branchId.slice(-6)}` : 'All branches'} />
+            <KpiTile label="Timezone" value={data.timezone} sub={data.branchName ? `Branch: ${data.branchName}` : (data.branchId ? `Branch: ${formatId(data.branchId, 6)}` : 'All branches')} />
           </div>
 
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
@@ -254,7 +264,7 @@ function UtilizationTab() {
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>By doctor</div>
               <ExportButton onClick={() => downloadCsv(`utilization-${date}.csv`,
                 [['Doctor', 'Total', 'Completed', 'Cancelled', 'Time', 'Queue', 'Utilization %'],
-                  ...rows.map((r) => [r.doctorId, String(r.total), String(r.completed), String(r.cancelled), String(r.time), String(r.queue), String(r.utilPct)])])} />
+                ...rows.map((r) => [r.doctorId, String(r.total), String(r.completed), String(r.cancelled), String(r.time), String(r.queue), String(r.utilPct)])])} />
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -267,7 +277,7 @@ function UtilizationTab() {
               <tbody>
                 {rows.map((r, i) => (
                   <tr key={r.doctorId} style={{ borderTop: '1px solid var(--border)', animation: `slideUp 150ms ease-out ${Math.min(i * 20, 240)}ms both` }}>
-                    <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text)', fontFamily: 'monospace' }}>{r.doctorId.slice(-8)}</td>
+                    <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text)', fontFamily: 'monospace' }}>{formatId(r.doctorId)}</td>
                     <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{r.total}</td>
                     <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--success-500)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.completed}</td>
                     <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--danger-500)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.cancelled}</td>
@@ -355,7 +365,7 @@ function ScheduleTab() {
         <>
           <div style={{ display: 'flex', gap: 14 }}>
             <KpiTile label="Total appts" value={String(data.total)} sub={`${data.timezone}`} />
-            <KpiTile label="Doctors" value={String(Object.keys(data.byDoctor).length)} sub={`Branch ${branchId.slice(-6)}`} />
+            <KpiTile label="Doctors" value={String(Object.keys(data.byDoctor).length)} sub={data.branchName ? `Branch: ${data.branchName}` : `Branch: ${formatId(branchId, 6)}`} />
           </div>
           {data.items.length === 0 ? (
             <EmptyState illustration="calendar" title="No appointments on this date" />
@@ -373,8 +383,8 @@ function ScheduleTab() {
                   {data.items.map((a) => (
                     <tr key={a._id} style={{ borderTop: '1px solid var(--border)' }}>
                       <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text-muted)' }}>{a.type}</td>
-                      <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text)', fontFamily: 'monospace' }}>{a.patientId.slice(-8)}</td>
-                      <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{a.doctorId.slice(-8)}</td>
+                      <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text)', fontWeight: 600 }}>{formatId(a.patientId)}</td>
+                      <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{formatId(a.doctorId)}</td>
                       <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text-muted)' }}>
                         {a.type === 'TIME' ? `${formatTime(a.startAt)} → ${formatTime(a.endAt)}` : `Q#${a.queueNumber ?? '—'}`}
                       </td>
@@ -419,7 +429,7 @@ function PendingTab() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', gap: 14 }}>
         <KpiTile label="Pending bills" value={data ? String(data.count) : '—'} sub="Issued, balance > 0" />
-        <KpiTile label="Total outstanding" value={formatINR(total)} sub={ctx.branchId ? `Branch ${ctx.branchId.slice(-6)}` : 'All branches'} />
+        <KpiTile label="Total outstanding" value={formatINR(total)} sub={data?.branchName ? `Branch: ${data.branchName}` : (ctx.branchId ? `Branch: ${formatId(ctx.branchId, 6)}` : 'All branches')} />
       </div>
 
       {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
@@ -441,8 +451,8 @@ function PendingTab() {
             <tbody>
               {data.rows.map((b) => (
                 <tr key={b._id} style={{ borderTop: '1px solid var(--border)' }}>
-                  <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text-subtle)', fontFamily: 'monospace' }}>{b.billNo ?? b._id.slice(-6)}</td>
-                  <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text)', fontFamily: 'monospace' }}>{b.patientId.slice(-12)}</td>
+                  <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text-subtle)', fontFamily: 'monospace' }}>{b.billNo ?? formatId(b._id, 6)}</td>
+                  <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text)', fontWeight: 600 }}>{b.patient?.fullName ?? formatId(b.patientId, 12)}</td>
                   <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{formatINR(b.total)}</td>
                   <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--text-muted)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatINR(b.totalPaid)}</td>
                   <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--danger-500)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{formatINR(b.outstanding)}</td>

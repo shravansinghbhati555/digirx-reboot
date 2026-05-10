@@ -1,12 +1,15 @@
 import { Injectable } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { redactPII } from '../../common/redact-pii';
+import { RetentionService } from '../../common/retention/retention.service';
 import { AuditAction, AuditLog } from './schemas/audit-log.schema';
 
 @Injectable()
 export class AuditService {
   constructor(
     @InjectModel(AuditLog.name) private readonly auditModel: Model<AuditLog>,
+    private readonly retention: RetentionService,
   ) {}
 
   async write(entry: {
@@ -18,7 +21,12 @@ export class AuditService {
     entityId: string;
     meta?: Record<string, unknown>;
   }) {
-    await this.auditModel.create(entry);
+    // Redact before persist — even if today's interceptor only stores
+    // {method,path}, future expansions (request body diffs, etc.) won't
+    // accidentally leak passwords/tokens/phones into the audit trail.
+    const safeMeta = entry.meta ? redactPII(entry.meta) : undefined;
+    const expiresAt = await this.retention.expiresAt(entry.clinicId);
+    await this.auditModel.create({ ...entry, meta: safeMeta, expiresAt });
   }
 
   async list(

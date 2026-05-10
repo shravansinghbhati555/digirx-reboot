@@ -48,15 +48,16 @@ async function apiFetch<T>(
     body: init.body,
   });
 
-  if (res.status === 401 && attempt === 0) {
-    const next = await sharedRefresh(ctx);
-    if (next) {
-      ctx.accessToken = next;
-      saveContext(ctx);
-      return await apiFetch<T>(ctx, path, init, 1);
+  if (res.status === 401) {
+    if (attempt === 0) {
+      const next = await sharedRefresh(ctx);
+      if (next) {
+        ctx.accessToken = next;
+        saveContext(ctx);
+        return await apiFetch<T>(ctx, path, init, 1);
+      }
     }
-    // Refresh failed — only treat this as an expired session for JWT users.
-    // Dev-header callers (x-user-id only) get a normal 401 error instead.
+    // Refresh failed or it was already a retry — treat as expired session for JWT.
     if (ctx.accessToken) {
       clearContext();
       window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));

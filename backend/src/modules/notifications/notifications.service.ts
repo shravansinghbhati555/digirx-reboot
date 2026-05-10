@@ -53,6 +53,7 @@ export class NotificationsService {
     to: string;
     body: string;
     dedupeKey?: string;
+    templateKey?: string;
   }) {
     const enabled = await this.isChannelEnabled(input.clinicId, input.channel);
 
@@ -66,6 +67,7 @@ export class NotificationsService {
       to: input.to,
       body: input.body,
       dedupeKey: input.dedupeKey,
+      templateKey: input.templateKey,
       status: enabled ? NotificationStatus.Queued : NotificationStatus.Skipped,
       attempts: 0,
     });

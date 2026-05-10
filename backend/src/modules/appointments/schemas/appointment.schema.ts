@@ -31,7 +31,7 @@ export class Appointment {
   @Prop({ type: Types.ObjectId, required: true, index: true })
   branchId!: Types.ObjectId;
 
-  @Prop({ type: Types.ObjectId, required: true, index: true })
+  @Prop({ type: Types.ObjectId, required: true, index: true, ref: 'User' })
   doctorId!: Types.ObjectId; // references User
 
   @Prop({ type: Types.ObjectId, required: true, index: true, ref: 'Patient' })
@@ -75,6 +75,18 @@ export class Appointment {
 
   @Prop({ type: Types.ObjectId })
   createdBy?: Types.ObjectId;
+
+  // Cancellation audit. `cancellationReason` is required at the API layer
+  // for cancel transitions but the field itself is optional on the schema
+  // so legacy data migrates cleanly.
+  @Prop({ trim: true })
+  cancellationReason?: string;
+
+  @Prop({ type: Date })
+  cancelledAt?: Date;
+
+  @Prop({ type: Types.ObjectId })
+  cancelledBy?: Types.ObjectId;
 }
 
 export const AppointmentSchema = SchemaFactory.createForClass(Appointment);

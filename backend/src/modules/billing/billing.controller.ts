@@ -20,6 +20,7 @@ import { CreateBillDto } from './dto/create-bill.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { CreateServiceDto } from './dto/create-service.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
+import { VoidBillDto } from './dto/void-bill.dto';
 import { PdfService } from '../pdf/pdf.service';
 import { StorageService } from '../storage/storage.service';
 import { DocumentsService } from '../documents/documents.service';
@@ -67,17 +68,34 @@ export class BillingController {
     return await this.billing.issueBill(req.context!.clinicId, id);
   }
 
+  @Post('bills/:id/void')
+  @RequirePermissions(Permission.BillingWrite)
+  async void(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @Body() body: VoidBillDto,
+  ) {
+    return await this.billing.voidBill(
+      req.context!.clinicId,
+      req.context!.actorUserId,
+      id,
+      body.reason,
+    );
+  }
+
   @Get('bills')
   @RequirePermissions(Permission.BillingRead)
   async listBills(
     @Req() req: AppRequest,
     @Query('branchId') branchId?: string,
+    @Query('patientId') patientId?: string,
     @Query('status') status?: string,
     @Query('limit') limitRaw?: string,
   ) {
     const limit = Number(limitRaw ?? 100) || 100;
     return await this.billing.listBills(req.context!.clinicId, {
       branchId,
+      patientId,
       status,
       limit,
     });
@@ -209,8 +227,16 @@ export class BillingController {
 
   @Get('catalog/services')
   @RequirePermissions(Permission.BillingRead)
-  async listServices(@Req() req: AppRequest) {
-    return await this.billing.listServices(req.context!.clinicId);
+  async listServices(
+    @Req() req: AppRequest,
+    @Query('query') query?: string,
+    @Query('limit') limitRaw?: string,
+  ) {
+    const limit = Number(limitRaw ?? 200) || 200;
+    return await this.billing.listServices(req.context!.clinicId, {
+      query,
+      limit,
+    });
   }
 
   @Post('catalog/services')
@@ -225,9 +251,4 @@ export class BillingController {
       body.defaultPrice,
     );
   }
-
-  // @Get('reports/revenue')
-  // async revenueStub(@Query('from') from?: string, @Query('to') to?: string) {
-  //   return { status: 'NOT_IMPLEMENTED', from, to };
-  // }
 }

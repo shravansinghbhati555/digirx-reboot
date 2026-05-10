@@ -2,6 +2,7 @@ import {
   Body,
   Controller,
   Get,
+  Header,
   Param,
   Patch,
   Post,
@@ -11,6 +12,7 @@ import {
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
+import { CancelAppointmentDto } from './dto/cancel-appointment.dto';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { UpdateAppointmentDto } from './dto/update-appointment.dto';
 import { AppointmentsService } from './appointments.service';
@@ -45,19 +47,28 @@ export class AppointmentsController {
     );
   }
 
+  // `no-store`: this is the slot picker; staleness causes real bookings
+  // to fail with 409 (or worse, leak). Always pull fresh from Mongo.
   @Get('slots')
+  @Header('Cache-Control', 'no-store, no-cache, must-revalidate')
   @RequirePermissions(Permission.AppointmentRead)
   async slots(
     @Req() req: AppRequest,
     @Query('branchId') branchId: string,
     @Query('doctorId') doctorId: string,
     @Query('date') date: string,
+    @Query('duration') durationRaw?: string,
   ) {
+    // Duration in minutes — drives whether each slot can fit a booking
+    // of that length. The service falls back to the rule's slotMinutes
+    // when omitted.
+    const duration = durationRaw ? Number(durationRaw) : undefined;
     return await this.appts.availableSlots({
       clinicId: req.context!.clinicId,
       branchId,
       doctorId,
       date,
+      duration: duration && Number.isFinite(duration) ? duration : undefined,
     });
   }
 
@@ -81,5 +92,20 @@ export class AppointmentsController {
   @RequirePermissions(Permission.AppointmentWrite)
   async checkin(@Req() req: AppRequest, @Param('id') id: string) {
     return await this.appts.checkin(req.context!.clinicId, id);
+  }
+
+  @Post(':id/cancel')
+  @RequirePermissions(Permission.AppointmentWrite)
+  async cancel(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @Body() body: CancelAppointmentDto,
+  ) {
+    return await this.appts.cancel(
+      req.context!.clinicId,
+      id,
+      req.context!.actorUserId,
+      body.reason,
+    );
   }
 }

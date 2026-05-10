@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiGet, apiPatch, apiPost, apiPut } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, type PermName } from '../../app/permissions';
-import { Field, Spinner, labelStyle, useToast } from '../shared/primitives';
+import { Checkbox, Field, Spinner, labelStyle, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
 
 type ClinicBranding = {
@@ -11,9 +11,21 @@ type ClinicBranding = {
   primaryColor: string | null;
 };
 
+type QuietHoursSettings = {
+  start: string | null;
+  end: string | null;
+};
+
 type ClinicSettings = {
   appointments: { mode: 'TIME' | 'QUEUE' | 'BOTH'; slotMinutesDefault: number };
-  modules: { inventory: { enabled: boolean } };
+  modules: {
+    inventory: { enabled: boolean };
+    notifications?: {
+      sms?: { enabled: boolean };
+      whatsapp?: { enabled: boolean };
+      quietHours?: QuietHoursSettings;
+    };
+  };
   branding: ClinicBranding;
 };
 
@@ -35,22 +47,18 @@ const COMMON_TIMEZONES = [
   'UTC',
 ];
 
-type SettingsTab = 'clinic' | 'branches' | 'availability' | 'users' | 'permissions' | 'notif_cfg' | 'security' | 'audit' | 'context' | 'about';
+type SettingsTab = 'clinic' | 'branches' | 'availability' | 'notif_cfg' | 'audit' | 'about';
 
 // `perm` of `null` = visible to any signed-in user.
 type NavItem = { id: SettingsTab; label: string; icon: IconName; perm: PermName | null };
 
 const NAV: NavItem[] = [
-  { id: 'clinic',       label: 'Clinic',              icon: 'cross',    perm: Perm.ClinicWrite },
-  { id: 'branches',     label: 'Branches',            icon: 'mapPin',   perm: Perm.BranchRead },
-  { id: 'availability', label: 'Availability',        icon: 'clock',    perm: Perm.ClinicRead },
-  { id: 'users',        label: 'Users',               icon: 'users',    perm: Perm.UserWrite },
-  { id: 'permissions',  label: 'Roles & Permissions', icon: 'shield',   perm: Perm.ClinicWrite },
-  { id: 'notif_cfg',    label: 'Notifications',       icon: 'bell',     perm: Perm.NotificationRead },
-  { id: 'security',     label: 'Security',            icon: 'lock',     perm: Perm.ClinicWrite },
-  { id: 'audit',        label: 'Audit log',           icon: 'scroll',   perm: Perm.ClinicWrite },
-  { id: 'context',      label: 'My context',          icon: 'user',     perm: Perm.ClinicWrite },
-  { id: 'about',        label: 'About',               icon: 'info',     perm: null },
+  { id: 'clinic', label: 'Clinic', icon: 'cross', perm: Perm.ClinicWrite },
+  { id: 'branches', label: 'Branches', icon: 'mapPin', perm: Perm.BranchRead },
+  { id: 'availability', label: 'Availability', icon: 'clock', perm: Perm.ClinicRead },
+  { id: 'notif_cfg', label: 'Quiet hours', icon: 'bell', perm: Perm.NotificationRead },
+  { id: 'audit', label: 'Audit log', icon: 'scroll', perm: Perm.AuditRead },
+  { id: 'about', label: 'About', icon: 'info', perm: null },
 ];
 
 export function SettingsScreen() {
@@ -75,11 +83,11 @@ export function SettingsScreen() {
   const activeAllowed = visibleNav.some((n) => n.id === tab);
 
   return (
-    <div style={{ display: 'flex', minHeight: '100%', alignItems: 'flex-start' }}>
+    <div style={{ display: 'flex', height: '100%', alignItems: 'flex-start' }}>
       <div style={{
         position: 'sticky', top: 0, alignSelf: 'flex-start',
         width: 220, flexShrink: 0,
-        maxHeight: 'calc(100vh - 56px)', overflowY: 'auto',
+        height: '100%', overflowY: 'auto',
         borderRight: '1px solid var(--border)', padding: '16px 8px',
         display: 'flex', flexDirection: 'column', gap: 2,
         background: 'var(--surface)',
@@ -93,8 +101,8 @@ export function SettingsScreen() {
           </button>
         ))}
       </div>
-
-      <div style={{ flex: 1, minWidth: 0, padding: '24px 32px' }}>
+ 
+      <div style={{ flex: 1, minWidth: 0, padding: '24px 32px', height: '100%', overflowY: 'auto' }}>
         <div key={tab} style={{ animation: 'slideUp 160ms ease-out', maxWidth: 800 }}>
           <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 20 }}>
             {visibleNav.find((n) => n.id === tab)?.label}
@@ -102,12 +110,8 @@ export function SettingsScreen() {
           {activeAllowed && tab === 'clinic' && <ClinicTab />}
           {activeAllowed && tab === 'branches' && <BranchesTab />}
           {activeAllowed && tab === 'availability' && <AvailabilityTab />}
-          {activeAllowed && tab === 'users' && <UsersTab />}
-          {activeAllowed && tab === 'permissions' && <PermissionsTab />}
           {activeAllowed && tab === 'notif_cfg' && <NotifConfigTab />}
-          {activeAllowed && tab === 'security' && <SecurityTab />}
           {activeAllowed && tab === 'audit' && <AuditTab />}
-          {activeAllowed && tab === 'context' && <ContextTab />}
           {activeAllowed && tab === 'about' && <AboutTab />}
         </div>
       </div>
@@ -307,13 +311,6 @@ function ClinicTab() {
               You don't have <code>clinic:write</code> to modify settings.
             </div>
           )}
-
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>Raw settings</div>
-            <pre style={{ background: 'var(--surface-muted)', borderRadius: 10, padding: 12, fontSize: 11, color: 'var(--text-muted)', overflow: 'auto', maxHeight: 240, fontFamily: 'monospace' }}>
-              {JSON.stringify(data.settings, null, 2)}
-            </pre>
-          </div>
         </>
       )}
     </div>
@@ -446,6 +443,37 @@ function AvailabilityTab() {
     setRules((rs) => rs.map((r) => (r.weekday === weekday ? { ...r, ...patch } : r)));
   }
 
+  /**
+   * Broadcasts a single weekday's hours to every weekday in `targets`.
+   * Wires the bulk-apply buttons in each row — the most common case is
+   * "set Monday's 09:00–18:00 then click 'Apply to all 7'." Without this
+   * the operator has to fill seven rows manually and forgetting one
+   * leaves a hidden "this weekday isn't covered" landmine.
+   */
+  function copyRuleTo(sourceWeekday: number, targets: number[]) {
+    const source = rules.find((r) => r.weekday === sourceWeekday);
+    if (!source) return;
+    const targetSet = new Set(targets.filter((t) => t !== sourceWeekday));
+    setRules((rs) =>
+      rs.map((r) =>
+        targetSet.has(r.weekday)
+          ? {
+              weekday: r.weekday,
+              // Deep-clone the windows so editing a target row later
+              // doesn't mutate the source's array too.
+              windows: source.windows.map((w) => ({ ...w })),
+              slotMinutes: source.slotMinutes,
+              active: source.active,
+            }
+          : r,
+      ),
+    );
+  }
+
+  const ALL_WEEKDAYS = [0, 1, 2, 3, 4, 5, 6];
+  const WEEKDAYS_MON_FRI = [1, 2, 3, 4, 5];
+  const WEEKEND = [0, 6];
+
   const rulesDirty = useMemo(() => {
     if (!originalRules) return false;
     return JSON.stringify(rules) !== JSON.stringify(originalRules);
@@ -554,7 +582,14 @@ function AvailabilityTab() {
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           {rules.map((r) => (
-            <RuleRow key={r.weekday} rule={r} disabled={!canWriteThis} onChange={(patch) => updateRule(r.weekday, patch)} />
+            <RuleRow
+              key={r.weekday}
+              rule={r}
+              disabled={!canWriteThis}
+              onChange={(patch) => updateRule(r.weekday, patch)}
+              onCopyTo={(targets) => copyRuleTo(r.weekday, targets)}
+              copyTargets={{ all: ALL_WEEKDAYS, weekdays: WEEKDAYS_MON_FRI, weekend: WEEKEND }}
+            />
           ))}
         </div>
         {canWriteThis && (
@@ -681,7 +716,28 @@ function formatLocalHHMM(iso: string, tz: string): string {
   }
 }
 
-function RuleRow({ rule, disabled, onChange }: { rule: WeeklyRule; disabled: boolean; onChange: (p: Partial<WeeklyRule>) => void }) {
+function RuleRow({
+  rule,
+  disabled,
+  onChange,
+  onCopyTo,
+  copyTargets,
+}: {
+  rule: WeeklyRule;
+  disabled: boolean;
+  onChange: (p: Partial<WeeklyRule>) => void;
+  onCopyTo?: (targets: number[]) => void;
+  copyTargets?: { all: number[]; weekdays: number[]; weekend: number[] };
+}) {
+  // Copy is only meaningful for ACTIVE rows with windows — copying an
+  // empty/off row is a footgun (silently turns every other day off).
+  const canCopy =
+    !disabled &&
+    rule.active &&
+    rule.windows.length > 0 &&
+    !!onCopyTo &&
+    !!copyTargets;
+
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', background: rule.active ? 'var(--surface-muted)' : 'transparent', border: '1px solid var(--border)', borderRadius: 10 }}>
       <button onClick={() => onChange({ active: !rule.active })} disabled={disabled}
@@ -690,15 +746,60 @@ function RuleRow({ rule, disabled, onChange }: { rule: WeeklyRule; disabled: boo
       </button>
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
         <WindowsEditor value={rule.windows} onChange={(ws) => onChange({ windows: ws })} disabled={disabled || !rule.active} compact />
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Slot minutes</span>
-          <input type="number" min={5} max={180} value={rule.slotMinutes ?? 15}
-            onChange={(e) => onChange({ slotMinutes: Math.max(5, Math.min(180, Number(e.target.value) || 15)) })}
-            disabled={disabled || !rule.active}
-            style={{ width: 64, height: 28, padding: '0 8px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 12, color: 'var(--text)', outline: 'none' }} />
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Slot minutes</span>
+            <input type="number" min={5} max={180} value={rule.slotMinutes ?? 15}
+              onChange={(e) => onChange({ slotMinutes: Math.max(5, Math.min(180, Number(e.target.value) || 15)) })}
+              disabled={disabled || !rule.active}
+              style={{ width: 64, height: 28, padding: '0 8px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 12, color: 'var(--text)', outline: 'none' }} />
+          </div>
+
+          {canCopy && (
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 11, color: 'var(--text-subtle)' }}>
+              <span>Copy to</span>
+              <CopyButton
+                label="All days"
+                onClick={() => onCopyTo!(copyTargets!.all)}
+                title={`Apply ${WEEKDAY_LABELS[rule.weekday]}'s hours to all 7 weekdays`}
+              />
+              <CopyButton
+                label="Mon–Fri"
+                onClick={() => onCopyTo!(copyTargets!.weekdays)}
+                title={`Apply ${WEEKDAY_LABELS[rule.weekday]}'s hours to Monday–Friday`}
+              />
+              <CopyButton
+                label="Sat + Sun"
+                onClick={() => onCopyTo!(copyTargets!.weekend)}
+                title={`Apply ${WEEKDAY_LABELS[rule.weekday]}'s hours to the weekend`}
+              />
+            </div>
+          )}
         </div>
       </div>
     </div>
+  );
+}
+
+function CopyButton({ label, title, onClick }: { label: string; title: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      title={title}
+      onClick={onClick}
+      style={{
+        height: 24,
+        padding: '0 8px',
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 6,
+        fontSize: 11,
+        fontWeight: 500,
+        color: 'var(--text-muted)',
+        cursor: 'pointer',
+      }}>
+      {label}
+    </button>
   );
 }
 
@@ -744,187 +845,85 @@ function WindowsEditor({ value, onChange, disabled, compact }: { value: Availabi
   );
 }
 
-function ContextTab() {
-  const { ctx, setCtx, refreshMe, logout } = useApp();
-  const [api, setApi] = useState(ctx.apiBaseUrl);
-  const [clinicId, setClinicId] = useState(ctx.clinicId);
-  const [branchId, setBranchId] = useState(ctx.branchId ?? '');
-  const [userId, setUserId] = useState(ctx.userId);
-  const [token, setToken] = useState(ctx.accessToken ?? '');
-  const toast = useToast();
-
-  const isDirty = useMemo(() => {
-    return (
-      api.trim() !== ctx.apiBaseUrl ||
-      clinicId.trim() !== ctx.clinicId ||
-      branchId.trim() !== (ctx.branchId ?? '') ||
-      userId.trim() !== ctx.userId ||
-      token.trim() !== (ctx.accessToken ?? '')
-    );
-  }, [api, clinicId, branchId, userId, token, ctx]);
-
-  function save() {
-    if (!isDirty) return;
-    setCtx({
-      ...ctx,
-      apiBaseUrl: api.trim(),
-      clinicId: clinicId.trim(),
-      branchId: branchId.trim() || undefined,
-      userId: userId.trim(),
-      accessToken: token.trim() || undefined,
-    });
-    toast('Context saved', 'success');
-  }
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, display: 'flex', flexDirection: 'column', gap: 12 }}>
-        <Field label="API base URL" value={api} onChange={setApi} />
-        <Field label="Clinic ID" value={clinicId} onChange={setClinicId} />
-        <Field label="Branch ID (optional)" value={branchId} onChange={setBranchId} />
-        <Field label="User ID (dev fallback)" value={userId} onChange={setUserId} />
-        <Field label="Access token (JWT)" value={token} onChange={setToken} />
-        <div style={{ display: 'flex', gap: 8, marginTop: 6 }}>
-          <button onClick={save} disabled={!isDirty}
-            style={{
-              height: 38, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 13, fontWeight: 600,
-              cursor: !isDirty ? 'not-allowed' : 'pointer',
-              opacity: !isDirty ? 0.6 : 1,
-              transition: 'all 0.2s'
-            }}>
-            Save context
-          </button>
-          <button onClick={() => void refreshMe()}
-            style={{ height: 38, padding: '0 16px', background: 'none', border: '1.5px solid var(--border)', borderRadius: 9, color: 'var(--text-muted)', fontSize: 13, fontWeight: 500, cursor: 'pointer' }}>
-            Refresh /me
-          </button>
-          <button onClick={() => void logout()}
-            style={{ height: 38, padding: '0 16px', background: 'none', border: '1.5px solid var(--danger-500)', color: 'var(--danger-500)', borderRadius: 9, fontSize: 13, fontWeight: 500, cursor: 'pointer', marginLeft: 'auto' }}>
-            Sign out
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-const PERMISSION_GROUPS: { group: string; items: string[] }[] = [
-  { group: 'Clinic',        items: ['clinic:read', 'clinic:write'] },
-  { group: 'Patients',      items: ['patient:read', 'patient:write'] },
-  { group: 'Appointments',  items: ['appointment:read', 'appointment:write'] },
-  { group: 'Billing',       items: ['billing:read', 'billing:write'] },
-  { group: 'Documents',     items: ['document:read', 'document:write'] },
-  { group: 'Notifications', items: ['notification:read', 'notification:write'] },
-];
-
-function PermissionsTab() {
-  const { permissions, ctx } = useApp();
-  const list = useMemo(() => Array.from(permissions).sort(), [permissions]);
-
-  return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>Your permissions</div>
-        <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginBottom: 12 }}>
-          Loaded from <code>/me</code> for <code>{ctx.email ?? ctx.userId.slice(-8)}</code>.
-        </div>
-        {list.length === 0 ? (
-          <div style={{ fontSize: 13, color: 'var(--text-subtle)', padding: 16, textAlign: 'center' }}>No permissions resolved.</div>
-        ) : (
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-            {list.map((p) => (
-              <span key={p} style={{ padding: '4px 10px', borderRadius: 100, background: 'var(--brand-50)', color: 'var(--brand-700)', fontSize: 11, fontWeight: 600, border: '1px solid var(--brand-100)', fontFamily: 'monospace' }}>{p}</span>
-            ))}
-          </div>
-        )}
-      </div>
-
-      <div>
-        <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginBottom: 10 }}>
-          Permissions matrix — your role's grants vs all known capabilities.
-        </div>
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'auto' }}>
-          <table style={{ borderCollapse: 'collapse', width: '100%' }}>
-            <thead>
-              <tr style={{ background: 'var(--surface-muted)' }}>
-                <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', width: 220 }}>Permission</th>
-                <th style={{ padding: '12px 16px', textAlign: 'center', fontSize: 12, fontWeight: 700, color: 'var(--brand-600)' }}>You</th>
-              </tr>
-            </thead>
-            <tbody>
-              {PERMISSION_GROUPS.map((pg) => (
-                <PermissionGroupRows key={pg.group} group={pg.group} items={pg.items} permissions={permissions} />
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function PermissionGroupRows({ group, items, permissions }: { group: string; items: string[]; permissions: Set<string> }) {
-  return (
-    <>
-      <tr style={{ background: 'var(--surface-muted)' }}>
-        <td colSpan={2} style={{ padding: '6px 16px', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>{group}</td>
-      </tr>
-      {items.map((p) => {
-        const has = permissions.has(p);
-        return (
-          <tr key={p} style={{ borderTop: '1px solid var(--border)' }}>
-            <td style={{ padding: '10px 16px', fontSize: 13, color: 'var(--text)', fontFamily: 'monospace' }}>{p}</td>
-            <td style={{ padding: '10px 16px', textAlign: 'center' }}>
-              <PermCheck checked={has} />
-            </td>
-          </tr>
-        );
-      })}
-    </>
-  );
-}
-
-function PermCheck({ checked }: { checked: boolean }) {
-  return (
-    <div style={{
-      width: 20, height: 20, borderRadius: 6,
-      border: `1.5px solid ${checked ? 'var(--brand-500)' : 'var(--border)'}`,
-      background: checked ? 'var(--brand-500)' : 'var(--surface-muted)',
-      display: 'flex', alignItems: 'center', justifyContent: 'center',
-      margin: '0 auto',
-      transition: 'background 160ms var(--ease-out), border-color 160ms var(--ease-out)',
-    }}>
-      {checked && (
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12"
-            strokeDasharray="24" strokeDashoffset="24"
-            style={{ animation: 'pathDraw 160ms var(--ease-out) forwards', ['--draw-len' as never]: 24 }} />
-        </svg>
-      )}
-    </div>
-  );
-}
 
 function AboutTab() {
+  const features: { icon: IconName; title: string; body: string }[] = [
+    {
+      icon: 'calendar',
+      title: 'Appointments & queue',
+      body: 'Book time-slot or walk-in appointments with conflict prevention, doctor availability rules, and per-branch queue tokens.',
+    },
+    {
+      icon: 'stethoscope',
+      title: 'Encounters & prescriptions',
+      body: "Capture vitals, diagnoses, and prescriptions in a single signed clinical record — shareable with patients via secure links.",
+    },
+    {
+      icon: 'creditCard',
+      title: 'Billing',
+      body: 'Draft, issue, and collect payments on bills with idempotent payment capture and per-branch invoice numbering.',
+    },
+    {
+      icon: 'users',
+      title: 'Multi-clinic, multi-branch',
+      body: 'Run several clinics or branches under a single tenant with strict isolation, role-based permissions, and a full audit trail.',
+    },
+    {
+      icon: 'bell',
+      title: 'Reminders & notifications',
+      body: 'Automated SMS/WhatsApp reminders for upcoming appointments, configurable per template and per channel.',
+    },
+    {
+      icon: 'folder',
+      title: 'Documents',
+      body: 'Attach lab reports, X-rays, or prescriptions to patients and share them with patients through expiring, view-limited links.',
+    },
+  ];
+
   return (
-    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 24 }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-        <div style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--brand-500)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <Icon name="cross" size={18} style={{ color: 'var(--brand-text)' }} strokeWidth={2.5} />
-        </div>
-        <div>
-          <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 20, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.4px' }}>
-            Digi<span style={{ color: 'var(--brand-500)' }}>Rx</span>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 14 }}>
+          <div style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--brand-500)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <Icon name="cross" size={20} style={{ color: 'var(--brand-text)' }} strokeWidth={2.5} />
           </div>
-          <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>Multi-tenant clinic management</div>
+          <div>
+            <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.4px' }}>
+              Digi<span style={{ color: 'var(--brand-500)' }}>Rx</span>
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>Clinic management, end to end</div>
+          </div>
+        </div>
+        <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
+          DigiRx is a clinic management platform that runs the day-to-day of a
+          modern outpatient practice — from a patient's first booking through
+          their visit, prescription, and bill. It is built for solo doctors,
+          multi-doctor clinics, and multi-branch chains, with the safeguards
+          and audit trails expected of clinical software.
+        </p>
+      </div>
+
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 14 }}>What DigiRx covers</div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
+          {features.map((f) => (
+            <div key={f.title} style={{ display: 'flex', gap: 10, padding: '12px 14px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10 }}>
+              <div style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--brand-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Icon name={f.icon} size={14} style={{ color: 'var(--brand-500)' }} />
+              </div>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{f.title}</div>
+                <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 2, lineHeight: 1.5 }}>{f.body}</div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
-      <ul style={{ listStyle: 'none', padding: 0, fontSize: 13, color: 'var(--text-muted)', display: 'flex', flexDirection: 'column', gap: 8 }}>
-        <li><strong style={{ color: 'var(--text)' }}>Backend:</strong> NestJS 11 · MongoDB · BullMQ · MinIO/S3</li>
-        <li><strong style={{ color: 'var(--text)' }}>Frontend:</strong> React 19 · Vite 8 · TypeScript</li>
-        <li><strong style={{ color: 'var(--text)' }}>Auth:</strong> JWT + refresh cookie, multi-tenant via <code>x-clinic-id</code> + <code>x-branch-id</code></li>
-        <li><strong style={{ color: 'var(--text)' }}>Idempotent payments:</strong> client-generated UUIDv4 per submit</li>
-      </ul>
+
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, fontSize: 12, color: 'var(--text-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+        <span>© {new Date().getFullYear()} DigiRx. All rights reserved.</span>
+        <span>Need help? Reach support at <a href="mailto:support@digirx.local" style={{ color: 'var(--brand-500)', textDecoration: 'none' }}>support@digirx.local</a></span>
+      </div>
     </div>
   );
 }
@@ -934,18 +933,6 @@ function Row({ label, children }: { label: string; children: React.ReactNode }) 
     <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 24 }}>
       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', flex: '0 0 200px' }}>{label}</div>
       <div style={{ fontSize: 13, color: 'var(--text)', flex: 1, textAlign: 'right' }}>{children}</div>
-    </div>
-  );
-}
-
-function StubTab({ icon, title, hint }: { icon: IconName; title: string; hint: string }) {
-  return (
-    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 32, textAlign: 'center' }}>
-      <div style={{ width: 48, height: 48, borderRadius: 12, background: 'var(--brand-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 14px' }}>
-        <Icon name={icon} size={22} style={{ color: 'var(--brand-500)' }} />
-      </div>
-      <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', fontFamily: "'Manrope',sans-serif", marginBottom: 6 }}>{title}</div>
-      <div style={{ fontSize: 13, color: 'var(--text-muted)', maxWidth: 460, margin: '0 auto', lineHeight: 1.5 }}>{hint}</div>
     </div>
   );
 }
@@ -1068,9 +1055,11 @@ function BranchCard({ branch, canWrite, onEdit, onToggle }: { branch: BranchAdmi
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
           <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{branch.name}</span>
-          <span style={{ padding: '1px 8px', borderRadius: 100, fontSize: 10, fontWeight: 600,
+          <span style={{
+            padding: '1px 8px', borderRadius: 100, fontSize: 10, fontWeight: 600,
             background: branch.active ? 'var(--success-bg)' : 'var(--neutral-bg)',
-            color: branch.active ? 'var(--success-text)' : 'var(--neutral-text)' }}>
+            color: branch.active ? 'var(--success-text)' : 'var(--neutral-text)'
+          }}>
             {branch.active ? 'Active' : 'Inactive'}
           </span>
         </div>
@@ -1228,31 +1217,333 @@ const timeInputStyle: React.CSSProperties = {
   fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
 };
 
-function UsersTab() {
-  return <StubTab icon="users" title="Users"
-    hint="User invitations, roles, and deactivation will live here. The backend currently exposes user records via /me only; once a list endpoint exists we'll wire a table with role chips and last-login." />;
-}
+function TimePickerInput({
+  label,
+  value,
+  onChange,
+  disabled,
+  refObj,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+  refObj: React.RefObject<HTMLInputElement | null>;
+}) {
+  const [show, setShow] = useState(false);
+  const containerRef = useRef<HTMLDivElement>(null);
 
-function NotifConfigTab() {
-  return <StubTab icon="bell" title="Notification providers & quiet hours"
-    hint="Provider keys (Twilio/WhatsApp Business), quiet hours, and reminder windows will live here. Templates are already editable on the Notifications page." />;
-}
+  // Close on outside click
+  useEffect(() => {
+    if (!show) return;
+    const click = (e: MouseEvent) => {
+      if (!containerRef.current?.contains(e.target as Node)) setShow(false);
+    };
+    window.addEventListener('mousedown', click);
+    return () => window.removeEventListener('mousedown', click);
+  }, [show]);
 
-function SecurityTab() {
-  const { ctx } = useApp();
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>Session</div>
-        <Row label="User">{ctx.fullName ?? ctx.email ?? ctx.userId.slice(-8)}</Row>
-        <Row label="Token">{ctx.accessToken ? <code style={{ fontFamily: 'monospace', fontSize: 11 }}>{ctx.accessToken.slice(0, 18)}…</code> : 'dev headers'}</Row>
-        <Row label="Refresh">httpOnly cookie <code style={{ fontFamily: 'monospace', fontSize: 11 }}>digirx_refresh</code></Row>
+    <div style={{ flex: 1 }}>
+      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>{label}</label>
+      <div 
+        ref={containerRef}
+        style={{ position: 'relative' }}
+      >
+        <div 
+          onClick={() => !disabled && setShow(!show)}
+          style={{ position: 'relative', cursor: disabled ? 'not-allowed' : 'pointer' }}
+        >
+          <div style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: !disabled ? 'var(--brand-500)' : 'var(--text-subtle)', transition: 'color 0.2s', zIndex: 5 }}>
+            <Icon name="clock" size={14} />
+          </div>
+          <input
+            ref={refObj}
+            type="time"
+            value={value}
+            disabled={disabled}
+            onChange={(e) => onChange(e.target.value)}
+            className="time-picker-custom"
+            style={{
+              width: '100%', height: 40, padding: '0 12px 0 34px',
+              background: 'var(--surface-muted)', border: `1.5px solid ${show ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 10,
+              fontSize: 13, fontWeight: 600, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
+              fontFamily: 'inherit',
+              opacity: disabled ? 0.6 : 1,
+              transition: 'all 0.2s ease-out',
+              cursor: 'inherit'
+            }}
+          />
+        </div>
+
+        {show && !disabled && (
+          <div style={{
+            position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 100,
+            width: 240, background: 'var(--surface)', border: '1px solid var(--border)',
+            borderRadius: 14, boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
+            padding: 12, display: 'flex', flexDirection: 'column', gap: 12,
+            animation: 'pickerIn 180ms var(--ease-out)'
+          }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+              {/* Hours */}
+              <div style={pickerColStyle}>
+                {Array.from({ length: 12 }).map((_, i) => {
+                  const h = i === 0 ? 12 : i;
+                  const hStr = h.toString().padStart(2, '0');
+                  const currentH = parseInt(value.split(':')[0]);
+                  const isPM = currentH >= 12;
+                  const displayH = isPM ? (currentH === 12 ? 12 : currentH - 12) : (currentH === 0 ? 12 : currentH);
+                  const active = displayH === h;
+                  return (
+                    <div 
+                      key={h} 
+                      onClick={() => {
+                        const [_, m] = value.split(':');
+                        const newH = isPM ? (h === 12 ? 12 : h + 12) : (h === 12 ? 0 : h);
+                        onChange(`${newH.toString().padStart(2, '0')}:${m}`);
+                      }}
+                      style={{ ...pickerItemStyle, background: active ? 'var(--brand-500)' : 'transparent', color: active ? 'var(--brand-text)' : 'var(--text)' }}
+                    >
+                      {hStr}
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Minutes */}
+              <div style={pickerColStyle}>
+                {['00','15','30','45'].map((m) => {
+                  const active = value.split(':')[1] === m;
+                  return (
+                    <div 
+                      key={m} 
+                      onClick={() => onChange(`${value.split(':')[0]}:${m}`)}
+                      style={{ ...pickerItemStyle, background: active ? 'var(--brand-500)' : 'transparent', color: active ? 'var(--brand-text)' : 'var(--text)' }}
+                    >
+                      {m}
+                    </div>
+                  );
+                })}
+              </div>
+              {/* AM/PM */}
+              <div style={pickerColStyle}>
+                {['AM','PM'].map((p) => {
+                  const currentH = parseInt(value.split(':')[0]);
+                  const isPM = currentH >= 12;
+                  const active = p === (isPM ? 'PM' : 'AM');
+                  return (
+                    <div 
+                      key={p} 
+                      onClick={() => {
+                        const [h, m] = value.split(':').map(Number);
+                        let newH = h;
+                        if (p === 'AM' && isPM) newH = h === 12 ? 0 : h - 12;
+                        if (p === 'PM' && !isPM) newH = h === 0 ? 12 : h + 12;
+                        onChange(`${newH.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
+                      }}
+                      style={{ ...pickerItemStyle, background: active ? 'var(--brand-500)' : 'transparent', color: active ? 'var(--brand-text)' : 'var(--text)' }}
+                    >
+                      {p}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+            <button 
+              onClick={() => setShow(false)}
+              style={{ width: '100%', height: 32, background: 'var(--brand-50)', color: 'var(--brand-500)', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+            >
+              Done
+            </button>
+          </div>
+        )}
       </div>
-      <StubTab icon="lock" title="Audit retention & 2FA"
-        hint="Per-clinic 2FA enforcement, session timeouts, and audit log retention will live here. Audit writes are already happening server-side via the global AuditInterceptor." />
     </div>
   );
 }
+
+const pickerColStyle: React.CSSProperties = {
+  display: 'flex', flexDirection: 'column', gap: 2, maxHeight: 180, overflowY: 'auto',
+  scrollbarWidth: 'none',
+};
+
+const pickerItemStyle: React.CSSProperties = {
+  padding: '6px 0', textAlign: 'center', fontSize: 13, fontWeight: 600, borderRadius: 6, cursor: 'pointer', transition: 'all 0.1s'
+};
+
+function NotifConfigTab() {
+  const { ctx, permissions } = useApp();
+  const toast = useToast();
+  const canWrite = permissions.has('clinic:write');
+
+  const startRef = useRef<HTMLInputElement>(null);
+  const endRef = useRef<HTMLInputElement>(null);
+
+  const [data, setData] = useState<ClinicSettingsResp | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  // Editor state
+  const [enabled, setEnabled] = useState(false);
+  const [start, setStart] = useState('21:00');
+  const [end, setEnd] = useState('08:00');
+
+  const path = `/clinics/${encodeURIComponent(ctx.clinicId)}/settings`;
+
+  function hydrate(res: ClinicSettingsResp) {
+    setData(res);
+    const qh = res.settings.modules?.notifications?.quietHours;
+    const hasWindow = !!(qh && qh.start && qh.end);
+    setEnabled(hasWindow);
+    if (qh?.start) setStart(qh.start);
+    if (qh?.end) setEnd(qh.end);
+  }
+
+  useEffect(() => {
+    if (!ctx.clinicId) { setError('No clinic in context.'); return; }
+    setLoading(true);
+    apiGet<ClinicSettingsResp>(ctx, path)
+      .then(hydrate)
+      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.clinicId]);
+
+  // The visible state is "what we'd save right now"; comparing against the
+  // hydrated server state tells us when the Save button should light up.
+  const dirty = useMemo(() => {
+    if (!data) return false;
+    const qh = data.settings.modules?.notifications?.quietHours;
+    const wasEnabled = !!(qh && qh.start && qh.end);
+    if (enabled !== wasEnabled) return true;
+    if (!enabled) return false;
+    return start !== (qh?.start ?? '') || end !== (qh?.end ?? '');
+  }, [data, enabled, start, end]);
+
+  async function save() {
+    if (!dirty || !canWrite) return;
+    setSaving(true); setError(null);
+    try {
+      // Disabled → clear both sides; enabled → send both. The BE merges
+      // independently so this never accidentally drops the other field.
+      const body = {
+        modules: {
+          notifications: {
+            quietHours: enabled
+              ? { start, end }
+              : { start: null, end: null },
+          },
+        },
+      };
+      const updated = await apiPatch<ClinicSettingsResp>(ctx, path, body);
+      hydrate(updated);
+      toast('Quiet hours saved', 'success');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      toast(e instanceof Error ? e.message : 'Save failed', 'error');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // Crosses midnight when start > end (e.g. 21:00 → 08:00). Surface this so
+  // the admin understands the window will span two calendar days.
+  const crossesMidnight = enabled && !!start && !!end && start > end;
+
+  if (loading && !data) {
+    return (
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 32, textAlign: 'center' }}>
+        <Spinner />
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 24 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+          <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--brand-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+            <Icon name="bell" size={16} style={{ color: 'var(--brand-500)' }} />
+          </div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>Quiet hours</div>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>
+              Stops automated SMS / WhatsApp messages from going out during the window you set.
+              Times are in your clinic's timezone.
+            </div>
+          </div>
+        </div>
+
+        <label style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '14px 16px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, cursor: canWrite ? 'pointer' : 'not-allowed', marginBottom: 20 }}>
+          <Checkbox
+            checked={enabled}
+            disabled={!canWrite}
+            onChange={(v) => setEnabled(v)}
+          />
+          <div style={{ flex: 1 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Enable quiet hours</div>
+            <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 2 }}>
+              When off, the scheduler can send messages at any hour.
+            </div>
+          </div>
+        </label>
+
+        <div style={{ display: 'flex', gap: 16 }}>
+          <TimePickerInput
+            label="From"
+            value={start}
+            disabled={!enabled || !canWrite}
+            onChange={setStart}
+            refObj={startRef}
+          />
+          <TimePickerInput
+            label="To"
+            value={end}
+            disabled={!enabled || !canWrite}
+            onChange={setEnd}
+            refObj={endRef}
+          />
+        </div>
+
+        {crossesMidnight && (
+          <div style={{ marginTop: 12, padding: '10px 12px', background: 'var(--info-bg, rgba(59,130,246,0.08))', border: '1px solid rgba(59,130,246,0.2)', borderRadius: 10, fontSize: 12, color: 'var(--info-text, var(--text-muted))', display: 'flex', alignItems: 'center', gap: 8 }}>
+            <Icon name="info" size={14} />
+            This window crosses midnight — messages will be held from {start} until {end} the next day.
+          </div>
+        )}
+
+        {error && (
+          <div style={{ marginTop: 12, padding: '10px 12px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, fontSize: 12, color: 'var(--danger-500)' }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 20 }}>
+          <button
+            onClick={save}
+            disabled={!dirty || !canWrite || saving}
+            style={{
+              height: 38, padding: '0 18px',
+              background: dirty && canWrite ? 'var(--brand-500)' : 'rgba(99,102,241,0.4)',
+              color: 'var(--brand-text)', border: 'none', borderRadius: 10,
+              fontSize: 13, fontWeight: 600,
+              cursor: !dirty || !canWrite || saving ? 'not-allowed' : 'pointer',
+              display: 'flex', alignItems: 'center', gap: 6,
+            }}>
+            {saving ? <Spinner /> : <><Icon name="check" size={14} strokeWidth={2.5} /> Save quiet hours</>}
+          </button>
+        </div>
+
+        {!canWrite && (
+          <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-subtle)', textAlign: 'right' }}>
+            You don't have <code>clinic:write</code> to change this.
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 
 function PermissionGate({ perm }: { perm: string }) {
   return (
@@ -1290,6 +1581,60 @@ function entityLabel(entityType: string): string {
   if (!m) return entityType;
   const word = m[1].replace(/s$/, '');
   return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+// Map of `METHOD route-pattern` → human verb for the audit log Detail cell.
+// `entityType` from the backend is the matched Express route pattern with
+// parameter placeholders (e.g. `/appointments/:id/checkin`). New mutation
+// routes should get a row here; otherwise the UI falls back to the raw
+// method+path on the line below.
+const AUDIT_DETAIL_LABELS: Record<string, string> = {
+  // Appointments
+  'POST /appointments': 'Booked appointment',
+  'PATCH /appointments/:id': 'Updated appointment',
+  'POST /appointments/:id/checkin': 'Checked in patient',
+  // Encounters
+  'POST /encounters': 'Started encounter',
+  'PATCH /encounters/:id': 'Updated encounter',
+  'POST /encounters/:id/sign': 'Signed encounter',
+  // Patients
+  'POST /patients': 'Registered patient',
+  'PATCH /patients/:id': 'Updated patient',
+  'POST /patients/:id/documents': 'Attached document to patient',
+  // Billing
+  'POST /bills': 'Created bill (draft)',
+  'PATCH /bills/:id': 'Updated bill',
+  'POST /bills/:id/issue': 'Issued bill',
+  'POST /bills/:id/payments': 'Recorded payment',
+  'POST /catalog/services': 'Added service to catalog',
+  // Documents
+  'POST /documents/upload-url': 'Initiated document upload',
+  'POST /documents/:id/share': 'Shared document',
+  'POST /documents/:id/share/revoke': 'Revoked document share',
+  // Prescriptions
+  'POST /encounters/:id/prescriptions': 'Issued prescription',
+  'POST /prescriptions/:id/share': 'Shared prescription',
+  'POST /prescriptions/:id/share/revoke': 'Revoked prescription share',
+  // Notifications
+  'POST /notifications/test': 'Sent test notification',
+  'POST /notifications/templates': 'Saved notification template',
+  // Tenancy / clinic settings
+  'PATCH /clinics/:id/settings': 'Updated clinic settings',
+  'POST /clinics/:id/branches': 'Added branch',
+  'PATCH /clinics/:id/branches/:branchId': 'Updated branch',
+  // Availability
+  'PUT /availability/doctors/:doctorUserId/rules': 'Updated doctor availability',
+  'PUT /availability/doctors/:doctorUserId/overrides/:date': 'Set availability override',
+  'PATCH /availability/doctors/:doctorUserId/overrides/:date/close': 'Closed clinic for date',
+  // Auth / roles
+  'PATCH /roles/:id': 'Updated role',
+  'PATCH /users/:id/roles': 'Updated user roles',
+};
+
+function auditDetailLabel(method: string | undefined, entityType: string): string | null {
+  if (!method) return null;
+  const key = `${method.toUpperCase()} ${entityType.startsWith('/') ? entityType : '/' + entityType}`;
+  return AUDIT_DETAIL_LABELS[key] ?? null;
 }
 
 function formatAuditTime(iso: string): string {
@@ -1432,8 +1777,10 @@ function AuditTab() {
                     <td style={tdAuditStyle}>
                       <span style={{ fontSize: 12, color: 'var(--text)' }}>{actor}</span>
                     </td>
-                    <td style={{ ...tdAuditStyle, color: 'var(--text-subtle)', fontSize: 11, fontFamily: 'monospace' }}>
-                      {r.meta?.method} {r.meta?.path ?? r.entityType}
+                    <td style={tdAuditStyle}>
+                      <div style={{ fontSize: 13, color: 'var(--text)' }}>
+                        {auditDetailLabel(r.meta?.method, r.entityType) ?? <span style={{ color: 'var(--text-subtle)' }}>—</span>}
+                      </div>
                     </td>
                   </tr>
                 );

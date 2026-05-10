@@ -5,6 +5,8 @@ import { RolesService } from './roles.service';
 import { UsersService } from './users.service';
 import { Role, RoleSchema } from './schemas/role.schema';
 import { User, UserSchema } from './schemas/user.schema';
+import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
+import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 import { MeController } from './me.controller';
 import { RolesController } from './roles.controller';
 import { UsersController } from './users.controller';
@@ -14,6 +16,12 @@ import { UsersController } from './users.controller';
     MongooseModule.forFeature([
       { name: User.name, schema: UserSchema },
       { name: Role.name, schema: RoleSchema },
+      // Needed by UsersService to validate that branchIds passed on create /
+      // update actually belong to the requesting tenant.
+      { name: Branch.name, schema: BranchSchema },
+      // /me reads the clinic profile (currency, timezone) so the FE can
+      // bootstrap formatting without an extra request.
+      { name: Clinic.name, schema: ClinicSchema },
     ]),
   ],
   providers: [AuthzService, RolesService, UsersService],
