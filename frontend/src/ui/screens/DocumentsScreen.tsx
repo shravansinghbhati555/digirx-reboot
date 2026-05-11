@@ -181,6 +181,18 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
                   selectedName={ownerName} 
                   onClear={() => { setOwnerId(''); setOwnerName(''); }} 
                 />
+              ) : ownerType === 'APPOINTMENT' ? (
+                <AppointmentSearch 
+                  onSelect={(a) => { setOwnerId(a._id); setOwnerName(`Appointment ${a._id.slice(-6).toUpperCase()}`); }} 
+                  selectedId={ownerId}
+                  onClear={() => { setOwnerId(''); setOwnerName(''); }} 
+                />
+              ) : ownerType === 'ENCOUNTER' ? (
+                <EncounterSearch 
+                  onSelect={(e) => { setOwnerId(e._id); setOwnerName(e.readableId || `Encounter ${e._id.slice(-6).toUpperCase()}`); }} 
+                  selectedId={ownerId}
+                  onClear={() => { setOwnerId(''); setOwnerName(''); }} 
+                />
               ) : (
                 <Field label={`${ownerType.charAt(0) + ownerType.slice(1).toLowerCase()} ID`} value={ownerId} onChange={setOwnerId} placeholder="Enter ID here..." />
               )}
@@ -497,6 +509,112 @@ function UserSearch({ onSelect, selectedName, onClear }: { onSelect: (u: User) =
               </div>
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AppointmentSearch({ onSelect, selectedId, onClear }: { onSelect: (a: any) => void; selectedId?: string; onClear: () => void }) {
+  const { ctx } = useApp();
+  const [patient, setPatient] = useState<Patient | null>(null);
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!patient) { setAppointments([]); return; }
+    setLoading(true);
+    apiGet<any[]>(ctx, `/appointments?patientId=${patient._id}&limit=10`)
+      .then(setAppointments)
+      .catch(() => setAppointments([]))
+      .finally(() => setLoading(false));
+  }, [patient, ctx]);
+
+  if (selectedId) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', height: 42, background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 10 }}>
+        <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: 'var(--brand-600)' }}>A</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--brand-700)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>ID: {selectedId.slice(-8).toUpperCase()}</div>
+          <div style={{ fontSize: 10, color: 'var(--brand-600)' }}>Selected Appointment</div>
+        </div>
+        <button onClick={onClear} style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Change</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {!patient ? (
+        <PatientSearch onSelect={setPatient} onClear={() => setPatient(null)} />
+      ) : (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <label style={labelStyle}>Select Appointment for {patient.fullName}</label>
+            <button onClick={() => setPatient(null)} style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>Back to Patient Search</button>
+          </div>
+          <select onChange={(e) => { const a = appointments.find(x => x._id === e.target.value); if (a) onSelect(a); }}
+            style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none' }}>
+            <option value="">{loading ? 'Loading appointments...' : appointments.length === 0 ? 'No appointments found' : 'Pick an appointment...'}</option>
+            {appointments.map(a => (
+              <option key={a._id} value={a._id}>
+                {a.type === 'TIME' ? formatDateTime(a.startAt) : `${a.queueDate} (Token ${a.queueNumber})`} — {a.status}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EncounterSearch({ onSelect, selectedId, onClear }: { onSelect: (e: any) => void; selectedId?: string; onClear: () => void }) {
+  const { ctx } = useApp();
+  const [patient, setPatient] = useState<Patient | null>(null);
+  const [encounters, setEncounters] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!patient) { setEncounters([]); return; }
+    setLoading(true);
+    apiGet<any[]>(ctx, `/encounters?patientId=${patient._id}&limit=10`)
+      .then(setEncounters)
+      .catch(() => setEncounters([]))
+      .finally(() => setLoading(false));
+  }, [patient, ctx]);
+
+  if (selectedId) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', height: 42, background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 10 }}>
+        <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: 'var(--brand-600)' }}>E</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--brand-700)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedId.slice(-8).toUpperCase()}</div>
+          <div style={{ fontSize: 10, color: 'var(--brand-600)' }}>Selected Encounter</div>
+        </div>
+        <button onClick={onClear} style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Change</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {!patient ? (
+        <PatientSearch onSelect={setPatient} onClear={() => setPatient(null)} />
+      ) : (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <label style={labelStyle}>Select Encounter for {patient.fullName}</label>
+            <button onClick={() => setPatient(null)} style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>Back to Patient Search</button>
+          </div>
+          <select onChange={(e) => { const enc = encounters.find(x => x._id === e.target.value); if (enc) onSelect(enc); }}
+            style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none' }}>
+            <option value="">{loading ? 'Loading encounters...' : encounters.length === 0 ? 'No encounters found' : 'Pick an encounter...'}</option>
+            {encounters.map(enc => (
+              <option key={enc._id} value={enc._id}>
+                {enc.readableId || enc._id.slice(-6).toUpperCase()} — {formatDateTime(enc.visitedAt)} ({enc.status})
+              </option>
+            ))}
+          </select>
         </div>
       )}
     </div>
