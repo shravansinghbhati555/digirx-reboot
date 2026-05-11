@@ -8,10 +8,14 @@ type Ctor<T> = new (...args: any[]) => T;
  * with at least one error on `onProperty`. Returns the full error array for further
  * assertions if needed.
  */
+// `onProperty` is `keyof T` for top-level fields, plus `string` so callers
+// can target nested fields (the implementation already walks `errors.children`
+// via findErrorByProperty). The widened type lets DTOs with array-of-object
+// fields assert on the inner property name (e.g. `'quantity'` inside `items`).
 export async function expectInvalid<T extends object>(
   Cls: Ctor<T>,
   plain: unknown,
-  onProperty: keyof T,
+  onProperty: keyof T | (string & {}),
 ): Promise<ValidationError[]> {
   const instance = plainToInstance(Cls, plain);
   const errors = await validate(instance as object);

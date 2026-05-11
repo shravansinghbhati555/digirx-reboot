@@ -17,15 +17,18 @@ export class AccessLogsController {
     @Query('path') path?: string,
     @Query('method') method?: string,
     @Query('statusCode') statusCodeRaw?: string,
+    @Query('writesOnly') writesOnlyRaw?: string,
   ) {
     const limit = Number(limitRaw ?? 50) || 50;
     const statusCode = statusCodeRaw ? Number(statusCodeRaw) : undefined;
+    const writesOnly = writesOnlyRaw === 'true' || writesOnlyRaw === '1';
     return await this.logs.list(req.context!.clinicId, {
       limit,
       before,
       path,
       method,
       statusCode,
+      writesOnly,
     });
   }
 

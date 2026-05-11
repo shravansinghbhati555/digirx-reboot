@@ -22,6 +22,15 @@ import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 import { Appointment, AppointmentSchema } from '../appointments/schemas/appointment.schema';
 import { Encounter, EncounterSchema } from '../encounters/schemas/encounter.schema';
 import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
+// Schemas the medicine-bill-from-prescription drafter (Slice 3) needs
+// read access to. Registered here so we don't pull half the prescription
+// service's other deps along.
+import { Prescription, PrescriptionSchema } from '../prescriptions/schemas/prescription.schema';
+import { InventoryItem, InventoryItemSchema } from '../inventory/schemas/inventory-item.schema';
+// Auto-deduct on medicine-bill payment (Slice 5) calls InventoryService
+// to FIFO-dispense each line. Dependency is one-way (inventory doesn't
+// import billing) so no forwardRef needed.
+import { InventoryModule } from '../inventory/inventory.module';
 
 @Module({
   imports: [
@@ -35,10 +44,13 @@ import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
       { name: Appointment.name, schema: AppointmentSchema },
       { name: Encounter.name, schema: EncounterSchema },
       { name: Branch.name, schema: BranchSchema },
+      { name: Prescription.name, schema: PrescriptionSchema },
+      { name: InventoryItem.name, schema: InventoryItemSchema },
     ]),
     PdfModule,
     StorageModule,
     DocumentsModule,
+    InventoryModule,
     // BillingService injects CreditNotesService for void-blocking, and
     // CreditNotesModule imports BillingModule for the Bill schema — the
     // forwardRef breaks the boot-time cycle.

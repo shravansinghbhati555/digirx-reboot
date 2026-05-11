@@ -291,7 +291,10 @@ describe('AppointmentsService.create', () => {
 
   describe('QUEUE appointments', () => {
     function queueDto(overrides: Record<string, unknown> = {}) {
-      const today = DateTime.now().setZone(TZ).toISODate();
+      // toISODate() returns string | null per Luxon's typings; clinic
+      // timezone is always valid here so the non-null assertion is safe
+      // and keeps the DTO's `queueDate: string | undefined` shape happy.
+      const today = DateTime.now().setZone(TZ).toISODate()!;
       return {
         type: AppointmentType.Queue,
         branchId: branchId.toHexString(),

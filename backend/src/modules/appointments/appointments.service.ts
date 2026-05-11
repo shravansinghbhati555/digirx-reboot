@@ -22,10 +22,19 @@ import { User } from '../authz/schemas/user.schema';
 import { Patient } from '../patients/schemas/patient.schema';
 import { computeClinicDayRange } from '../../common/clinic-time';
 
+// Statuses that hold a TIME slot and therefore block another appointment
+// from being created over the same window. CANCELLED and NO_SHOW are
+// excluded — those states free the slot up.
+//
+// DONE is included on purpose: even though the visit is over, the slot
+// it occupied is consumed and another patient cannot retroactively be
+// booked into it. Excluding DONE was the original bug that let the seed
+// (and any direct DB writes) create same-time pairs at past times.
 const ACTIVE_TIME_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.Booked,
   AppointmentStatus.CheckedIn,
   AppointmentStatus.InProgress,
+  AppointmentStatus.Done,
 ];
 
 export type EnrichedSlot =

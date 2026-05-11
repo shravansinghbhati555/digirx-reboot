@@ -52,6 +52,26 @@ export class BillingController {
     );
   }
 
+  /**
+   * Draft a kind=MEDICINE bill from a prescription. Idempotent — a second
+   * call returns the existing draft for the same encounter. The receptionist
+   * adjusts unit prices in the draft, then issues + collects payment via
+   * the existing PATCH/issue/payments endpoints. Auto-inventory-deduct lands
+   * on the payment that fully settles the bill (Slice 5).
+   */
+  @Post('bills/from-prescription/:prescriptionId')
+  @RequirePermissions(Permission.BillingWrite)
+  async createFromPrescription(
+    @Req() req: AppRequest,
+    @Param('prescriptionId') prescriptionId: string,
+  ) {
+    return await this.billing.createBillFromPrescription(
+      req.context!.clinicId,
+      req.context!.actorUserId,
+      prescriptionId,
+    );
+  }
+
   @Patch('bills/:id')
   @RequirePermissions(Permission.BillingWrite)
   async updateBill(
@@ -90,6 +110,7 @@ export class BillingController {
     @Query('branchId') branchId?: string,
     @Query('patientId') patientId?: string,
     @Query('status') status?: string,
+    @Query('kind') kind?: string,
     @Query('limit') limitRaw?: string,
   ) {
     const limit = Number(limitRaw ?? 100) || 100;
@@ -97,6 +118,7 @@ export class BillingController {
       branchId,
       patientId,
       status,
+      kind,
       limit,
     });
   }

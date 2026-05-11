@@ -10,8 +10,26 @@ export enum BillStatus {
   Void = 'VOID',
 }
 
+/**
+ * Bill kind splits the receivables flow:
+ *   - SERVICE: consultation / procedure fees, line items reference
+ *     `serviceCatalogItemId` or carry a free-text `customName`.
+ *   - MEDICINE: pharmacy sale, line items reference `inventoryItemId` and
+ *     trigger FIFO inventory dispense on full payment (Slice 5).
+ * Default is SERVICE so existing rows continue to behave exactly as before.
+ */
+export enum BillKind {
+  Service = 'SERVICE',
+  Medicine = 'MEDICINE',
+}
+
 export type BillLineItem = {
   serviceCatalogItemId?: Types.ObjectId;
+  /**
+   * Set on MEDICINE bills so the dispense path can resolve the stock row
+   * directly without a name lookup. Optional on SERVICE bills.
+   */
+  inventoryItemId?: Types.ObjectId;
   customName?: string;
   quantity: number;
   unitPrice: number;
@@ -63,6 +81,23 @@ export class Bill {
     index: true,
   })
   status!: BillStatus;
+
+  @Prop({
+    required: true,
+    enum: BillKind,
+    default: BillKind.Service,
+    index: true,
+  })
+  kind!: BillKind;
+
+  // Inventory-dispense audit, set once on the payment that brings totalPaid
+  // >= total for a MEDICINE bill. Presence of `inventoryDispensedAt` is the
+  // idempotency guard — a refund-then-pay cycle cannot double-deduct.
+  @Prop({ type: Date })
+  inventoryDispensedAt?: Date;
+
+  @Prop({ type: [Types.ObjectId], default: undefined })
+  inventoryMovementIds?: Types.ObjectId[];
 
   @Prop({ trim: true })
   notes?: string;

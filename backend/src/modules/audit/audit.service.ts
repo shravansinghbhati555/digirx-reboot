@@ -19,6 +19,11 @@ export class AuditService {
     action: AuditAction;
     entityType: string;
     entityId: string;
+    /** Human-readable identifier captured by the interceptor from the
+     *  response body (patient name, bill number, etc.). Stored alongside
+     *  entityId so the activity feed can show "Bill BX-000123" rather
+     *  than a raw ObjectId. */
+    targetLabel?: string;
     meta?: Record<string, unknown>;
   }) {
     // Redact before persist — even if today's interceptor only stores
