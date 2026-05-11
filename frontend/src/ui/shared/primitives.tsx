@@ -1,6 +1,7 @@
-import { createContext, useCallback, useContext, useState, type CSSProperties, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Icon, type IconName } from './Icon';
 import { EmptyIllustration } from './EmptyIllustration';
+import { DatePickerChip } from './DatePickerChip';
 
 // Fixed JS palette consumed by Avatar's name-hash. CSS variables don't fit
 // here — JS would have to read computed styles to pick a swatch.
@@ -204,21 +205,34 @@ export function Field({
   return (
     <div>
       <label style={labelStyle}>{label}</label>
-      <div style={{ position: 'relative' }}>
-        {prefix && (
-          <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: 'var(--text-subtle)', userSelect: 'none' }}>{prefix}</span>
-        )}
-        <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} type={type}
-          style={{
-            width: '100%', height: 32, padding: prefix ? '0 10px 0 38px' : '0 10px',
-            background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 8,
-            fontSize: 12, color: 'var(--text)', fontFamily: "'Inter',sans-serif",
-            outline: 'none', boxSizing: 'border-box', transition: 'border-color 120ms',
-          }}
-          onFocus={(e) => (e.target.style.borderColor = 'var(--brand-500)')}
-          onBlur={(e) => (e.target.style.borderColor = 'var(--border)')}
+      {/* For date fields we render the themed DatePickerChip so the
+          calendar popup matches the header's calendar everywhere it
+          appears (availability overrides, preview tools, etc.). */}
+      {type === 'date' ? (
+        <DatePickerChip
+          value={value}
+          onChange={onChange}
+          size="sm"
+          fullWidth
+          placeholder={placeholder ?? 'Pick a date'}
         />
-      </div>
+      ) : (
+        <div style={{ position: 'relative' }}>
+          {prefix && (
+            <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: 'var(--text-subtle)', userSelect: 'none' }}>{prefix}</span>
+          )}
+          <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} type={type}
+            style={{
+              width: '100%', height: 32, padding: prefix ? '0 10px 0 38px' : '0 10px',
+              background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 8,
+              fontSize: 12, color: 'var(--text)', fontFamily: "'Inter',sans-serif",
+              outline: 'none', boxSizing: 'border-box', transition: 'border-color 120ms',
+            }}
+            onFocus={(e) => (e.target.style.borderColor = 'var(--brand-500)')}
+            onBlur={(e) => (e.target.style.borderColor = 'var(--border)')}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -341,6 +355,213 @@ export function EmptyState({
       <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-muted)' }}>{title}</div>
       {hint && <div style={{ fontSize: 12, marginTop: 4 }}>{hint}</div>}
       {cta && <div style={{ marginTop: 16 }}>{cta}</div>}
+    </div>
+  );
+}
+
+// -- Dropdown ---------------------------------------------------------------
+// Custom replacement for `<select>` whose option list inherits the site
+// theme. Native selects pop a system-chrome menu that ignores our CSS
+// (the closed trigger styles fine, the open list does not), which looks
+// jarring in dark mode. This renders both the trigger and the menu in
+// React so every surface matches the rest of the app.
+
+export type DropdownOption<V extends string = string> = {
+  value: V;
+  label: string;
+  icon?: IconName;
+  hint?: string;
+};
+
+export function Dropdown<V extends string = string>({
+  value,
+  options,
+  onChange,
+  placeholder = 'Select…',
+  size = 'md',
+  width,
+  minWidth,
+  align = 'start',
+  disabled,
+  title,
+  ariaLabel,
+}: {
+  value: V | '';
+  options: DropdownOption<V>[];
+  onChange: (next: V | '') => void;
+  placeholder?: string;
+  size?: 'sm' | 'md';
+  width?: number | string;
+  minWidth?: number | string;
+  align?: 'start' | 'end';
+  disabled?: boolean;
+  title?: string;
+  ariaLabel?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [hoverIdx, setHoverIdx] = useState<number>(-1);
+
+  const selected = useMemo(() => options.find((o) => o.value === value), [options, value]);
+
+  // Close on outside click + Escape.
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (!rootRef.current) return;
+      if (!rootRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape') { setOpen(false); return; }
+      if (e.key === 'ArrowDown') { e.preventDefault(); setHoverIdx((i) => Math.min(options.length - 1, i + 1)); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); setHoverIdx((i) => Math.max(0, i - 1)); }
+      else if (e.key === 'Enter' && hoverIdx >= 0) {
+        e.preventDefault();
+        onChange(options[hoverIdx].value);
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open, options, hoverIdx, onChange]);
+
+  // Seed the keyboard cursor on the current selection each time the
+  // menu opens, so ArrowDown/Up starts from a sensible place instead
+  // of "no row hovered".
+  useEffect(() => {
+    if (open) {
+      const idx = options.findIndex((o) => o.value === value);
+      setHoverIdx(idx >= 0 ? idx : 0);
+    }
+  }, [open, options, value]);
+
+  const triggerH = size === 'sm' ? 30 : 36;
+  const fontSize = size === 'sm' ? 11 : 12;
+  const padX = size === 'sm' ? 10 : 12;
+
+  return (
+    <div
+      ref={rootRef}
+      style={{
+        position: 'relative',
+        width,
+        minWidth: minWidth ?? (size === 'sm' ? 140 : 180),
+        display: 'inline-flex',
+      }}
+    >
+      <button
+        type="button"
+        disabled={disabled}
+        title={title}
+        aria-label={ariaLabel}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        onClick={() => !disabled && setOpen((o) => !o)}
+        style={{
+          width: '100%',
+          height: triggerH,
+          padding: `0 ${padX}px 0 ${padX}px`,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 8,
+          background: 'var(--surface-muted)',
+          border: `1px solid ${open ? 'var(--brand-500)' : 'var(--border)'}`,
+          borderRadius: 10,
+          color: 'var(--text)',
+          fontSize,
+          fontWeight: 700,
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          outline: 'none',
+          boxShadow: open ? '0 0 0 3px rgba(59,130,246,0.15)' : 'none',
+          transition: 'border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out)',
+          opacity: disabled ? 0.6 : 1,
+          textAlign: 'left',
+        }}
+      >
+        <span style={{
+          flex: 1, minWidth: 0, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+          color: selected ? 'var(--text)' : 'var(--text-subtle)',
+          display: 'inline-flex', alignItems: 'center', gap: 8,
+        }}>
+          {selected?.icon && <Icon name={selected.icon} size={12} />}
+          {selected ? selected.label : placeholder}
+        </span>
+        <Icon name="chevronDown" size={14} style={{ color: 'var(--text-subtle)', flexShrink: 0, transition: 'transform var(--dur-fast) var(--ease-out)', transform: open ? 'rotate(180deg)' : 'rotate(0)' }} />
+      </button>
+
+      {open && (
+        <div
+          role="listbox"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 4px)',
+            [align === 'end' ? 'right' : 'left']: 0,
+            minWidth: '100%',
+            maxWidth: 360,
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 10,
+            boxShadow: 'var(--e3)',
+            zIndex: 50,
+            padding: 4,
+            maxHeight: 320,
+            overflowY: 'auto',
+            animation: 'pickerIn var(--dur-base) var(--ease-out)',
+          } as CSSProperties}
+        >
+          {options.length === 0 ? (
+            <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-subtle)' }}>
+              No options
+            </div>
+          ) : (
+            options.map((o, i) => {
+              const isSelected = o.value === value;
+              const isHover = i === hoverIdx;
+              return (
+                <button
+                  key={o.value}
+                  type="button"
+                  role="option"
+                  aria-selected={isSelected}
+                  onMouseEnter={() => setHoverIdx(i)}
+                  onClick={() => { onChange(o.value); setOpen(false); }}
+                  style={{
+                    width: '100%',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 10,
+                    padding: '8px 10px',
+                    border: 'none',
+                    borderRadius: 7,
+                    background: isHover ? 'var(--brand-bg-soft)' : 'transparent',
+                    color: isSelected ? 'var(--brand-600)' : 'var(--text)',
+                    fontSize,
+                    fontWeight: isSelected ? 700 : 500,
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                  }}
+                >
+                  {o.icon && <Icon name={o.icon} size={12} />}
+                  <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {o.label}
+                    {o.hint && (
+                      <span style={{ marginLeft: 8, color: 'var(--text-subtle)', fontWeight: 500, fontSize: fontSize - 1 }}>
+                        {o.hint}
+                      </span>
+                    )}
+                  </span>
+                  {isSelected && <Icon name="check" size={12} style={{ color: 'var(--brand-600)' }} />}
+                </button>
+              );
+            })
+          )}
+        </div>
+      )}
     </div>
   );
 }

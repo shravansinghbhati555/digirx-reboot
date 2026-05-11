@@ -3,6 +3,7 @@ import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
 import { EmptyState, Spinner, useToast } from '../shared/primitives';
+import { DatePickerChip } from '../shared/DatePickerChip';
 import { Icon } from '../shared/Icon';
 import { Skeleton } from '../shared/Skeleton';
 
@@ -56,10 +57,6 @@ type StockMovement = {
 
 type Branch = { _id: string; name: string; active?: boolean };
 
-type ClinicSettingsBare = {
-  settings?: { modules?: { inventory?: { enabled?: boolean } } };
-};
-
 // -- Top-level screen ------------------------------------------------------
 
 export function InventoryScreen() {
@@ -69,9 +66,12 @@ export function InventoryScreen() {
   const canWrite = has(Perm.InventoryWrite);
   const toast = useToast();
 
-  const [moduleEnabled, setModuleEnabled] = useState<boolean | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [branchFilter, setBranchFilter] = useState<string>(ctx.branchId ?? '');
+  // When the sidebar branch switcher changes the active branch in ctx,
+  // realign the in-screen filter so the dropdown UI doesn't show a
+  // stale selection while the table refetches against the new branch.
+  useEffect(() => { setBranchFilter(ctx.branchId ?? ''); }, [ctx.branchId]);
   const [query, setQuery] = useState('');
   const [items, setItems] = useState<InventoryItem[]>([]);
   const [loading, setLoading] = useState(false);
@@ -80,46 +80,61 @@ export function InventoryScreen() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
 
-  // Whether the inventory module is enabled on this clinic. Hides the
-  // entire screen contents (replaced with a "module disabled" notice)
-  // when the BE feature guard would 403 every request anyway.
-  useEffect(() => {
-    if (!ctx.clinicId) return;
-    apiGet<ClinicSettingsBare>(ctx, `/clinics/${encodeURIComponent(ctx.clinicId)}/settings`)
-      .then((res) => setModuleEnabled(!!res.settings?.modules?.inventory?.enabled))
-      .catch(() => setModuleEnabled(false));
-  }, [ctx.clinicId, ctx.accessToken]);
+  // (The module-enabled gate used to live here. Removed at the user's
+  // request: managing stock is the inventory page, so we don't gate it
+  // behind a settings toggle anymore. The BE feature guard is also off
+  // — see Step 3 below.)
 
   // Branch list for the filter chip. Falls back silently — clinic admins
   // without branch:read will just see the active-context branch.
   useEffect(() => {
-    apiGet<Branch[]>(ctx, '/branches')
+    // The branches list lives under the clinic resource — there is no
+    // top-level /branches route. Falling back silently means a non-admin
+    // (no branch:read) just gets "All branches" + nothing else, which is
+    // fine because the BE will still scope to their context's branch.
+    apiGet<Branch[]>(ctx, `/clinics/${ctx.clinicId}/branches`)
       .then(setBranches)
       .catch(() => setBranches([]));
   }, [ctx.clinicId, ctx.accessToken]);
 
+  const [statusFilter, setStatusFilter] = useState<'all' | 'in-stock' | 'low-stock' | 'out-of-stock'>('all');
+
   // Item list reload — debounced so typing doesn't fire a request per keystroke.
   useEffect(() => {
-    if (!canRead || !moduleEnabled) return;
+    if (!canRead) return;
     setLoading(true);
     setError(null);
     const t = setTimeout(() => {
       const qs = new URLSearchParams();
       if (branchFilter) qs.set('branchId', branchFilter);
       if (query.trim()) qs.set('query', query.trim());
-      qs.set('limit', '100');
+      // The BE doesn't have a direct 'status' query param for stock level yet,
+      // so we filter the resulting list on the FE for now. 
+      // (Optimized for typically < 1000 items).
+      qs.set('limit', '500');
       apiGet<InventoryItem[]>(ctx, `/inventory/items?${qs.toString()}`)
         .then(setItems)
         .catch((e) => setError(e instanceof Error ? e.message : String(e)))
         .finally(() => setLoading(false));
     }, 200);
     return () => clearTimeout(t);
-  }, [ctx, branchFilter, query, canRead, moduleEnabled]);
+  }, [ctx, branchFilter, query, canRead]);
+
+  const filteredItems = useMemo(() => {
+    if (statusFilter === 'all') return items;
+    return items.filter(it => {
+      const onHand = it.onHand ?? 0;
+      if (statusFilter === 'out-of-stock') return onHand === 0;
+      if (statusFilter === 'low-stock') return onHand > 0 && it.reorderLevel > 0 && onHand <= it.reorderLevel;
+      if (statusFilter === 'in-stock') return onHand > it.reorderLevel || it.reorderLevel === 0;
+      return true;
+    });
+  }, [items, statusFilter]);
 
   function reloadList() {
     // Force-refetch by tweaking the query (cheap; same effect).
     setQuery((q) => q);
-    if (!canRead || !moduleEnabled) return;
+    if (!canRead) return;
     const qs = new URLSearchParams();
     if (branchFilter) qs.set('branchId', branchFilter);
     if (query.trim()) qs.set('query', query.trim());
@@ -138,54 +153,61 @@ export function InventoryScreen() {
     );
   }
 
-  if (moduleEnabled === false) {
-    return (
-      <div style={{ padding: 32 }}>
-        <EmptyState icon="folder" title="Inventory is turned off for this clinic"
-          hint="Enable it in Settings → Clinic → Modules to start tracking stock." />
-      </div>
-    );
-  }
-
   const selected = selectedId ? items.find((i) => i._id === selectedId) ?? null : null;
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-      {/* Top bar */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 24px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
-        <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--text)', margin: 0, marginRight: 8 }}>Inventory</h1>
-
-        <div style={{ position: 'relative', flex: '0 1 320px' }}>
-          <Icon name="search" size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
-          <input value={query} onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search by name or SKU…"
-            style={{ width: '100%', height: 34, padding: '0 12px 0 34px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' }} />
+      <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 100, padding: 4, border: '1px solid var(--border)' }}>
+          {([
+            { id: 'all', label: 'All' },
+            { id: 'in-stock', label: 'In Stock' },
+            { id: 'low-stock', label: 'Low Stock' },
+            { id: 'out-of-stock', label: 'Out of Stock' },
+          ] as const).map((f) => (
+            <button key={f.id} onClick={() => setStatusFilter(f.id)}
+              style={{ padding: '6px 14px', borderRadius: 100, border: 'none', background: statusFilter === f.id ? 'var(--brand-100)' : 'transparent', color: statusFilter === f.id ? 'var(--text)' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}>
+              {f.label}
+            </button>
+          ))}
         </div>
 
         {branches.length > 1 && (
-          <select value={branchFilter} onChange={(e) => setBranchFilter(e.target.value)}
-            style={{ height: 34, padding: '0 10px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13, color: 'var(--text)', outline: 'none' }}>
-            <option value="">All branches</option>
+          <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 100, padding: 4, border: '1px solid var(--border)' }}>
+            <button onClick={() => setBranchFilter('')}
+              style={{ padding: '6px 14px', borderRadius: 100, border: 'none', background: branchFilter === '' ? 'var(--brand-100)' : 'transparent', color: branchFilter === '' ? 'var(--text)' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}>
+              All Branches
+            </button>
             {branches.map((b) => (
-              <option key={b._id} value={b._id}>{b.name}</option>
+              <button key={b._id} onClick={() => setBranchFilter(b._id)}
+                style={{ padding: '6px 14px', borderRadius: 100, border: 'none', background: branchFilter === b._id ? 'var(--brand-100)' : 'transparent', color: branchFilter === b._id ? 'var(--text)' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s', whiteSpace: 'nowrap' }}>
+                {b.name}
+              </button>
             ))}
-          </select>
+          </div>
         )}
 
-        <button onClick={() => { setSelectedId(null); reloadList(); }}
-          title="Refresh" aria-label="Refresh"
-          style={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
-          <Icon name="arrowUp" size={14} />
-        </button>
+        <div style={{ flex: 1 }} />
 
-        <div style={{ marginLeft: 'auto' }}>
-          <button onClick={() => canWrite && setShowCreate(true)}
-            disabled={!canWrite}
-            title={canWrite ? undefined : 'You need inventory:write to create items'}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 14px', background: canWrite ? 'var(--brand-500)' : 'var(--surface-muted)', color: canWrite ? 'var(--brand-text)' : 'var(--text-subtle)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: canWrite ? 'pointer' : 'not-allowed' }}>
-            <Icon name="plus" size={14} strokeWidth={2.5} /> New item
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <div style={{ position: 'relative', width: 260 }}>
+            <Icon name="search" size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
+            <input value={query} onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search items…"
+              style={{ width: '100%', height: 36, padding: '0 14px 0 34px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 12, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' }} />
+          </div>
+          <button onClick={() => { setSelectedId(null); reloadList(); }}
+            title="Refresh"
+            style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10, cursor: 'pointer', color: 'var(--text-muted)' }}>
+            <Icon name="arrowUp" size={14} />
           </button>
         </div>
+
+        <button onClick={() => canWrite && setShowCreate(true)}
+          disabled={!canWrite}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, padding: '0 18px', background: canWrite ? 'var(--brand-600)' : 'var(--surface-muted)', color: canWrite ? 'var(--brand-text)' : 'var(--text-subtle)', border: 'none', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: canWrite ? 'pointer' : 'not-allowed', boxShadow: canWrite ? '0 4px 12px rgba(37,99,235,0.2)' : 'none' }}>
+          <Icon name="plus" size={14} strokeWidth={3} /> New item
+        </button>
       </div>
 
       {error && (
@@ -195,23 +217,36 @@ export function InventoryScreen() {
       )}
 
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
-        {/* Items table */}
-        <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', padding: '16px 24px' }}>
+        {/* Items list — mirrors the BillingScreen table chrome: sticky
+            header, --bg page body, real <table> markup, row-hover class. */}
+        <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', background: 'var(--bg)' }}>
           {loading && items.length === 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ padding: 12 }}>
               {Array.from({ length: 6 }).map((_, i) => (
-                <Skeleton key={i} style={{ height: 56 }} radius={10} />
+                <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 4px', borderBottom: '1px solid var(--border)' }}>
+                  <Skeleton width="22%" height={12} />
+                  <Skeleton width={70} height={11} />
+                  <Skeleton width={120} height={11} />
+                  <Skeleton width="18%" height={11} style={{ marginLeft: 'auto' }} />
+                  <Skeleton width={56} height={11} />
+                  <Skeleton width={64} height={18} radius={9} />
+                </div>
               ))}
             </div>
-          ) : items.length === 0 ? (
-            <EmptyState icon="folder" title={query ? 'No items match your search' : 'No inventory items yet'}
-              hint={query ? 'Try clearing the search or branch filter.' : canWrite ? 'Click "New item" to add your first stockable medicine.' : 'Ask an admin with inventory:write to add items.'} />
+          ) : filteredItems.length === 0 ? (
+            <EmptyState icon="folder" title={query || statusFilter !== 'all' ? 'No items match your filters' : 'No inventory items yet'}
+              hint="Adjust your search or filters to see more items." />
           ) : (
             <ItemsTable
-              items={items}
+              items={filteredItems}
               branches={branches}
               selectedId={selectedId}
               onSelect={setSelectedId}
+              // Only show the Branch column when the user is looking
+              // across multiple branches (an admin "All branches"
+              // view). When scoped to a specific branch the column is
+              // redundant — every row would carry the same value.
+              showBranch={branchFilter === ''}
             />
           )}
         </div>
@@ -245,80 +280,148 @@ export function InventoryScreen() {
 // -- Items table -----------------------------------------------------------
 
 function ItemsTable({
-  items, branches, selectedId, onSelect,
+  items, branches, selectedId, onSelect, showBranch,
 }: {
   items: InventoryItem[];
   branches: Branch[];
   selectedId: string | null;
   onSelect: (id: string) => void;
+  showBranch: boolean;
 }) {
   const branchById = useMemo(() => new Map(branches.map((b) => [b._id, b.name])), [branches]);
 
-  return (
-    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'minmax(220px, 2fr) 100px 120px minmax(120px, 1fr) 90px 90px',
-        padding: '10px 16px', borderBottom: '1px solid var(--border)',
-        fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)',
-        textTransform: 'uppercase', letterSpacing: '0.06em',
-      }}>
-        <span>Item</span>
-        <span>SKU</span>
-        <span>Pack</span>
-        <span>Branch</span>
-        <span style={{ textAlign: 'right' }}>On hand</span>
-        <span style={{ textAlign: 'right' }}>Reorder</span>
-      </div>
+  const columns: Array<{ label: string; align: 'left' | 'right' }> = [
+    { label: 'Item', align: 'left' },
+    { label: 'SKU', align: 'left' },
+    { label: 'Pack', align: 'left' },
+    ...(showBranch ? [{ label: 'Branch', align: 'left' as const }] : []),
+    { label: 'On hand', align: 'right' },
+    { label: 'Reorder', align: 'right' },
+    { label: 'Status', align: 'left' },
+  ];
 
-      {items.map((it) => {
-        const isSelected = it._id === selectedId;
-        const onHand = it.onHand ?? 0;
-        const lowStock = it.reorderLevel > 0 && onHand <= it.reorderLevel;
-        return (
-          <button key={it._id} onClick={() => onSelect(it._id)}
-            style={{
-              width: '100%', display: 'grid',
-              gridTemplateColumns: 'minmax(220px, 2fr) 100px 120px minmax(120px, 1fr) 90px 90px',
-              padding: '12px 16px',
-              background: isSelected ? 'var(--brand-50)' : 'transparent',
-              border: 'none', borderTop: '1px solid var(--border)',
-              cursor: 'pointer', textAlign: 'left', alignItems: 'center',
-              fontFamily: 'inherit', color: 'var(--text)',
-            }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {it.name}
-                {!it.active && <span style={{ marginLeft: 6, fontSize: 10, color: 'var(--text-subtle)', fontWeight: 500 }}>(inactive)</span>}
-              </div>
-              <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
-                Dispensed in {it.unit.toLowerCase()}
-                {lowStock && (
-                  <span style={{ marginLeft: 8, padding: '1px 6px', background: 'var(--warning-bg)', color: 'var(--warning-text)', borderRadius: 6, fontSize: 10, fontWeight: 700 }}>
-                    Low stock
-                  </span>
-                )}
-              </div>
-            </div>
-            <span style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text-muted)' }}>{it.sku ?? '—'}</span>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
-              {it.packUnit && it.packSize
-                ? `${it.packSize} ${it.unit.toLowerCase()} / ${it.packUnit.toLowerCase()}`
-                : '—'}
-            </span>
-            <span style={{ fontSize: 12, color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {branchById.get(it.branchId) ?? `#${it.branchId.slice(-6)}`}
-            </span>
-            <span style={{ fontSize: 13, fontWeight: 700, color: lowStock ? 'var(--warning-text)' : 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-              {onHand}
-            </span>
-            <span style={{ fontSize: 12, color: 'var(--text-subtle)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-              {it.reorderLevel || '—'}
-            </span>
-          </button>
-        );
-      })}
-    </div>
+  return (
+    <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+      <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
+        <tr style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
+          {columns.map((h) => (
+            <th
+              key={h.label}
+              style={{
+                padding: '12px 20px',
+                textAlign: h.align,
+                fontSize: 10,
+                fontWeight: 800,
+                color: 'var(--text-subtle)',
+                textTransform: 'uppercase',
+                letterSpacing: '0.1em',
+              }}
+            >
+              {h.label}
+            </th>
+          ))}
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((it) => {
+          const isSelected = it._id === selectedId;
+          const onHand = it.onHand ?? 0;
+          const tracked = it.reorderLevel > 0;
+          const outOfStock = onHand === 0;
+          const lowStock = !outOfStock && tracked && onHand <= it.reorderLevel;
+          return (
+            <tr
+              key={it._id}
+              onClick={() => onSelect(it._id)}
+              className="row-hover"
+              style={{
+                borderBottom: '1px solid var(--border)',
+                cursor: 'pointer',
+                background: isSelected ? 'var(--brand-50)' : 'transparent',
+              }}
+            >
+              <td style={{ padding: '14px 20px', minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {it.name}
+                  {!it.active && (
+                    <span style={{ marginLeft: 8, fontSize: 9, color: 'var(--text-subtle)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Inactive
+                    </span>
+                  )}
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 2 }}>
+                  Dispensed in {it.unit.toLowerCase()}
+                </div>
+              </td>
+              <td style={{ padding: '14px 20px', fontSize: 12, color: 'var(--brand-600)', fontFamily: 'monospace', fontWeight: 600 }}>
+                {it.sku ?? '—'}
+              </td>
+              <td style={{ padding: '14px 20px', fontSize: 12, color: 'var(--text-muted)' }}>
+                {it.packUnit && it.packSize
+                  ? `${it.packSize} ${it.unit.toLowerCase()} / ${it.packUnit.toLowerCase()}`
+                  : <span style={{ opacity: 0.4 }}>—</span>}
+              </td>
+              {showBranch && (
+                <td style={{ padding: '14px 20px', fontSize: 13, color: 'var(--text)', fontWeight: 500, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {branchById.get(it.branchId) ?? `#${it.branchId.slice(-6).toUpperCase()}`}
+                </td>
+              )}
+              <td style={{ padding: '14px 20px', fontSize: 14, fontWeight: 700, color: outOfStock ? 'var(--danger-500)' : lowStock ? 'var(--warning-text)' : 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                {onHand}
+              </td>
+              <td style={{ padding: '14px 20px', fontSize: 13, color: 'var(--text-subtle)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 500 }}>
+                {it.reorderLevel || <span style={{ opacity: 0.4 }}>—</span>}
+              </td>
+              <td style={{ padding: '14px 20px' }}>
+                <StockPill outOfStock={outOfStock} lowStock={lowStock} tracked={tracked} />
+              </td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+}
+
+/**
+ * Mirrors the KindChip pattern in BillingScreen — pill, uppercase, small,
+ * three palette variants. Keeps the receipt-table look consistent across
+ * Inventory / Pharmacy / Billing.
+ */
+function StockPill({
+  outOfStock, lowStock, tracked,
+}: { outOfStock: boolean; lowStock: boolean; tracked: boolean }) {
+  let label = 'In stock';
+  let bg = 'var(--success-bg)';
+  let fg = 'var(--success-text)';
+  let border = 'rgba(34,197,94,0.3)';
+
+  if (outOfStock) {
+    label = 'Out of stock';
+    bg = 'rgba(239,68,68,0.08)';
+    fg = 'var(--danger-500)';
+    border = 'rgba(239,68,68,0.3)';
+  } else if (lowStock) {
+    label = 'Low stock';
+    bg = 'var(--warning-bg)';
+    fg = 'var(--warning-text)';
+    border = 'rgba(245,158,11,0.35)';
+  } else if (!tracked) {
+    label = 'Stocked';
+    bg = 'var(--surface-muted)';
+    fg = 'var(--text-muted)';
+    border = 'var(--border)';
+  }
+
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      fontSize: 10, fontWeight: 700, padding: '3px 10px', borderRadius: 100,
+      background: bg, color: fg, border: `1px solid ${border}`,
+      whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em',
+    }}>
+      {label}
+    </span>
   );
 }
 
@@ -731,7 +834,7 @@ function ReceiveSheet({
         </Field>
 
         <Field label="Expiry date">
-          <input type="date" value={expiryDate} onChange={(e) => setExpiryDate(e.target.value)} style={inputStyle} />
+          <DatePickerChip value={expiryDate} onChange={setExpiryDate} fullWidth placeholder="Pick expiry date" />
         </Field>
 
         {item.packUnit && item.packSize && (

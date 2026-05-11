@@ -3,6 +3,7 @@ import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Avatar, Spinner, StatusPill, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
+import { DatePickerChip } from '../shared/DatePickerChip';
 import { Skeleton } from '../shared/Skeleton';
 import { DocumentsScreen } from './DocumentsScreen';
 
@@ -15,7 +16,7 @@ type Encounter = {
   chiefComplaint?: string;
   notes?: string;
   diagnosis?: string;
-  vitals?: Record<string, string>;
+  vitals?: Record<string, any>;
   followUpAt?: string;
   visitedAt: string;
   signedAt?: string;
@@ -26,7 +27,42 @@ type Encounter = {
 
 type Patient = { _id: string; mrn?: string; fullName: string; gender?: string; dob?: string; phones?: string[]; tags?: string[] };
 
-type RxItem = { id: number; med: string; dose: string; freq: string; dur: string; note: string };
+type RxStockStatus = 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK';
+
+/**
+ * In-flight prescription row. `inventoryItemId` and `medicineCatalogItemId`
+ * are set only when the doctor picks an option from the inventory-aware
+ * typeahead — free-text entries leave them undefined and the medicine bill
+ * flow (Slice 3) will treat them as "not stocked here, patient buys outside".
+ * `stockStatus` / `onHand` are FE-only display hints, refreshed when the
+ * typeahead opens; persisted rows reload without them and surface no chip.
+ */
+type RxItem = {
+  id: number;
+  med: string;
+  dose: string;
+  freq: string;
+  dur: string;
+  note: string;
+  qty: string;
+  inventoryItemId?: string;
+  medicineCatalogItemId?: string;
+  stockStatus?: RxStockStatus;
+  onHand?: number;
+};
+
+type AvailabilityRow = {
+  _id: string;
+  name: string;
+  sku?: string;
+  unit: string;
+  packUnit?: string;
+  packSize?: number;
+  medicineCatalogItemId?: string;
+  onHand: number;
+  reorderLevel: number;
+  status: RxStockStatus;
+};
 
 const VITAL_FIELDS: { key: string; label: string; unit: string }[] = [
   { key: 'bp', label: 'BP', unit: 'mmHg' },
@@ -54,6 +90,66 @@ function genderWord(g?: string): string {
   if (u === 'FEMALE') return 'Female';
   if (u === 'OTHER') return 'Other';
   return '';
+}
+
+function mapVitalsToUi(v: any): Record<string, string> {
+  const out = { bp: '', spo2: '', temp: '', pulse: '', rr: '', weight: '' };
+  if (!v || typeof v !== 'object') return out;
+  if (v.bpSystolic != null && v.bpDiastolic != null) {
+    out.bp = `${v.bpSystolic}/${v.bpDiastolic}`;
+  } else if (v.bpSystolic != null) {
+    out.bp = String(v.bpSystolic);
+  } else if (v.bp) {
+    out.bp = String(v.bp);
+  }
+  if (v.spo2 != null) out.spo2 = String(v.spo2);
+  if (v.temperatureC != null) {
+    const f = (Number(v.temperatureC) * 9 / 5) + 32;
+    out.temp = f % 1 === 0 ? String(f) : f.toFixed(1);
+  } else if (v.temp) {
+    out.temp = String(v.temp);
+  }
+  if (v.pulseBpm != null) out.pulse = String(v.pulseBpm);
+  else if (v.pulse) out.pulse = String(v.pulse);
+  if (v.respiratoryRate != null) out.rr = String(v.respiratoryRate);
+  else if (v.rr) out.rr = String(v.rr);
+  if (v.weightKg != null) out.weight = String(v.weightKg);
+  else if (v.weight) out.weight = String(v.weight);
+  return out;
+}
+
+function mapVitalsToBe(v: Record<string, string>): Record<string, any> {
+  const out: Record<string, any> = {};
+  if (v.bp) {
+    const parts = v.bp.split('/');
+    const sys = parseInt(parts[0]?.trim());
+    const dia = parseInt(parts[1]?.trim());
+    if (!isNaN(sys)) out.bpSystolic = sys;
+    if (!isNaN(dia)) out.bpDiastolic = dia;
+  }
+  if (v.spo2) {
+    const val = parseInt(v.spo2);
+    if (!isNaN(val)) out.spo2 = val;
+  }
+  if (v.temp) {
+    const val = parseFloat(v.temp);
+    if (!isNaN(val)) {
+      out.temperatureC = parseFloat(((val - 32) * 5 / 9).toFixed(1));
+    }
+  }
+  if (v.pulse) {
+    const val = parseInt(v.pulse);
+    if (!isNaN(val)) out.pulseBpm = val;
+  }
+  if (v.rr) {
+    const val = parseInt(v.rr);
+    if (!isNaN(val)) out.respiratoryRate = val;
+  }
+  if (v.weight) {
+    const val = parseFloat(v.weight);
+    if (!isNaN(val)) out.weightKg = val;
+  }
+  return out;
 }
 
 export function EncounterScreen() {
@@ -337,7 +433,7 @@ export function EncounterScreen() {
                           </div>
                           <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 2 }}>
                             <code style={{ fontFamily: 'monospace', color: 'var(--brand-600)' }}>
-                              {r.readableId ?? `#${r._id.slice(-8).toUpperCase()}`}
+                              {r.readableId ?? `#${r._id.slice(-6).toUpperCase()}`}
                             </code>
                             {' · '}
                             {new Date(r.visitedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
@@ -393,17 +489,14 @@ function EncounterEditor({
     setScreen('billing');
   }
 
-  const [vitals, setVitals] = useState<Record<string, string>>(() => ({
-    bp: '', spo2: '', temp: '', pulse: '', rr: '', weight: '',
-    ...(encounter.vitals as Record<string, string> | undefined),
-  }));
+  const [vitals, setVitals] = useState<Record<string, string>>(() => mapVitalsToUi(encounter.vitals));
   const [complaint, setComplaint] = useState(encounter.chiefComplaint ?? '');
   const [diagnosis, setDiagnosis] = useState(encounter.diagnosis ?? '');
   const [notes, setNotes] = useState(encounter.notes ?? '');
   const [followUp, setFollowUp] = useState(encounter.followUpAt ? encounter.followUpAt.slice(0, 10) : '');
   const [diagInput, setDiagInput] = useState('');
   const diags = diagnosis.split('|').map((s) => s.trim()).filter(Boolean);
-  const [rx, setRx] = useState<RxItem[]>([{ id: 1, med: '', dose: '', freq: '', dur: '', note: '' }]);
+  const [rx, setRx] = useState<RxItem[]>([{ id: 1, med: '', dose: '', freq: '', dur: '', note: '', qty: '' }]);
   const nextRxId = useRef(2);
   const [rxLoaded, setRxLoaded] = useState(false);
   const [branchInfo, setBranchInfo] = useState<any>(null);
@@ -432,6 +525,10 @@ function EncounterEditor({
   }, [ctx.clinicId, ctx.branchId]);
 
   const [prescriptionId, setPrescriptionId] = useState<string | null>(null);
+  // Human-readable number ("RX-000123") minted on the BE at first save.
+  // Printed prominently on the slip so the pharmacist can type it into
+  // the Pharmacy tab to load the medicines.
+  const [prescriptionNo, setPrescriptionNo] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [showSign, setShowSign] = useState(false);
@@ -455,6 +552,9 @@ function EncounterEditor({
               freq: it.frequency || '',
               dur: it.duration || '',
               note: it.instructions || '',
+              qty: it.quantity != null ? String(it.quantity) : '',
+              inventoryItemId: it.inventoryItemId,
+              medicineCatalogItemId: it.medicineCatalogItemId,
             }));
             setRx(mapped);
             nextRxId.current = mapped.length + 1;
@@ -468,12 +568,24 @@ function EncounterEditor({
   // Load existing prescription items when the encounter opens
   useEffect(() => {
     let cancelled = false;
-    apiGet<{ _id: string; items: Array<{ customName?: string; dosage?: string; frequency?: string; duration?: string; instructions?: string }> } | null>(
-      ctx, `/encounters/${encounter._id}/prescriptions`
-    ).then((res) => {
+    apiGet<{
+      _id: string;
+      prescriptionNo?: string;
+      items: Array<{
+        customName?: string;
+        dosage?: string;
+        frequency?: string;
+        duration?: string;
+        instructions?: string;
+        quantity?: number;
+        inventoryItemId?: string;
+        medicineCatalogItemId?: string;
+      }>;
+    } | null>(ctx, `/encounters/${encounter._id}/prescriptions`).then((res) => {
       if (cancelled) return;
       if (res) {
         setPrescriptionId(res._id);
+        setPrescriptionNo(res.prescriptionNo ?? null);
         if (Array.isArray(res.items) && res.items.length > 0) {
           const loaded: RxItem[] = res.items.map((it, i) => ({
             id: i + 1,
@@ -482,6 +594,9 @@ function EncounterEditor({
             freq: it.frequency ?? '',
             dur: it.duration ?? '',
             note: it.instructions ?? '',
+            qty: it.quantity != null ? String(it.quantity) : '',
+            inventoryItemId: it.inventoryItemId,
+            medicineCatalogItemId: it.medicineCatalogItemId,
           }));
           nextRxId.current = loaded.length + 1;
           setRx(loaded);
@@ -508,29 +623,38 @@ function EncounterEditor({
     if (signed) return;
     setSavingDraft(true); setError(null);
     try {
-      const cleanVitals: Record<string, string> = {};
-      Object.entries(vitals).forEach(([k, v]) => { if (v) cleanVitals[k] = v; });
       const [updated] = await Promise.all([
         apiPatch<Encounter>(ctx, `/encounters/${encounter._id}`, {
           chiefComplaint: complaint || undefined,
           diagnosis: diagnosis || undefined,
           notes: notes || undefined,
-          vitals: Object.keys(cleanVitals).length ? cleanVitals : undefined,
+          vitals: Object.keys(vitals).some(k => !!vitals[k]) ? mapVitalsToBe(vitals) : undefined,
           followUpAt: followUp ? new Date(followUp).toISOString() : undefined,
         }),
         // Persist medicine rows on every draft save so they survive navigation
         (async () => {
           const filled = rx.filter((r) => r.med.trim());
           if (filled.length > 0) {
-            await apiPatch(ctx, `/encounters/${encounter._id}/prescriptions`, {
+            const res = await apiPatch<{ _id: string; prescriptionNo?: string }>(
+              ctx,
+              `/encounters/${encounter._id}/prescriptions`,
+              {
               items: filled.map((r) => ({
+                // Prefer the medicineCatalogItemId when the doctor picked an
+                // inventory option — the medicine bill drafter (Slice 3)
+                // resolves stock through it. Free-text rows persist only the
+                // customName.
+                medicineCatalogItemId: r.medicineCatalogItemId || undefined,
                 customName: r.med,
                 dosage: r.dose || undefined,
                 frequency: r.freq || undefined,
                 duration: r.dur || undefined,
                 instructions: r.note || undefined,
+                quantity: r.qty.trim() ? Number(r.qty) || undefined : undefined,
               })),
             });
+            if (res?._id) setPrescriptionId(res._id);
+            if (res?.prescriptionNo) setPrescriptionNo(res.prescriptionNo);
           }
         })(),
       ]);
@@ -551,16 +675,19 @@ function EncounterEditor({
       // Save Rx items as a prescription if any are filled
       const filled = rx.filter((r) => r.med.trim());
       if (filled.length > 0) {
-        const res = await apiPost<{ _id: string }>(ctx, `/encounters/${encounter._id}/prescriptions`, {
+        const res = await apiPost<{ _id: string; prescriptionNo?: string }>(ctx, `/encounters/${encounter._id}/prescriptions`, {
           items: filled.map((r) => ({
+            medicineCatalogItemId: r.medicineCatalogItemId || undefined,
             customName: r.med,
             dosage: r.dose || undefined,
             frequency: r.freq || undefined,
             duration: r.dur || undefined,
             instructions: r.note || undefined,
+            quantity: r.qty.trim() ? Number(r.qty) || undefined : undefined,
           })),
         });
         setPrescriptionId(res._id);
+        if (res.prescriptionNo) setPrescriptionNo(res.prescriptionNo);
       }
       const signedEnc = await apiPost<Encounter>(ctx, `/encounters/${encounter._id}/sign`, {});
       onChanged(signedEnc);
@@ -730,6 +857,7 @@ function EncounterEditor({
                   notes,
                   followUp,
                   encounter,
+                  prescriptionNo,
                 })}
                 style={{
                   display: 'flex', alignItems: 'center', gap: 6,
@@ -821,21 +949,22 @@ function EncounterEditor({
             <Section title="Prescription" icon="pill" defaultOpen={!signed || rx.some(r => r.med.trim())}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {rx.some(r => r.med.trim()) && (
-                  <div style={{ 
-                    display: 'grid', 
-                    gridTemplateColumns: 'minmax(200px, 2fr) 100px 100px 100px minmax(200px, 2.5fr) 40px', 
-                    gap: 12, 
-                    padding: '0 12px 4px', 
-                    fontSize: 10, 
-                    fontWeight: 700, 
-                    color: 'var(--text-subtle)', 
-                    textTransform: 'uppercase', 
-                    letterSpacing: '0.06em' 
+                  <div style={{
+                    display: 'grid',
+                    gridTemplateColumns: 'minmax(180px, 2fr) 80px 80px 80px 70px minmax(140px, 1.6fr) 40px',
+                    gap: 10,
+                    padding: '0 12px 4px',
+                    fontSize: 10,
+                    fontWeight: 700,
+                    color: 'var(--text-subtle)',
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.06em'
                   }}>
                     <span>Medicine</span>
                     <span>Dose</span>
                     <span>Freq</span>
                     <span>Duration</span>
+                    <span>Qty</span>
                     <span>Instructions</span>
                     <span />
                   </div>
@@ -843,25 +972,44 @@ function EncounterEditor({
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
                   {rx.filter(r => !signed || r.med.trim()).map((item) => (
-                    <div key={item.id} style={{ 
-                      display: 'grid', 
-                      gridTemplateColumns: 'minmax(200px, 2fr) 100px 100px 100px minmax(200px, 2.5fr) 40px', 
-                      gap: 12, 
-                      padding: '8px 12px', 
-                      background: 'var(--surface-muted)', 
-                      borderRadius: 12, 
-                      border: '1px solid var(--border)', 
-                      alignItems: 'center' 
+                    <div key={item.id} style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'minmax(180px, 2fr) 80px 80px 80px 70px minmax(140px, 1.6fr) 40px',
+                      gap: 10,
+                      padding: '8px 12px',
+                      background: 'var(--surface-muted)',
+                      borderRadius: 12,
+                      border: '1px solid var(--border)',
+                      alignItems: 'center'
                     }}>
-                      <input value={item.med} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, med: e.target.value } : x))} disabled={signed} placeholder="Medicine name" style={rxInputStyle} />
+                      <MedicineTypeahead
+                        ctx={ctx}
+                        branchId={ctx.branchId}
+                        value={item.med}
+                        onChange={(patch) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, ...patch } : x))}
+                        disabled={signed}
+                        stockStatus={item.stockStatus}
+                        onHand={item.onHand}
+                      />
                       <input value={item.dose} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dose: e.target.value } : x))} disabled={signed} placeholder="1 tab" style={rxInputStyle} />
                       <select value={item.freq} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, freq: e.target.value } : x))} disabled={signed} style={{ ...rxInputStyle, cursor: 'pointer' }}>
                         <option value="">Freq</option>
                         <option>OD</option><option>BD</option><option>TDS</option><option>QID</option><option>SOS</option>
                       </select>
                       <input value={item.dur} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dur: e.target.value } : x))} disabled={signed} placeholder="7 days" style={rxInputStyle} />
-                      <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} disabled={signed} placeholder="Special instructions" style={rxInputStyle} />
-                      
+                      <input
+                        type="number"
+                        min={1}
+                        step={1}
+                        value={item.qty}
+                        onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, qty: e.target.value } : x))}
+                        disabled={signed}
+                        placeholder="10"
+                        title="Total units to dispense"
+                        style={rxInputStyle}
+                      />
+                      <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} disabled={signed} placeholder="Instructions" style={rxInputStyle} />
+
                       {!signed ? (
                         <button onClick={() => setRx((r) => r.filter((x) => x.id !== item.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-500)', padding: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                           <Icon name="trash" size={15} />
@@ -872,7 +1020,7 @@ function EncounterEditor({
                 </div>
 
                 {!signed && (
-                  <button onClick={() => setRx((r) => [...r, { id: nextRxId.current++, med: '', dose: '', freq: '', dur: '', note: '' }])}
+                  <button onClick={() => setRx((r) => [...r, { id: nextRxId.current++, med: '', dose: '', freq: '', dur: '', note: '', qty: '' }])}
                     style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 8, height: 38, padding: '0 16px', background: 'var(--surface)', border: '1.5px dashed var(--border)', borderRadius: 10, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer', marginTop: 4 }}>
                     <Icon name="plus" size={14} strokeWidth={2.5} /> Add medicine
                   </button>
@@ -884,8 +1032,13 @@ function EncounterEditor({
           {(!signed || followUp) && (
             <Section title="Follow-up" icon="calendar" defaultOpen={!!followUp}>
               <div style={{ display: 'flex', gap: 12, alignItems: 'center' }}>
-                <input type="date" value={followUp} onChange={(e) => setFollowUp(e.target.value)} disabled={signed}
-                  style={{ height: 38, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }} />
+                <DatePickerChip
+                  value={followUp}
+                  onChange={setFollowUp}
+                  disabled={signed}
+                  placeholder="No follow-up scheduled"
+                  allowClear
+                />
                 {!signed && <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>Leave blank if no follow-up needed.</span>}
               </div>
             </Section>
@@ -900,7 +1053,14 @@ function EncounterEditor({
           )}
 
           <Section title="Documents" icon="folder">
-            <DocumentsScreen fixedOwnerType="ENCOUNTER" fixedOwnerId={encounter._id} />
+            {encounter ? (
+              <DocumentsScreen fixedOwnerType="ENCOUNTER" fixedOwnerId={encounter._id} />
+            ) : (
+              <div style={{ padding: '10px 14px', background: 'var(--surface-muted)', border: '1px dotted var(--border)', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Icon name="info" size={14} style={{ color: 'var(--brand-500)' }} />
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Save a draft first to enable document uploads for this record.</span>
+              </div>
+            )}
           </Section>
 
           {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
@@ -929,6 +1089,8 @@ function EncounterEditor({
               notes,
               followUp,
               encounter,
+              prescriptionId,
+              prescriptionNo,
             })}
             style={{
               height: 40, padding: '0 18px', background: 'none',
@@ -1006,6 +1168,186 @@ const rxInputStyle: React.CSSProperties = {
   borderRadius: 7, fontSize: 12, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
 };
 
+/**
+ * Medicine input + dropdown for the prescription form. Hits
+ * /inventory/availability for the doctor's branch and shows a stock chip
+ * per result. Two paths:
+ *   - Doctor picks an option → row gets `inventoryItemId` +
+ *     `medicineCatalogItemId` so the medicine bill can resolve stock later.
+ *   - Doctor types a name without picking → row stays free-text;
+ *     medicine bill flow will treat it as "not stocked here."
+ *
+ * Stock chip is only rendered on rows that have a current `stockStatus`
+ * (i.e. just picked); previously-saved rows reload without it on purpose
+ * to avoid a stale "in stock" claim if levels changed.
+ */
+function MedicineTypeahead({
+  ctx, branchId, value, onChange, disabled, stockStatus, onHand,
+}: {
+  ctx: any;
+  branchId?: string;
+  value: string;
+  onChange: (patch: Partial<RxItem>) => void;
+  disabled?: boolean;
+  stockStatus?: RxStockStatus;
+  onHand?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const [results, setResults] = useState<AvailabilityRow[]>([]);
+  const [loading, setLoading] = useState(false);
+  const wrapperRef = useRef<HTMLDivElement>(null);
+
+  // Close on outside click. Mousedown rather than click so a click on a
+  // result fires before this listener strips the dropdown.
+  useEffect(() => {
+    if (!open) return;
+    function onDocMouseDown(e: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onDocMouseDown);
+    return () => document.removeEventListener('mousedown', onDocMouseDown);
+  }, [open]);
+
+  // Debounced fetch on value change. Only when input is focused/open and
+  // a branch is set — without branchId the BE returns 400.
+  useEffect(() => {
+    if (!open || !branchId) return;
+    const t = setTimeout(() => {
+      const qs = new URLSearchParams({ branchId, query: value, limit: '20' });
+      setLoading(true);
+      apiGet<AvailabilityRow[]>(ctx, `/inventory/availability?${qs.toString()}`)
+        .then((rows) => setResults(Array.isArray(rows) ? rows : []))
+        .catch(() => setResults([]))
+        .finally(() => setLoading(false));
+    }, 180);
+    return () => clearTimeout(t);
+  }, [open, value, branchId, ctx]);
+
+  function pick(row: AvailabilityRow) {
+    onChange({
+      med: row.name,
+      inventoryItemId: row._id,
+      medicineCatalogItemId: row.medicineCatalogItemId,
+      stockStatus: row.status,
+      onHand: row.onHand,
+    });
+    setOpen(false);
+  }
+
+  return (
+    <div ref={wrapperRef} style={{ position: 'relative' }}>
+      <div style={{ position: 'relative' }}>
+        <input
+          value={value}
+          onChange={(e) => onChange({
+            med: e.target.value,
+            // Typing breaks the inventory link until the doctor picks again
+            // — without this a free-text edit would still claim the old
+            // catalog ID at save time.
+            inventoryItemId: undefined,
+            medicineCatalogItemId: undefined,
+            stockStatus: undefined,
+            onHand: undefined,
+          })}
+          onFocus={() => setOpen(true)}
+          onKeyDown={(e) => {
+            if (e.key === 'Escape') setOpen(false);
+          }}
+          disabled={disabled}
+          placeholder="Medicine name"
+          style={{
+            ...rxInputStyle,
+            paddingRight: stockStatus ? 28 : rxInputStyle.padding,
+          }}
+        />
+        {stockStatus && (
+          <span
+            title={onHand != null ? `${onHand} on hand` : undefined}
+            style={{
+              position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
+              fontSize: 9, fontWeight: 700, padding: '1px 5px', borderRadius: 100,
+              background: chipPalette(stockStatus).bg,
+              color: chipPalette(stockStatus).fg,
+              border: `1px solid ${chipPalette(stockStatus).border}`,
+              pointerEvents: 'none',
+              whiteSpace: 'nowrap',
+            }}>
+            {stockStatus === 'IN_STOCK' ? 'IN' : stockStatus === 'LOW_STOCK' ? 'LOW' : 'OUT'}
+          </span>
+        )}
+      </div>
+      {open && !disabled && (
+        <div style={{
+          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 4,
+          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
+          boxShadow: 'var(--e3, 0 8px 24px rgba(15,23,42,0.12))',
+          maxHeight: 260, overflowY: 'auto',
+        }}>
+          {!branchId && (
+            <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-subtle)' }}>
+              Set a branch in your context to see stock availability.
+            </div>
+          )}
+          {branchId && loading && results.length === 0 && (
+            <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-subtle)' }}>Searching…</div>
+          )}
+          {branchId && !loading && results.length === 0 && (
+            <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-subtle)' }}>
+              {value.trim()
+                ? 'No stocked match — your typed name will still be saved as a free-text item.'
+                : 'Start typing to search inventory.'}
+            </div>
+          )}
+          {results.map((row) => {
+            const palette = chipPalette(row.status);
+            return (
+              <button
+                key={row._id}
+                type="button"
+                onClick={() => pick(row)}
+                style={{
+                  width: '100%', display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '8px 10px', textAlign: 'left',
+                  background: 'none', border: 'none', cursor: 'pointer',
+                  borderBottom: '1px solid var(--border)',
+                }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {row.name}
+                  </div>
+                  <div style={{ fontSize: 10, color: 'var(--text-subtle)' }}>
+                    {row.sku ? row.sku + ' · ' : ''}
+                    {row.onHand} {row.unit.toLowerCase()}{row.onHand === 1 ? '' : 's'} on hand
+                  </div>
+                </div>
+                <span style={{
+                  fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 100,
+                  background: palette.bg, color: palette.fg, border: `1px solid ${palette.border}`,
+                  whiteSpace: 'nowrap',
+                }}>
+                  {row.status === 'IN_STOCK' ? 'In stock' : row.status === 'LOW_STOCK' ? 'Low stock' : 'Out of stock'}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function chipPalette(status: RxStockStatus): { bg: string; fg: string; border: string } {
+  if (status === 'IN_STOCK') {
+    return { bg: 'var(--success-bg)', fg: 'var(--success-text)', border: 'var(--success-200, rgba(34,197,94,0.3))' };
+  }
+  if (status === 'LOW_STOCK') {
+    return { bg: 'var(--warning-bg)', fg: 'var(--warning-text)', border: 'rgba(245,158,11,0.35)' };
+  }
+  return { bg: 'rgba(239,68,68,0.08)', fg: 'var(--danger-500)', border: 'rgba(239,68,68,0.3)' };
+}
+
 function Section({ title, icon, children, defaultOpen }: { title: string; icon: IconName; children: ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(!!defaultOpen);
   // flexShrink: 0 — without this, when many sections live in the column-flex
@@ -1015,7 +1357,7 @@ function Section({ title, icon, children, defaultOpen }: { title: string; icon: 
   // clip the inner border) that produced the "section title with empty body"
   // bug. Holding our natural height makes the parent's overflowY:auto kick in.
   return (
-    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden', flexShrink: 0 }}>
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'visible', flexShrink: 0, position: 'relative' }}>
       <button onClick={() => setOpen((o) => !o)} style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '14px 16px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
         <div style={{ width: 28, height: 28, borderRadius: 8, background: 'var(--brand-50)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
           <Icon name={icon} size={14} style={{ color: 'var(--brand-500)' }} />
@@ -1114,6 +1456,9 @@ function printPrescription(input: {
   notes: string;
   followUp: string;
   encounter: Encounter;
+  prescriptionId?: string | null;
+  /** Human-readable Rx number minted on first save (e.g. "RX-000123"). */
+  prescriptionNo?: string | null;
 }) {
   console.log("PRINT DATA", input);
   const { clinic, doctor, patient, vitals, complaint, diagnosis, rx, notes, followUp, encounter } = input;
@@ -1331,14 +1676,49 @@ function printPrescription(input: {
     line-height: 1.6;
   }
   .doctor-block .dr-date {
-    font-size: 13px;
+    font-size: 12px;
     font-weight: 700;
     color: #1a56db;
     display: block;
-    margin-top: 6px;
+    margin-top: 4px;
+  }
+  .rx-no-top {
+    font-size: 11px;
+    font-weight: 800;
+    color: #1e293b;
+    text-transform: uppercase;
+    margin-bottom: 8px;
   }
 
   /* ── PATIENT STRIP ───────────────────────── */
+  .rx-id-strip {
+    display: flex; align-items: center; gap: 12px;
+    margin: 14px 0 10px;
+    padding: 10px 14px;
+    background: #f0f7ff;
+    border: 1px solid #c7dffd;
+    border-left: 4px solid #1a56db;
+    border-radius: 6px;
+  }
+  .rx-id-label {
+    font-size: 11px; font-weight: 700;
+    color: #1a56db;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .rx-id-value {
+    font-family: 'Courier New', ui-monospace, monospace;
+    font-size: 18px;
+    font-weight: 700;
+    color: #1a1a1a;
+    letter-spacing: 0.04em;
+  }
+  .rx-id-hint {
+    margin-left: auto;
+    font-size: 10px;
+    color: #6b7280;
+    font-style: italic;
+  }
   .patient-strip {
     display: grid;
     grid-template-columns: 1.4fr 1.2fr 0.7fr 1.2fr;
@@ -1506,12 +1886,15 @@ function printPrescription(input: {
         </div>
       </div>
       <div class="doctor-block">
+        <div class="rx-no-top">Rx No: ${escapeHtml(`#${(input.prescriptionNo || input.prescriptionId || encounter._id || '').slice(-6).toUpperCase()}`)}</div>
         <span class="dr-name">${escapeHtml(doctorName)}</span>
         <span class="dr-cred">${escapeHtml(clinic.doctorQuals || '')}</span>
         <span class="dr-cred">${clinic.doctorReg ? 'Reg No: ' + escapeHtml(clinic.doctorReg) : ''}</span>
         <span class="dr-date">${escapeHtml(dateStr)}</span>
       </div>
     </header>
+
+
 
     <!-- PATIENT STRIP -->
     <section class="patient-strip">
@@ -1611,8 +1994,12 @@ function printPrescription(input: {
 
       </div>
       <div class="signature">
-        <div class="line" style="border-bottom: 2.5px solid #0f172a; min-width: 180px;"></div>
-        <div class="who">${escapeHtml(doctorName)}</div>
+        <div class="line" style="border-bottom: 2px solid #0f172a; min-width: 180px; margin-bottom: 6px;"></div>
+        <div class="who" style="font-weight: 700; color: #0f172a;">${escapeHtml(doctorName)}</div>
+        <div style="font-size: 10px; color: #64748b; margin-top: 2px;">
+          ${escapeHtml(clinic.doctorQuals || '')}
+          ${clinic.doctorReg ? '<br>Reg No: ' + escapeHtml(clinic.doctorReg) : ''}
+        </div>
       </div>
     </footer>
   </main>

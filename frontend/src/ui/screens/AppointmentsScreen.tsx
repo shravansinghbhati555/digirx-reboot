@@ -4,6 +4,7 @@ import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
 import { Avatar, EmptyState, Spinner, StatusPill, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
+import { DatePickerChip } from '../shared/DatePickerChip';
 import { ListItemSkeleton, Skeleton } from '../shared/Skeleton';
 
 type AppointmentType = 'TIME' | 'QUEUE';
@@ -452,8 +453,7 @@ export function AppointmentsScreen() {
           style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
           <Icon name="chevronLeft" size={16} />
         </button>
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)}
-          style={{ height: 32, padding: '0 10px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13, color: 'var(--text)', outline: 'none' }} />
+        <DatePickerChip value={date} onChange={setDate} size="sm" />
         <button onClick={() => shiftDate(view === 'week' ? 7 : 1)}
           aria-label={view === 'week' ? 'Next week' : 'Next day'}
           style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
@@ -1320,7 +1320,7 @@ function DetailsStep({
 
       <div>
         <label style={labelStyle}>Date</label>
-        <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={selectStyle} />
+        <DatePickerChip value={date} onChange={setDate} size="sm" fullWidth />
       </div>
 
       {apptKind === 'TIME' && (

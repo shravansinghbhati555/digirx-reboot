@@ -38,6 +38,7 @@ export const SCREEN_REQUIRED: Record<ScreenKey, PermName[] | null> = {
   reports:       [Perm.BillingRead],
   notifications: [Perm.NotificationRead],
   inventory:     [Perm.InventoryRead],
+  pharmacy:      [Perm.BillingRead],
   users:         [Perm.UserRead],
   roles:         [Perm.UserRead],
   settings:      [Perm.ClinicRead],
