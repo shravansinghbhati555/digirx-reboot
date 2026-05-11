@@ -195,10 +195,16 @@ export class EncountersService implements OnModuleInit {
 
   async findAll(
     clinicId: Types.ObjectId,
-    query: { branchId?: string; limit?: number; offset?: number },
+    query: {
+      branchId?: string;
+      patientId?: string;
+      limit?: number;
+      offset?: number;
+    },
   ) {
     const filter: any = { clinicId };
     if (query.branchId) filter.branchId = new Types.ObjectId(query.branchId);
+    if (query.patientId) filter.patientId = new Types.ObjectId(query.patientId);
 
     const limit = Number(query.limit) || 20;
     const offset = Number(query.offset) || 0;

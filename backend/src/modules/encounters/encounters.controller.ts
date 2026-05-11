@@ -21,11 +21,13 @@ export class EncountersController {
   async list(
     @Req() req: AppRequest,
     @Query('branchId') branchId?: string,
+    @Query('patientId') patientId?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
     return await this.encounters.findAll(req.context!.clinicId, {
       branchId,
+      patientId,
       limit: limit ? Number(limit) : undefined,
       offset: offset ? Number(offset) : undefined,
     });

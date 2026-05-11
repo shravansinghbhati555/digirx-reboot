@@ -386,6 +386,29 @@ export class AppointmentsService {
       .sort({ startAt: 1, queueNumber: 1 });
   }
 
+  async findAll(
+    clinicId: Types.ObjectId,
+    query: {
+      branchId?: string;
+      patientId?: string;
+      doctorId?: string;
+      limit?: number;
+    },
+  ) {
+    const filter: any = { clinicId };
+    if (query.branchId) filter.branchId = new Types.ObjectId(query.branchId);
+    if (query.patientId) filter.patientId = new Types.ObjectId(query.patientId);
+    if (query.doctorId) filter.doctorId = new Types.ObjectId(query.doctorId);
+
+    const limit = Number(query.limit) || 20;
+
+    return await this.apptModel
+      .find(filter)
+      .sort({ startAt: -1, queueDate: -1 })
+      .limit(limit)
+      .lean();
+  }
+
   /**
    * Returns every slot for the doctor's day with its real status. The
    * front-desk needs to *see* booked slots (so they can read the doctor's
