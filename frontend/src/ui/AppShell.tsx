@@ -288,13 +288,7 @@ export function AppShell({ children }: { children: ReactNode }) {
             </span>
           </button>
 
-          {/* The global date filter is only meaningful on the Dashboard
-              (KPIs, today/last-7-days rollups). On every other screen
-              it just creates noise — Patients/Appointments/Billing all
-              have their own in-screen filters. */}
-          {screen === 'dashboard' && (
-            <DatePickerChip value={selectedDate} onChange={setSelectedDate} />
-          )}
+          <DatePickerChip value={selectedDate} onChange={setSelectedDate} />
 
           <div style={{ flex: 1 }} />
 

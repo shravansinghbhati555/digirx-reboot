@@ -111,6 +111,7 @@ export class BillingController {
     @Query('patientId') patientId?: string,
     @Query('status') status?: string,
     @Query('kind') kind?: string,
+    @Query('date') date?: string,
     @Query('limit') limitRaw?: string,
   ) {
     const limit = Number(limitRaw ?? 100) || 100;
@@ -119,6 +120,7 @@ export class BillingController {
       patientId,
       status,
       kind,
+      date,
       limit,
     });
   }

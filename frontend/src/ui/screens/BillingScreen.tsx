@@ -108,7 +108,7 @@ const PAYMENT_METHODS: { id: string; label: string; icon: IconName }[] = [
 ];
 
 export function BillingScreen() {
-  const { ctx, selectedAppointmentId, setSelectedAppointmentId, selectedEncounterId, setSelectedEncounterId, selectedBillId, setSelectedBillId } = useApp();
+  const { ctx, selectedAppointmentId, setSelectedAppointmentId, selectedEncounterId, setSelectedEncounterId, selectedBillId, setSelectedBillId, selectedDate } = useApp();
   const { has } = usePerm();
   const canCreateBill = has(Perm.BillingWrite);
   const [bills, setBills] = useState<BillRow[] | null>(null);
@@ -139,6 +139,7 @@ export function BillingScreen() {
       if (ctx.branchId) qs.set('branchId', ctx.branchId);
       if (filter !== 'all') qs.set('status', filter);
       if (kindFilter !== 'all') qs.set('kind', kindFilter.toUpperCase());
+      if (selectedDate) qs.set('date', selectedDate);
       const data = await apiGet<BillList>(ctx, `/bills?${qs.toString()}`);
       setBills(data.rows);
     } catch (e) {
@@ -154,7 +155,7 @@ export function BillingScreen() {
     setPageSize(PAGE_INITIAL);
     void loadBills(PAGE_INITIAL);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctx.clinicId, ctx.branchId, filter, kindFilter]);
+  }, [ctx.clinicId, ctx.branchId, filter, kindFilter, selectedDate]);
 
   useEffect(() => {
     if (selectedBillId) {

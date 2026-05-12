@@ -207,8 +207,9 @@ function RevenueTab() {
 }
 
 function UtilizationTab() {
-  const { ctx } = useApp();
-  const [date, setDate] = useState(todayIso());
+  const { ctx, selectedDate, setSelectedDate } = useApp();
+  const date = selectedDate;
+  const setDate = setSelectedDate;
   const [branchId, setBranchId] = useState(ctx.branchId ?? '');
   const [data, setData] = useState<ScheduleResp | null>(null);
   const [loading, setLoading] = useState(false);
@@ -228,7 +229,7 @@ function UtilizationTab() {
     }
   }
 
-  useEffect(() => { void load(); }, [ctx.clinicId]);
+  useEffect(() => { void load(); }, [ctx.clinicId, date]);
 
   const rows = data ? Object.entries(data.byDoctor).map(([doctorId, d]) => {
     const completed = (d.byStatus.DONE ?? 0) + (d.byStatus.CHECKED_IN ?? 0) + (d.byStatus.IN_PROGRESS ?? 0);
@@ -325,8 +326,9 @@ function enumerateDays(fromIso: string, toIso: string): string[] {
 }
 
 function ScheduleTab() {
-  const { ctx } = useApp();
-  const [date, setDate] = useState(todayIso());
+  const { ctx, selectedDate, setSelectedDate } = useApp();
+  const date = selectedDate;
+  const setDate = setSelectedDate;
   const [branchId, setBranchId] = useState(ctx.branchId ?? '');
   const [data, setData] = useState<ScheduleResp | null>(null);
   const [loading, setLoading] = useState(false);
@@ -346,7 +348,7 @@ function ScheduleTab() {
     }
   }
 
-  useEffect(() => { void load(); }, [ctx.clinicId]);
+  useEffect(() => { void load(); }, [ctx.clinicId, date]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>

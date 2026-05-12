@@ -1,56 +1,59 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap');
 
 :root {
-  --bg:             #FAFBFC;
-  --surface:        #FFFFFF;
-  --surface-muted:  #F4F6F8;
-  --border:         #E5E9EF;
-  --border-strong:  #CBD2DB;
-  --text:           #0F172A;
-  --text-muted:     #5A6473;
-  --text-subtle:    #8993A4;
-  --brand-50:       #EEF6FF;
-  --brand-100:      #DCEBFF;
-  --brand-500:      #3B82F6;
+  --bg: #FAFBFC;
+  --surface: #FFFFFF;
+  --surface-muted: #F4F6F8;
+  --border: #E5E9EF;
+  --border-strong: #CBD2DB;
+  --text: #0F172A;
+  --text-muted: #5A6473;
+  --text-subtle: #8993A4;
+  --brand-50: #EEF6FF;
+  --brand-100: #DCEBFF;
+  /* --brand-500:      #3B82F6;
   --brand-600:      #2563EB;
-  --brand-700:      #1D4ED8;
-  --accent-500:     #14B8A6;
-  --success-500:    #10B981;
-  --warning-500:    #F59E0B;
-  --danger-500:     #EF4444;
-  --info-500:       #6366F1;
+  --brand-700:      #1D4ED8; */
+  --brand-500: #EF5350;
+  --brand-600: #F44336;
+  --brand-700: #E53935;
+  --accent-500: #14B8A6;
+  --success-500: #10B981;
+  --warning-500: #F59E0B;
+  --danger-500: #EF4444;
+  --info-500: #6366F1;
   /* Always-white foreground (text/icons on brand or photo backgrounds).
      Intentionally not theme-shifted: a brand button stays white-on-blue
      in dark mode too. */
-  --brand-text:     #FFFFFF;
+  --brand-text: #FFFFFF;
   --brand-text-strong: #1E40AF;
-  --brand-bg-soft:  rgba(59, 130, 246, 0.10);
+  --brand-bg-soft: rgba(59, 130, 246, 0.10);
   /* Status palette (chips, pills, callouts). Solid foreground + tinted bg. */
-  --success-text:   #065F46;
-  --success-bg:     rgba(16, 185, 129, 0.10);
-  --warning-text:   #92400E;
-  --warning-bg:     rgba(245, 158, 11, 0.10);
-  --warning-bg-soft:    rgba(245, 158, 11, 0.08);
-  --warning-border-soft:rgba(245, 158, 11, 0.25);
+  --success-text: #065F46;
+  --success-bg: rgba(16, 185, 129, 0.10);
+  --warning-text: #92400E;
+  --warning-bg: rgba(245, 158, 11, 0.10);
+  --warning-bg-soft: rgba(245, 158, 11, 0.08);
+  --warning-border-soft: rgba(245, 158, 11, 0.25);
   --warning-border-strong: rgba(245, 158, 11, 0.40);
-  --danger-text:    #991B1B;
-  --danger-bg:      rgba(239, 68, 68, 0.10);
-  --info-text:      #4338CA;
-  --info-bg:        rgba(99, 102, 241, 0.10);
-  --neutral-text:   #374151;
-  --neutral-bg:     rgba(107, 114, 128, 0.10);
-  --teal-text:      #0F766E;
-  --teal-bg:        rgba(20, 184, 166, 0.10);
-  --purple-500:     #8B5CF6;
-  --purple-bg:      rgba(139, 92, 246, 0.10);
-  --pink-500:       #EC4899;
+  --danger-text: #991B1B;
+  --danger-bg: rgba(239, 68, 68, 0.10);
+  --info-text: #4338CA;
+  --info-bg: rgba(99, 102, 241, 0.10);
+  --neutral-text: #374151;
+  --neutral-bg: rgba(107, 114, 128, 0.10);
+  --teal-text: #0F766E;
+  --teal-bg: rgba(20, 184, 166, 0.10);
+  --purple-500: #8B5CF6;
+  --purple-bg: rgba(139, 92, 246, 0.10);
+  --pink-500: #EC4899;
   /* Translucent overlays for layered chrome (nav buttons over a brand bg). */
-  --on-brand-soft-bg:     rgba(255, 255, 255, 0.15);
+  --on-brand-soft-bg: rgba(255, 255, 255, 0.15);
   --on-brand-soft-border: rgba(255, 255, 255, 0.20);
   --on-brand-spinner-track: rgba(255, 255, 255, 0.30);
-  --e1: 0 1px 2px rgba(15,23,42,0.04);
-  --e2: 0 4px 12px rgba(15,23,42,0.06);
-  --e3: 0 12px 32px rgba(15,23,42,0.10);
+  --e1: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --e2: 0 4px 12px rgba(15, 23, 42, 0.06);
+  --e3: 0 12px 32px rgba(15, 23, 42, 0.10);
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -58,33 +61,48 @@
   --dur-fast: 120ms;
   --dur-base: 200ms;
   --dur-slow: 320ms;
-  --ease-out: cubic-bezier(.2,.8,.2,1);
-  --ease-inout: cubic-bezier(.4,0,.2,1);
+  --ease-out: cubic-bezier(.2, .8, .2, 1);
+  --ease-inout: cubic-bezier(.4, 0, .2, 1);
 }
 
 [data-theme="dark"] {
-  --bg:            #0B0E14;
-  --surface:       #11151D;
+  --bg: #0B0E14;
+  --surface: #11151D;
   --surface-muted: #181D26;
-  --border:        #1F2530;
+  --border: #1F2530;
   --border-strong: #2A313D;
-  --text:          #F1F5F9;
-  --text-muted:    #94A3B8;
-  --text-subtle:   #475569;
-  --brand-50:      #0F172A;
-  --brand-100:     #1E293B;
+  --text: #F1F5F9;
+  --text-muted: #94A3B8;
+  --text-subtle: #475569;
+  --brand-50: #0F172A;
+  --brand-100: #1E293B;
 }
 
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body, #app { height: 100%; }
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html,
+body,
+#app {
+  height: 100%;
+}
+
 /* Shrink the root font-size so every rem-based size (Tailwind utilities,
    line-heights, inherited body text) renders denser. 14.4px is ~90% of the
    browser default of 16px. Tweak here to make the admin panel tighter/looser. */
-html { font-size: 14.4px; }
+html {
+  font-size: 14.4px;
+}
 
 body {
   font-family: 'Inter', system-ui, sans-serif;
-  font-size: 0.875rem; /* ~12.6px effective — base body copy */
+  font-size: 0.875rem;
+  /* ~12.6px effective — base body copy */
   background: var(--bg);
   color: var(--text);
   -webkit-font-smoothing: antialiased;
@@ -92,126 +110,276 @@ body {
   transition: background var(--dur-slow) var(--ease-inout), color var(--dur-slow) var(--ease-inout);
 }
 
-button { font-family: inherit; }
-input, select, textarea { font-family: inherit; }
+button {
+  font-family: inherit;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+}
 
 @keyframes slideUp {
-  from { opacity: 0; transform: translateY(10px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
+
 @keyframes slideInRight {
-  from { opacity: 0; transform: translateX(16px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
+
 @keyframes fadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
+
 @keyframes shake {
-  0%, 100% { transform: translateX(0); }
-  20%       { transform: translateX(-3px); }
-  40%       { transform: translateX(3px); }
-  60%       { transform: translateX(-3px); }
-  80%       { transform: translateX(3px); }
+
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  20% {
+    transform: translateX(-3px);
+  }
+
+  40% {
+    transform: translateX(3px);
+  }
+
+  60% {
+    transform: translateX(-3px);
+  }
+
+  80% {
+    transform: translateX(3px);
+  }
 }
+
 @keyframes spin {
-  to { transform: rotate(360deg); }
+  to {
+    transform: rotate(360deg);
+  }
 }
+
 @keyframes checkDraw {
-  from { stroke-dashoffset: 24; }
-  to   { stroke-dashoffset: 0; }
+  from {
+    stroke-dashoffset: 24;
+  }
+
+  to {
+    stroke-dashoffset: 0;
+  }
 }
+
 @keyframes toastIn {
-  from { opacity: 0; transform: translateY(-8px) translateX(-50%); }
-  to   { opacity: 1; transform: translateY(0) translateX(-50%); }
+  from {
+    opacity: 0;
+    transform: translateY(-8px) translateX(-50%);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) translateX(-50%);
+  }
 }
+
 @keyframes pickerIn {
-  from { opacity: 0; transform: translateY(-8px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(-8px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes shimmer {
-  0%   { background-position: -400px 0; }
-  100% { background-position: 400px 0; }
+  0% {
+    background-position: -400px 0;
+  }
+
+  100% {
+    background-position: 400px 0;
+  }
 }
+
 @keyframes float6 {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-6px); }
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-6px);
+  }
 }
+
 @keyframes shakeX {
-  0%, 100% { transform: translateX(0); }
-  20%      { transform: translateX(-3px); }
-  40%      { transform: translateX(3px); }
-  60%      { transform: translateX(-3px); }
-  80%      { transform: translateX(3px); }
+
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  20% {
+    transform: translateX(-3px);
+  }
+
+  40% {
+    transform: translateX(3px);
+  }
+
+  60% {
+    transform: translateX(-3px);
+  }
+
+  80% {
+    transform: translateX(3px);
+  }
 }
+
 @keyframes pulseRing {
-  0%   { box-shadow: 0 0 0 0 rgba(59,130,246,0.35); }
-  70%  { box-shadow: 0 0 0 8px rgba(59,130,246,0); }
-  100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.35);
+  }
+
+  70% {
+    box-shadow: 0 0 0 8px rgba(59, 130, 246, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(59, 130, 246, 0);
+  }
 }
+
 @keyframes successHalo {
-  0%   { box-shadow: 0 0 0 0 rgba(16,185,129,0.45); }
-  70%  { box-shadow: 0 0 0 14px rgba(16,185,129,0); }
-  100% { box-shadow: 0 0 0 0 rgba(16,185,129,0); }
+  0% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.45);
+  }
+
+  70% {
+    box-shadow: 0 0 0 14px rgba(16, 185, 129, 0);
+  }
+
+  100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
 }
+
 @keyframes pathDraw {
-  from { stroke-dashoffset: var(--draw-len, 800); }
-  to   { stroke-dashoffset: 0; }
+  from {
+    stroke-dashoffset: var(--draw-len, 800);
+  }
+
+  to {
+    stroke-dashoffset: 0;
+  }
 }
+
 @keyframes pathFadeIn {
-  from { opacity: 0; }
-  to   { opacity: 1; }
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
 }
 
 .press-scale {
   transition: transform var(--dur-fast) var(--ease-out);
 }
+
 .press-scale:not(:disabled):active {
   transform: scale(0.98);
 }
+
 button:not(:disabled):not(.no-press):active {
   transform: scale(0.98);
 }
+
 button {
   transition: transform var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), color var(--dur-fast) var(--ease-out);
 }
 
 .skel {
   position: relative;
-  background: linear-gradient(
-    90deg,
-    var(--surface-muted) 0%,
-    rgba(15, 23, 42, 0.04) 50%,
-    var(--surface-muted) 100%
-  );
+  background: linear-gradient(90deg,
+      var(--surface-muted) 0%,
+      rgba(15, 23, 42, 0.04) 50%,
+      var(--surface-muted) 100%);
   background-size: 800px 100%;
   animation: shimmer 1200ms ease-in-out infinite;
   border-radius: 8px;
 }
+
 [data-theme='dark'] .skel {
-  background: linear-gradient(
-    90deg,
-    var(--surface-muted) 0%,
-    rgba(255, 255, 255, 0.04) 50%,
-    var(--surface-muted) 100%
-  );
+  background: linear-gradient(90deg,
+      var(--surface-muted) 0%,
+      rgba(255, 255, 255, 0.04) 50%,
+      var(--surface-muted) 100%);
   background-size: 800px 100%;
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, *::before, *::after {
+
+  *,
+  *::before,
+  *::after {
     animation-duration: 1ms !important;
     transition-duration: 100ms !important;
   }
 }
 
 /* Custom scrollbars: thin, subtle, and hidden until interaction. */
-::-webkit-scrollbar { width: 6px; height: 6px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: transparent; border-radius: 10px; transition: background 0.2s; }
-*:hover::-webkit-scrollbar-thumb { background: var(--border-strong); }
-::-webkit-scrollbar-thumb:hover { background: var(--text-subtle) !important; }
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 10px;
+  transition: background 0.2s;
+}
+
+*:hover::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-subtle) !important;
+}
 
 /* Utility for screens to fill the AppShell content area perfectly. */
 .fill-shell {
@@ -231,9 +399,11 @@ button {
 .row-hover {
   transition: background var(--dur-fast) var(--ease-out);
 }
+
 .row-hover:hover {
   background: rgba(59, 130, 246, 0.03) !important;
 }
+
 [data-theme='dark'] .row-hover:hover {
   background: rgba(59, 130, 246, 0.06) !important;
 }
@@ -242,10 +412,12 @@ button {
   color-scheme: light;
   accent-color: var(--brand-500);
 }
+
 [data-theme='dark'] .time-picker-custom {
   color-scheme: dark;
   accent-color: var(--brand-500);
 }
+
 /* Hide the native black clock icon on the right */
 .time-picker-custom::-webkit-calendar-picker-indicator {
   display: none !important;
@@ -271,6 +443,7 @@ select {
   color-scheme: light;
   accent-color: var(--brand-500);
 }
+
 [data-theme='dark'] input[type="date"],
 [data-theme='dark'] input[type="time"],
 [data-theme='dark'] input[type="datetime-local"],
@@ -279,6 +452,7 @@ select {
 [data-theme='dark'] select {
   color-scheme: dark;
 }
+
 /* The calendar-picker icon is a Chromium-rendered glyph — invert it in
    dark mode so it's visible against the dark input background. */
 [data-theme='dark'] input[type="date"]::-webkit-calendar-picker-indicator,
