@@ -18,6 +18,11 @@ export class ClinicContextMiddleware implements NestMiddleware {
   constructor(private readonly jwt: JwtService) {}
 
   use(req: AppRequest, res: Response, next: NextFunction) {
+    // Skip middleware for root and health checks
+    if (req.url === '/' || req.url === '' || req.url === '/health') {
+      return next();
+    }
+
     try {
       const auth = req.header('authorization') ?? req.header('Authorization');
       if (auth && auth.toLowerCase().startsWith('bearer ')) {
