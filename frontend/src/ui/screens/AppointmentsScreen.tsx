@@ -296,12 +296,13 @@ function computeDayLayout(appts: Appointment[]) {
 
 
 export function AppointmentsScreen() {
-  const { ctx, selectedPatientId, setSelectedPatientId, setScreen, setSelectedAppointmentId, setSelectedBillId } = useApp();
+  const { ctx, selectedPatientId, setSelectedPatientId, setScreen, setSelectedAppointmentId, setSelectedBillId, selectedDate, setSelectedDate } = useApp();
   const { has } = usePerm();
   const canBook = has(Perm.AppointmentWrite);
   const toast = useToast();
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
-  const [view, setView] = useState<'day' | 'week' | 'queue'>('day');
+  const date = selectedDate;
+  const setDate = setSelectedDate;
+  const [view, setView] = useState<'day' | 'week' | 'queue'>('queue');
   const [weekItems, setWeekItems] = useState<Map<string, Appointment[]>>(new Map());
   const [weekLoading, setWeekLoading] = useState(false);
   const [showCancelled, setShowCancelled] = useState(false);
@@ -312,26 +313,17 @@ export function AppointmentsScreen() {
   const [showBook, setShowBook] = useState(false);
   const [patients, setPatients] = useState<Map<string, PatientLite>>(new Map());
   const [doctors, setDoctors] = useState<Map<string, string>>(new Map());
-  const [expandedHour, setExpandedHour] = useState<number | null>(null);
 
-  const getHourH = (h: number) => h === expandedHour ? EXPANDED_H : HOUR_H;
+  const getHourH = (_h: number) => EXPANDED_H;
 
-  const getHourTop = (h: number) => {
-    let top = 0;
-    for (let i = 8; i < h; i++) {
-      top += getHourH(i);
-    }
-    return top;
-  };
+  const getHourTop = (h: number) => (h - 8) * EXPANDED_H;
 
   const getTimeTop = (iso: string | undefined) => {
     if (!iso) return 0;
     const min = isoToMin(iso);
     const h = Math.floor(min / 60);
     const m = min % 60;
-    const hTop = getHourTop(h);
-    const hHeight = getHourH(h);
-    return hTop + (m / 60) * hHeight;
+    return getHourTop(h) + (m / 60) * EXPANDED_H;
   };
 
   async function load() {
@@ -475,7 +467,7 @@ export function AppointmentsScreen() {
           </button>
 
           <div style={{ display: 'flex', gap: 2, background: 'var(--surface-muted)', borderRadius: 10, padding: 3, border: '1px solid var(--border)' }}>
-            {(['day', 'week', 'queue'] as const).map((v) => (
+            {(['queue', 'day', 'week'] as const).map((v) => (
               <button key={v} onClick={() => setView(v)}
                 style={{ padding: '5px 14px', borderRadius: 8, border: 'none', background: view === v ? 'var(--surface)' : 'transparent', color: view === v ? 'var(--text)' : 'var(--text-muted)', fontSize: 12, fontWeight: view === v ? 600 : 400, cursor: 'pointer', textTransform: 'capitalize' }}>
                 {v}
@@ -505,10 +497,10 @@ export function AppointmentsScreen() {
             <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', position: 'relative', minHeight: getHourTop(20) }}>
               {HOURS.map((h) => (
                 <div key={h} style={{ position: 'absolute', top: getHourTop(h), left: 0, right: 0, height: getHourH(h), borderBottom: '1px solid var(--border)', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ height: h === expandedHour ? EXPANDED_H / 4 : HOUR_H, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', paddingRight: 8, paddingTop: 6, fontSize: 11, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+                  <div style={{ height: EXPANDED_H / 4, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', paddingRight: 8, paddingTop: 6, fontSize: 11, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
                     {String(h).padStart(2, '0')}:00
                   </div>
-                  {h === expandedHour && (['15', '30', '45'] as const).map((m) => (
+                  {(['15', '30', '45'] as const).map((m) => (
                     <div key={m} style={{ height: EXPANDED_H / 4, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', paddingRight: 8, paddingTop: 6, fontSize: 10, color: 'var(--text-subtle)', fontVariantNumeric: 'tabular-nums' }}>
                       {String(h).padStart(2, '0')}:{m}
                     </div>
@@ -521,14 +513,11 @@ export function AppointmentsScreen() {
             <div style={{ flex: 1, position: 'relative', minHeight: getHourTop(20) }}>
               {HOURS.map((h) => (
                 <div key={h}
-                  onClick={() => setExpandedHour(expandedHour === h ? null : h)}
                   style={{
                     position: 'absolute', left: 0, right: 0, top: getHourTop(h), height: getHourH(h),
                     borderBottom: '1px solid var(--border)', boxSizing: 'border-box',
-                    cursor: 'zoom-in', transition: 'background 0.2s',
-                    background: expandedHour === h ? 'rgba(59,130,246,0.02)' : 'transparent'
                   }}>
-                  {h === expandedHour && (['15', '30', '45'] as const).map((m) => (
+                  {(['15', '30', '45'] as const).map((m) => (
                     <div key={m} style={{ position: 'absolute', left: 0, right: 0, top: (parseInt(m) / 60) * EXPANDED_H, height: 1, borderTop: '1px dashed var(--border)' }} />
                   ))}
                 </div>
@@ -549,33 +538,14 @@ export function AppointmentsScreen() {
               {(() => {
                 const dayLayout = computeDayLayout(dayAppts);
                 return dayAppts.map((a) => {
-                  const startMin = isoToMin(a.startAt);
-                  const hStart = Math.floor(startMin / 60);
-                  const isExpanded = hStart === expandedHour;
-
                   const top = getTimeTop(a.startAt);
                   const bottom = getTimeTop(a.endAt);
-                  const height = Math.max(bottom - top, isExpanded ? 32 : 6);
+                  const height = Math.max(bottom - top, 32);
 
                   if (top < 0) return null;
 
                   const col = STATUS_COLORS[statusKey(a.status)] ?? STATUS_COLORS.BOOKED;
                   const layout = dayLayout.get(a._id) ?? { left: '8px', width: 'calc(100% - 16px)' };
-
-                  if (!isExpanded) {
-                    return (
-                      <div key={a._id}
-                        title={`${getName(a.patientId)} (${isoToTime(a.startAt)})`}
-                        style={{
-                          position: 'absolute', left: layout.left, width: layout.width,
-                          top: top + (HOUR_H / 2) - 3, height: 6,
-                          background: col.border, borderRadius: 3, opacity: 0.6, cursor: 'pointer',
-                          zIndex: 1
-                        }}
-                        onClick={(e) => { e.stopPropagation(); setExpandedHour(hStart); }}
-                      />
-                    );
-                  }
 
                   return (
                     <div key={a._id} onClick={(e) => { e.stopPropagation(); setSelected(a); }}

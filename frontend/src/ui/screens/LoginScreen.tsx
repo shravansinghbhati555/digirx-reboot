@@ -23,6 +23,15 @@ type LoginResponse = {
   branchId: string | null;
 };
 
+type SignupResponse = {
+  accessToken: string;
+  userId: string;
+  clinicId: string;
+  branchId: string;
+  clinicName: string;
+  branchName: string;
+};
+
 type PendingAuth = {
   clinic: ClinicResult;
   accessToken: string;
@@ -34,6 +43,10 @@ export function LoginScreen() {
   const { ctx, setCtx } = useApp();
   const toast = useToast();
 
+  // 'signin' uses the 3-step wizard (sign in → pick branch → welcome).
+  // 'signup' uses a single bootstrap form that creates the clinic + admin
+  // + default branch in one shot, then jumps straight to welcome (step 2).
+  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [step, setStep] = useState<0 | 1 | 2>(0);
   const [apiBaseUrl, setApiBaseUrl] = useState(ctx.apiBaseUrl);
   const [pendingAuth, setPendingAuth] = useState<PendingAuth | null>(null);
@@ -41,6 +54,15 @@ export function LoginScreen() {
 
   const goNext = (auth: PendingAuth) => { setPendingAuth(auth); setStep(1); };
   const finishBranch = (branch: BranchResult | null) => { setPendingBranch(branch); setStep(2); };
+
+  // Signup short-circuits the branch picker — the freshly created clinic
+  // has exactly one branch and the BE already returned it, so we set
+  // both pendingAuth and pendingBranch in one move and jump to step 2.
+  const finishSignup = (auth: PendingAuth, branch: BranchResult) => {
+    setPendingAuth(auth);
+    setPendingBranch(branch);
+    setStep(2);
+  };
 
   const finalize = () => {
     if (!pendingAuth) return;
@@ -55,7 +77,7 @@ export function LoginScreen() {
       accessToken: pendingAuth.accessToken,
       email: pendingAuth.email,
     });
-    toast('Signed in', 'success');
+    toast(mode === 'signup' ? 'Account created' : 'Signed in', 'success');
   };
 
   const back = () => setStep((s) => (s > 0 ? ((s - 1) as 0 | 1 | 2) : s));
@@ -68,11 +90,20 @@ export function LoginScreen() {
         <div style={{ width: '100%', maxWidth: 420, animation: 'slideUp 320ms var(--ease-out)' }}>
           <StepDots current={step} total={3} />
 
-          {step === 0 && (
+          {step === 0 && mode === 'signin' && (
             <SignInStep
               apiBaseUrl={apiBaseUrl}
               setApiBaseUrl={setApiBaseUrl}
               onSuccess={goNext}
+              onSwitchToSignup={() => setMode('signup')}
+            />
+          )}
+
+          {step === 0 && mode === 'signup' && (
+            <SignUpStep
+              apiBaseUrl={apiBaseUrl}
+              onSuccess={finishSignup}
+              onSwitchToSignin={() => setMode('signin')}
             />
           )}
 
@@ -161,11 +192,12 @@ function StepDots({ current, total }: { current: number; total: number }) {
 /* ── Step 0: Sign In ──────────────────────────────────────── */
 
 function SignInStep({
-  apiBaseUrl, setApiBaseUrl, onSuccess,
+  apiBaseUrl, setApiBaseUrl, onSuccess, onSwitchToSignup,
 }: {
   apiBaseUrl: string;
   setApiBaseUrl: (v: string) => void;
   onSuccess: (auth: PendingAuth) => void;
+  onSwitchToSignup: () => void;
 }) {
   const { ctx, setCtx } = useApp();
   const toast = useToast();
@@ -280,6 +312,156 @@ function SignInStep({
         </button>
       </form>
 
+      <div style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
+        Don't have an account?{' '}
+        <button type="button" onClick={onSwitchToSignup}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--brand-500)', padding: 0 }}>
+          Create one
+        </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── Step 0 (alt): Sign Up ────────────────────────────────── */
+
+function SignUpStep({
+  apiBaseUrl, onSuccess, onSwitchToSignin,
+}: {
+  apiBaseUrl: string;
+  onSuccess: (auth: PendingAuth, branch: BranchResult) => void;
+  onSwitchToSignin: () => void;
+}) {
+  const { ctx } = useApp();
+  const [clinicName, setClinicName] = useState('');
+  const [adminName, setAdminName] = useState('');
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [errors, setErrors] = useState<{ clinicName?: string; adminName?: string; email?: string; password?: string; general?: string }>({});
+  const [btnState, setBtnState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [shakeKey, setShakeKey] = useState(0);
+
+  function validate() {
+    const e: typeof errors = {};
+    if (!clinicName.trim() || clinicName.trim().length < 2) e.clinicName = 'Clinic name must be at least 2 characters.';
+    if (!adminName.trim()) e.adminName = 'Enter your full name.';
+    if (!email || !/\S+@\S+\.\S+/.test(email)) e.email = 'Enter a valid email address.';
+    if (!password || password.length < 8) e.password = 'Password must be at least 8 characters.';
+    return e;
+  }
+
+  async function handleSubmit(ev: React.FormEvent) {
+    ev.preventDefault();
+    const e = validate();
+    if (Object.keys(e).length) { setErrors(e); setShakeKey((k) => k + 1); return; }
+    setErrors({});
+    setBtnState('loading');
+    try {
+      const res = await apiPost<SignupResponse>({ ...ctx, apiBaseUrl } as DevContext, '/auth/signup', {
+        clinicName: clinicName.trim(),
+        adminName: adminName.trim(),
+        adminEmail: email,
+        password,
+      });
+      setBtnState('success');
+      setTimeout(() => onSuccess(
+        {
+          clinic: { id: res.clinicId, name: res.clinicName },
+          accessToken: res.accessToken,
+          userId: res.userId,
+          email,
+        },
+        { id: res.branchId, name: res.branchName },
+      ), 600);
+    } catch (err) {
+      setBtnState('error');
+      setShakeKey((k) => k + 1);
+      setTimeout(() => setBtnState('idle'), 600);
+      setErrors({ general: err instanceof Error ? err.message : String(err) });
+    }
+  }
+
+  return (
+    <div style={{ animation: 'slideUp 200ms var(--ease-out) both' }}>
+      <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 26, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.4px', marginBottom: 6 }}>
+        Create your clinic
+      </h1>
+      <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 24 }}>
+        Set up a new DigiRx workspace. You'll be the admin.
+      </p>
+
+      {errors.general && (
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 14px', borderRadius: 8, marginBottom: 16, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--danger-500)', fontSize: 13 }}>
+          <Icon name="alertTriangle" size={16} style={{ flexShrink: 0 }} />
+          <span>{errors.general}</span>
+        </div>
+      )}
+
+      <form key={shakeKey} onSubmit={handleSubmit} noValidate
+        style={shakeKey ? { animation: 'shakeX 240ms var(--ease-out)' } : undefined}>
+        <FormGroup label="Clinic name">
+          <InputWrap icon="building">
+            <input type="text" placeholder="Acme Clinic" value={clinicName} onChange={(e) => setClinicName(e.target.value)} autoComplete="organization"
+              style={inputStyle(!!errors.clinicName)} />
+          </InputWrap>
+          {errors.clinicName && <FieldError>{errors.clinicName}</FieldError>}
+        </FormGroup>
+
+        <FormGroup label="Your full name">
+          <InputWrap icon="mail">
+            <input type="text" placeholder="Dr. Jane Doe" value={adminName} onChange={(e) => setAdminName(e.target.value)} autoComplete="name"
+              style={inputStyle(!!errors.adminName)} />
+          </InputWrap>
+          {errors.adminName && <FieldError>{errors.adminName}</FieldError>}
+        </FormGroup>
+
+        <FormGroup label="Email address">
+          <InputWrap icon="mail">
+            <input type="email" placeholder="you@clinic.in" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email"
+              style={inputStyle(!!errors.email)} />
+          </InputWrap>
+          {errors.email && <FieldError>{errors.email}</FieldError>}
+        </FormGroup>
+
+        <FormGroup label="Password">
+          <InputWrap icon="lock">
+            <input type={showPw ? 'text' : 'password'} placeholder="At least 8 characters" value={password} onChange={(e) => setPassword(e.target.value)} autoComplete="new-password"
+              style={{ ...inputStyle(!!errors.password), paddingRight: 44 }} />
+            <button type="button" onClick={() => setShowPw((v) => !v)}
+              style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', padding: 6, borderRadius: 6, display: 'flex' }}
+              aria-label={showPw ? 'Hide password' : 'Show password'}>
+              <Icon name="eye" size={16} />
+            </button>
+          </InputWrap>
+          {errors.password && <FieldError>{errors.password}</FieldError>}
+        </FormGroup>
+
+        <button type="submit" disabled={btnState === 'loading' || btnState === 'success'}
+          style={{
+            width: '100%', height: 48,
+            background: btnState === 'success' ? 'var(--success-500)' : 'var(--brand-500)',
+            color: 'var(--brand-text)', border: 'none', borderRadius: 12, fontSize: 15, fontWeight: 600,
+            cursor: btnState === 'loading' || btnState === 'success' ? 'not-allowed' : 'pointer',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+            opacity: btnState === 'loading' ? 0.85 : 1, transition: 'background 200ms',
+            marginTop: 4,
+          }}>
+          {btnState === 'loading' && <Spinner size={18} />}
+          {btnState === 'idle' && 'Create account'}
+          {btnState === 'loading' && 'Creating…'}
+          {btnState === 'success' && 'Account created'}
+          {btnState === 'error' && 'Try again'}
+        </button>
+      </form>
+
+      <div style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
+        Already have an account?{' '}
+        <button type="button" onClick={onSwitchToSignin}
+          style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--brand-500)', padding: 0 }}>
+          Sign in
+        </button>
+      </div>
     </div>
   );
 }
