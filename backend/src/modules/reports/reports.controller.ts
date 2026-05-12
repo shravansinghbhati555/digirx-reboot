@@ -41,6 +41,30 @@ export class ReportsController {
     return data;
   }
 
+  @Get('bills-issued/timeseries')
+  @RequirePermissions(Permission.BillingRead)
+  async billsIssuedTimeseries(
+    @Req() req: AppRequest,
+    @Res({ passthrough: true }) res: Response,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('bucket') bucket?: string,
+    @Query('branchId') branchId?: string,
+    @Query('format') format?: string,
+  ) {
+    const data = await this.reports.billsIssuedTimeseries(
+      req.context!.clinicId,
+      from,
+      to,
+      bucket,
+      branchId,
+    );
+    if (format === 'csv') {
+      return sendCsv(res, `bills-issued-${data.bucket}-${from}-${to}.csv`, data.buckets);
+    }
+    return data;
+  }
+
   @Get('revenue/timeseries')
   @RequirePermissions(Permission.BillingRead)
   async revenueTimeseries(

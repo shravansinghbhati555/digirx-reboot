@@ -7,6 +7,11 @@ export type NotificationTemplateDocument =
 export enum NotificationChannel {
   Sms = 'SMS',
   WhatsApp = 'WHATSAPP',
+  // Email lives alongside SMS/WhatsApp so the existing template + log +
+  // queue infrastructure handles it uniformly. The worker provider for
+  // EMAIL is currently a console placeholder — see ConsoleNotificationProvider
+  // — pending real SMTP/SES integration.
+  Email = 'EMAIL',
 }
 
 @Schema({ timestamps: true })

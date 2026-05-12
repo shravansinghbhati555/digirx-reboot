@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AppointmentsController } from './appointments.controller';
 import { AppointmentsService } from './appointments.service';
@@ -28,9 +28,14 @@ import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
       { name: User.name, schema: UserSchema },
       { name: Patient.name, schema: PatientSchema },
     ]),
-    AvailabilityModule,
+    // forwardRef matches the reverse edge from AvailabilityModule —
+    // AppointmentsService → AvailabilityService and
+    // AvailabilityService → AppointmentsService (for the close-day
+    // cascade) both need to resolve.
+    forwardRef(() => AvailabilityModule),
   ],
   controllers: [AppointmentsController],
   providers: [AppointmentsService],
+  exports: [AppointmentsService],
 })
 export class AppointmentsModule {}

@@ -96,6 +96,14 @@ describe('AppointmentsService.create', () => {
     availability = {
       assertTimeSlotAllowed: jest.fn().mockResolvedValue(undefined),
     };
+    // NotificationsService is only exercised by the close-day cascade,
+    // which has its own dedicated tests / wiring. The existing specs
+    // don't go through that path, so a no-op mock keeps them green
+    // without exercising the notification queue.
+    const notifications = {
+      enqueueSend: jest.fn().mockResolvedValue(undefined),
+      isChannelEnabled: jest.fn().mockResolvedValue(true),
+    } as any;
     service = new AppointmentsService(
       apptModel,
       counterModel,
@@ -104,6 +112,7 @@ describe('AppointmentsService.create', () => {
       patientModel,
       connection,
       availability,
+      notifications,
     );
   });
 
@@ -215,18 +224,22 @@ describe('AppointmentsService.create', () => {
       expect(filter.endAt).toEqual({ $gt: new Date(dto.startAt) });
     });
 
-    it('uses ACTIVE statuses (Booked/CheckedIn/InProgress) when looking for overlaps', async () => {
+    it('uses ACTIVE statuses (Booked/CheckedIn/InProgress/Done) when looking for overlaps', async () => {
       apptModel.findOne.mockResolvedValue(null);
       apptModel.create.mockResolvedValue({ _id: new Types.ObjectId() });
 
       await service.create(clinicId, actorUserId, timeDto());
 
       const filter = apptModel.findOne.mock.calls[0][0];
+      // Done is intentionally included — a past visit's slot is still
+      // consumed and can't be retroactively double-booked. See the
+      // comment on ACTIVE_TIME_STATUSES in appointments.service.ts.
       expect(filter.status).toEqual({
         $in: [
           AppointmentStatus.Booked,
           AppointmentStatus.CheckedIn,
           AppointmentStatus.InProgress,
+          AppointmentStatus.Done,
         ],
       });
     });

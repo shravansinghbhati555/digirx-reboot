@@ -41,10 +41,11 @@ export class PatientsController {
     @Query('query') query?: string,
     @Query('limit') limitRaw?: string,
     @Query('before') before?: string,
+    @Query('branchId') branchId?: string,
   ) {
     const clinicId = req.context!.clinicId;
     const limit = Number(limitRaw ?? 25) || 25;
-    return await this.patients.search(clinicId, { query, limit, before });
+    return await this.patients.search(clinicId, { query, limit, before, branchId });
   }
 
   @Get(':id')

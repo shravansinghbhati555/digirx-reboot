@@ -10,7 +10,10 @@ import { Model, Types } from 'mongoose';
 import { Permission } from './permissions';
 import { Role, type RoleDocument } from './schemas/role.schema';
 
-const ADMIN_ROLE_NAME = 'Admin';
+// The reserved name for the all-permissions role. Previously "Admin";
+// renamed to "Super Admin" to disambiguate from the Manager role
+// (which is also administrative but scoped to day-to-day ops).
+const ADMIN_ROLE_NAME = 'Super Admin';
 const ALL_PERMISSIONS = new Set<string>(Object.values(Permission));
 
 function validatePermissionList(permissions: string[]): Permission[] {
@@ -48,8 +51,9 @@ export class RolesService {
     const trimmed = name.trim();
     if (!trimmed) throw new BadRequestException('name is required');
     if (trimmed === ADMIN_ROLE_NAME) {
-      // The seed script provisions Admin with the full enum; preventing
-      // creation here keeps the "Admin is immutable" invariant intact.
+      // Signup provisions Super Admin with the full enum; blocking
+      // creation here keeps the "Super Admin is immutable" invariant
+      // intact.
       throw new BadRequestException(
         `'${ADMIN_ROLE_NAME}' is reserved and cannot be created`,
       );
@@ -94,7 +98,9 @@ export class RolesService {
     if (!role) throw new NotFoundException('Role not found');
 
     if (role.name === ADMIN_ROLE_NAME) {
-      throw new ForbiddenException('Admin role permissions cannot be edited');
+      throw new ForbiddenException(
+        `${ADMIN_ROLE_NAME} role permissions cannot be edited`,
+      );
     }
 
     role.permissions = validatePermissionList(permissions);

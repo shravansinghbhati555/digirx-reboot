@@ -1,4 +1,4 @@
-import { IsArray, IsEmail, IsEnum, IsISO8601, IsMongoId, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsEmail, IsEnum, IsISO8601, IsMongoId, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
 import { PatientGender } from '../schemas/patient.schema';
 
 export class CreatePatientDto {
@@ -15,11 +15,17 @@ export class CreatePatientDto {
   @IsISO8601()
   dob?: string;
 
-  @IsOptional()
+  // Phone is required for new patients — it's the primary lookup key for
+  // duplicate detection, SMS reminders, and OTP-based flows. Edits (PATCH)
+  // still accept partial bodies via UpdatePatientDto, so a clinician can
+  // tweak notes without re-sending phones; the FE keeps it required at
+  // the input layer so a phone can't be cleared off an existing record.
   @IsArray()
+  @ArrayNotEmpty()
   @IsString({ each: true })
+  @MinLength(1, { each: true })
   @MaxLength(32, { each: true })
-  phones?: string[];
+  phones!: string[];
 
   @IsOptional()
   @IsArray()

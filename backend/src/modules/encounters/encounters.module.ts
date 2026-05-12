@@ -7,6 +7,7 @@ import {
   Appointment,
   AppointmentSchema,
 } from '../appointments/schemas/appointment.schema';
+import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 
 import { EncounterCounter, EncounterCounterSchema } from './schemas/encounter-counter.schema';
 
@@ -15,6 +16,7 @@ import { EncounterCounter, EncounterCounterSchema } from './schemas/encounter-co
     MongooseModule.forFeature([
       { name: Encounter.name, schema: EncounterSchema },
       { name: Appointment.name, schema: AppointmentSchema },
+      { name: Clinic.name, schema: ClinicSchema },
       { name: EncounterCounter.name, schema: EncounterCounterSchema },
     ]),
   ],

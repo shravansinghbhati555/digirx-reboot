@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   Header,
   Param,
@@ -126,6 +127,26 @@ export class AvailabilityController {
       doctorUserId: new Types.ObjectId(doctorUserId),
       date,
       type: 'CLOSED',
+    });
+  }
+
+  // Remove an override entirely — the day falls back to the doctor's
+  // weekly rules. Does NOT touch any appointments that were rescheduled
+  // off the closed day; once moved, they stay moved.
+  @Delete('doctors/:doctorUserId/overrides/:date')
+  @RequirePermissions(Permission.ClinicRead)
+  async deleteOverride(
+    @Req() req: AppRequest,
+    @Param('doctorUserId') doctorUserId: string,
+    @Param('date') date: string,
+    @Query('branchId') branchId: string,
+  ) {
+    return await this.availability.deleteOverride({
+      clinicId: req.context!.clinicId,
+      actorUserId: req.context!.actorUserId,
+      branchId: new Types.ObjectId(branchId),
+      doctorUserId: new Types.ObjectId(doctorUserId),
+      date,
     });
   }
 }

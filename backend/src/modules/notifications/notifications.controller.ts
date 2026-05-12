@@ -34,10 +34,28 @@ export class NotificationsController {
 
   @Get('logs')
   @RequirePermissions(Permission.NotificationRead)
-  async logs(@Req() req: AppRequest, @Query('limit') limitRaw?: string) {
+  async logs(
+    @Req() req: AppRequest,
+    @Query('limit') limitRaw?: string,
+    @Query('branchId') branchId?: string,
+  ) {
     const limit = Math.max(1, Math.min(200, Number(limitRaw ?? 50) || 50));
+    const filter: Record<string, unknown> = { clinicId: req.context!.clinicId };
+    // Branch scoping is permissive: when a branch is requested we
+    // include rows for that branch AND legacy rows that pre-date the
+    // branchId field. Otherwise switching to a freshly-created branch
+    // would show an empty log even though the clinic clearly has
+    // historical activity.
+    if (branchId && Types.ObjectId.isValid(branchId)) {
+      const branchObj = new Types.ObjectId(branchId);
+      filter.$or = [
+        { branchId: branchObj },
+        { branchId: { $exists: false } },
+        { branchId: null },
+      ];
+    }
     return await this.logModel
-      .find({ clinicId: req.context!.clinicId })
+      .find(filter)
       .sort({ createdAt: -1 })
       .limit(limit);
   }

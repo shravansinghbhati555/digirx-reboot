@@ -125,6 +125,19 @@ export class BillingController {
     });
   }
 
+  // Lookup-by-billNo. Declared BEFORE the `:id` route so the `/by-no`
+  // segment isn't swallowed as an ObjectId. `billNo` values like
+  // `MAIN/2026-27/000005` contain slashes, so we accept it as a query
+  // param rather than a path segment.
+  @Get('bills/by-no')
+  @RequirePermissions(Permission.BillingRead)
+  async getBillByNo(@Req() req: AppRequest, @Query('billNo') billNo?: string) {
+    return await this.billing.getBillByNo(
+      req.context!.clinicId,
+      billNo ?? '',
+    );
+  }
+
   @Get('bills/:id')
   @RequirePermissions(Permission.BillingRead)
   async getBill(@Req() req: AppRequest, @Param('id') id: string) {

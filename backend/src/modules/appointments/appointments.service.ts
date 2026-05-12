@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
@@ -21,6 +22,8 @@ import { Clinic } from '../tenancy/schemas/clinic.schema';
 import { User } from '../authz/schemas/user.schema';
 import { Patient } from '../patients/schemas/patient.schema';
 import { computeClinicDayRange } from '../../common/clinic-time';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationChannel } from '../notifications/schemas/notification-template.schema';
 
 // Statuses that hold a TIME slot and therefore block another appointment
 // from being created over the same window. CANCELLED and NO_SHOW are
@@ -115,6 +118,8 @@ function assertCanCheckIn(appt: Appointment, clinic: Clinic) {
 
 @Injectable()
 export class AppointmentsService {
+  private readonly logger = new Logger(AppointmentsService.name);
+
   constructor(
     @InjectModel(Appointment.name)
     private readonly apptModel: Model<Appointment>,
@@ -125,6 +130,7 @@ export class AppointmentsService {
     @InjectModel(Patient.name) private readonly patientModel: Model<Patient>,
     @InjectConnection() private readonly connection: Connection,
     private readonly availability: AvailabilityService,
+    private readonly notifications: NotificationsService,
   ) {}
 
   async create(
@@ -702,5 +708,324 @@ export class AppointmentsService {
       message: 'Time slot is already booked',
       alternatives,
     });
+  }
+
+  /**
+   * Cascade-reschedule any appointments that no longer fit the doctor's
+   * availability after rules or overrides changed.
+   *
+   * Called from AvailabilityService.upsertOverride after every override
+   * save — CLOSED, CUSTOM_WINDOWS, ADDITIONAL_WINDOWS. We don't gate on
+   * type because a CUSTOM_WINDOWS override can punch a hole in the day
+   * just as effectively as a full CLOSED, and ADDITIONAL_WINDOWS never
+   * invalidates an existing appointment so the inner check is a no-op.
+   *
+   * For each booked TIME appointment on `affectedDate`:
+   *  1) Re-run availability.assertTimeSlotAllowed against the updated
+   *     rules+overrides. If it passes, the appointment still fits — keep.
+   *  2) If it throws, the appointment now collides with the new state —
+   *     walk forward day-by-day, find the next free slot of the same
+   *     duration, move it there, and notify the patient (WhatsApp + email
+   *     when available).
+   *
+   * "Next free slot" means the earliest slot the doctor has on any
+   * subsequent day within a 30-day window — we don't insist on the same
+   * hour. DONE appointments are skipped (visit already happened).
+   * Notification failures never revert the move.
+   */
+  async rescheduleConflictsForDay(input: {
+    clinicId: Types.ObjectId;
+    branchId: Types.ObjectId;
+    doctorUserId: Types.ObjectId;
+    affectedDate: string; // YYYY-MM-DD in clinic timezone
+  }): Promise<{
+    rescheduled: Array<{
+      appointmentId: string;
+      patientName: string;
+      originalStartAt: string;
+      newStartAt: string;
+      newEndAt: string;
+    }>;
+    failed: Array<{ appointmentId: string; reason: string }>;
+  }> {
+    const clinic = await this.clinicModel.findById(input.clinicId);
+    if (!clinic) throw new NotFoundException('Clinic not found');
+    const tz = clinic.timezone || 'UTC';
+    const clinicName = clinic.name;
+
+    const { startUtc: dayStart, endUtc: dayEnd } = computeClinicDayRange(
+      input.affectedDate,
+      tz,
+    );
+
+    // Only move slots that are still actionable. DONE = visit already
+    // happened; CANCELLED / NO_SHOW already released their slot.
+    const MOVABLE_STATUSES: AppointmentStatus[] = [
+      AppointmentStatus.Booked,
+      AppointmentStatus.CheckedIn,
+      AppointmentStatus.InProgress,
+    ];
+
+    const candidates = await this.apptModel
+      .find({
+        clinicId: input.clinicId,
+        branchId: input.branchId,
+        doctorId: input.doctorUserId,
+        type: AppointmentType.Time,
+        status: { $in: MOVABLE_STATUSES },
+        startAt: { $gte: dayStart, $lte: dayEnd },
+      })
+      .sort({ startAt: 1 });
+
+    this.logger.log(
+      `[cascade] Evaluating ${candidates.length} appointment(s) on ${input.affectedDate} for doctor ${input.doctorUserId.toHexString()}`,
+    );
+
+    // First pass: split candidates into still-valid and now-invalid.
+    // assertTimeSlotAllowed reads the FRESH rules+override state, so by
+    // the time this runs the saved override is already in play.
+    const conflicting: typeof candidates = [];
+    for (const appt of candidates) {
+      if (!appt.startAt || !appt.endAt) {
+        // Defensive: schema requires both, but a malformed historical
+        // row shouldn't crash the cascade.
+        this.logger.warn(
+          `[cascade] Appointment ${appt._id.toHexString()} missing startAt/endAt — skipping`,
+        );
+        continue;
+      }
+      try {
+        await this.availability.assertTimeSlotAllowed({
+          clinicId: input.clinicId,
+          branchId: input.branchId,
+          doctorUserId: input.doctorUserId,
+          startAt: appt.startAt,
+          endAt: appt.endAt,
+        });
+        // Still valid — no move.
+      } catch {
+        conflicting.push(appt);
+      }
+    }
+
+    if (conflicting.length === 0) {
+      this.logger.log(
+        `[cascade] No conflicts on ${input.affectedDate} — nothing to reschedule`,
+      );
+      return { rescheduled: [], failed: [] };
+    }
+
+    this.logger.log(
+      `[cascade] ${conflicting.length} appointment(s) conflict — finding next free slots`,
+    );
+
+    // Pre-load the doctor + patients in one batch to avoid N+1 fetches.
+    const doctor = await this.userModel.findById(input.doctorUserId);
+    const doctorName = doctor?.name ?? 'your doctor';
+    const patientIds = Array.from(new Set(conflicting.map((a) => a.patientId.toString())));
+    const patients = patientIds.length
+      ? await this.patientModel.find({
+          _id: { $in: patientIds.map((id) => new Types.ObjectId(id)) },
+          clinicId: input.clinicId,
+        })
+      : [];
+    const patientById = new Map(patients.map((p) => [p._id.toString(), p]));
+
+    const rescheduled: Array<{
+      appointmentId: string;
+      patientName: string;
+      originalStartAt: string;
+      newStartAt: string;
+      newEndAt: string;
+    }> = [];
+    const failed: Array<{ appointmentId: string; reason: string }> = [];
+
+    // Sequential — each iteration commits to DB so the next finder sees
+    // the prior move's slot as occupied (prevents the batch from picking
+    // the same slot twice).
+    for (const appt of conflicting) {
+      if (!appt.startAt || !appt.endAt) {
+        failed.push({ appointmentId: appt._id.toHexString(), reason: 'Missing start/end' });
+        continue;
+      }
+      const durationMin = Math.max(
+        5,
+        Math.round((appt.endAt.getTime() - appt.startAt.getTime()) / 60000),
+      );
+      const slot = await this.findNextFreeSlot({
+        clinicId: input.clinicId,
+        branchId: input.branchId,
+        doctorUserId: input.doctorUserId,
+        fromDate: input.affectedDate,
+        durationMin,
+        tz,
+      });
+      if (!slot) {
+        this.logger.warn(
+          `[reschedule] No free slot within 30 days for appointment ${appt._id.toHexString()} (duration=${durationMin}min) — left in place`,
+        );
+        failed.push({
+          appointmentId: appt._id.toHexString(),
+          reason: 'No free slot found within the next 30 days',
+        });
+        continue;
+      }
+      const originalStartAt = appt.startAt.toISOString();
+      appt.startAt = slot.startAt;
+      appt.endAt = slot.endAt;
+      // Reset to BOOKED — a patient who was CheckedIn / InProgress on
+      // the closed day clearly hasn't arrived for the new appointment.
+      appt.status = AppointmentStatus.Booked;
+      await appt.save();
+
+      const patient = patientById.get(appt.patientId.toString());
+      const patientName = patient?.fullName ?? 'there';
+      this.logger.log(
+        `[reschedule] Moved appointment ${appt._id.toHexString()} (${patientName}) from ${originalStartAt} → ${slot.startAt.toISOString()}`,
+      );
+      rescheduled.push({
+        appointmentId: appt._id.toHexString(),
+        patientName,
+        originalStartAt,
+        newStartAt: slot.startAt.toISOString(),
+        newEndAt: slot.endAt.toISOString(),
+      });
+
+      // Fire-and-forget notifications. Each channel is wrapped so a
+      // failure on one (e.g. clinic has WhatsApp disabled) doesn't
+      // block the others.
+      await this.sendRescheduleNotifications({
+        clinicId: input.clinicId,
+        branchId: input.branchId,
+        patient,
+        patientName,
+        doctorName,
+        clinicName,
+        tz,
+        oldStartAtIso: originalStartAt,
+        newStartAt: slot.startAt,
+      }).catch((e) => {
+        this.logger.warn(
+          `[reschedule] Notification dispatch failed for appointment ${appt._id.toHexString()}: ${e instanceof Error ? e.message : e}`,
+        );
+      });
+    }
+
+    this.logger.log(
+      `[cascade] Done on ${input.affectedDate}: ${rescheduled.length} moved, ${failed.length} failed`,
+    );
+    return { rescheduled, failed };
+  }
+
+  private async findNextFreeSlot(input: {
+    clinicId: Types.ObjectId;
+    branchId: Types.ObjectId;
+    doctorUserId: Types.ObjectId;
+    fromDate: string; // closed day; we start searching the day AFTER
+    durationMin: number;
+    tz: string;
+  }): Promise<{ startAt: Date; endAt: Date } | null> {
+    const MAX_DAYS = 30;
+    let cursor = DateTime.fromISO(input.fromDate, { zone: input.tz }).plus({ days: 1 });
+    const now = Date.now();
+
+    for (let i = 0; i < MAX_DAYS; i++) {
+      const dateStr = cursor.toISODate();
+      if (!dateStr) {
+        cursor = cursor.plus({ days: 1 });
+        continue;
+      }
+      let daySlots;
+      try {
+        daySlots = await this.availability.getDaySlots({
+          clinicId: input.clinicId,
+          branchId: input.branchId,
+          doctorUserId: input.doctorUserId,
+          date: dateStr,
+          duration: input.durationMin,
+        });
+      } catch {
+        // A bad date / missing rule on a day shouldn't kill the search.
+        cursor = cursor.plus({ days: 1 });
+        continue;
+      }
+
+      for (const slot of daySlots.slots) {
+        const slotStart = new Date(slot.startAt);
+        const slotEnd = new Date(slot.endAt);
+        if (slotStart.getTime() <= now) continue; // never reschedule into the past
+
+        const overlap = await this.apptModel.findOne({
+          clinicId: input.clinicId,
+          branchId: input.branchId,
+          doctorId: input.doctorUserId,
+          type: AppointmentType.Time,
+          status: { $in: ACTIVE_TIME_STATUSES },
+          startAt: { $lt: slotEnd },
+          endAt: { $gt: slotStart },
+        });
+        if (!overlap) {
+          return { startAt: slotStart, endAt: slotEnd };
+        }
+      }
+      cursor = cursor.plus({ days: 1 });
+    }
+    return null;
+  }
+
+  private async sendRescheduleNotifications(input: {
+    clinicId: Types.ObjectId;
+    branchId: Types.ObjectId;
+    patient: Patient | undefined;
+    patientName: string;
+    doctorName: string;
+    clinicName: string;
+    tz: string;
+    oldStartAtIso: string;
+    newStartAt: Date;
+  }) {
+    const fmtDateTime = (d: Date) =>
+      DateTime.fromJSDate(d, { zone: 'utc' })
+        .setZone(input.tz)
+        .toFormat("d LLL yyyy 'at' h:mm a");
+
+    const oldLabel = fmtDateTime(new Date(input.oldStartAtIso));
+    const newLabel = fmtDateTime(input.newStartAt);
+
+    const body =
+      `Hi ${input.patientName}, due to an emergency, Dr. ${input.doctorName} is unavailable on the original date. ` +
+      `Your appointment with ${input.clinicName} has been rescheduled from ${oldLabel} to ${newLabel}. ` +
+      `Reply or call us to make changes.`;
+
+    const phone = input.patient?.phones?.[0]?.trim();
+    const email = input.patient?.emails?.[0]?.trim();
+
+    const tasks: Promise<unknown>[] = [];
+    if (phone) {
+      tasks.push(
+        this.notifications.enqueueSend({
+          clinicId: input.clinicId,
+          branchId: input.branchId,
+          channel: NotificationChannel.WhatsApp,
+          to: phone,
+          body,
+          templateKey: 'appointment_rescheduled',
+        }),
+      );
+    }
+    if (email) {
+      tasks.push(
+        this.notifications.enqueueSend({
+          clinicId: input.clinicId,
+          branchId: input.branchId,
+          channel: NotificationChannel.Email,
+          to: email,
+          body,
+          templateKey: 'appointment_rescheduled',
+        }),
+      );
+    }
+
+    await Promise.allSettled(tasks);
   }
 }

@@ -611,6 +611,22 @@ export class BillingService {
     return bill;
   }
 
+  /**
+   * Look up a bill by its human-readable `billNo` (e.g.
+   * "MAIN/2026-27/000005"). Used by the lookup box on the Billing
+   * screen so staff can paste the number off a printed receipt
+   * instead of digging out the Mongo ObjectId. `billNo` is unique
+   * per (clinicId, branchId) per the schema's partial index, so a
+   * clinic-scoped lookup is the right granularity here.
+   */
+  async getBillByNo(clinicId: Types.ObjectId, billNo: string) {
+    const trimmed = billNo.trim();
+    if (!trimmed) throw new NotFoundException('Bill not found');
+    const bill = await this.billModel.findOne({ clinicId, billNo: trimmed });
+    if (!bill) throw new NotFoundException('Bill not found');
+    return bill;
+  }
+
   async listBills(
     clinicId: Types.ObjectId,
     opts: {

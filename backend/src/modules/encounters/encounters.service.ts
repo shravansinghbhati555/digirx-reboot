@@ -7,6 +7,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { DateTime } from 'luxon';
 import { Model, Types } from 'mongoose';
 import { createHash } from 'crypto';
 import { CreateEncounterDto } from './dto/create-encounter.dto';
@@ -21,6 +22,7 @@ import {
   Appointment,
   AppointmentStatus,
 } from '../appointments/schemas/appointment.schema';
+import { Clinic } from '../tenancy/schemas/clinic.schema';
 
 @Injectable()
 export class EncountersService implements OnModuleInit {
@@ -33,6 +35,8 @@ export class EncountersService implements OnModuleInit {
     private readonly apptModel: Model<Appointment>,
     @InjectModel(EncounterCounter.name)
     private readonly counterModel: Model<EncounterCounter>,
+    @InjectModel(Clinic.name)
+    private readonly clinicModel: Model<Clinic>,
   ) {}
 
   async onModuleInit() {
@@ -195,10 +199,25 @@ export class EncountersService implements OnModuleInit {
 
   async findAll(
     clinicId: Types.ObjectId,
-    query: { branchId?: string; limit?: number; offset?: number },
+    query: { branchId?: string; date?: string; limit?: number; offset?: number },
   ) {
     const filter: any = { clinicId };
     if (query.branchId) filter.branchId = new Types.ObjectId(query.branchId);
+
+    // Date filter — `date=YYYY-MM-DD` is interpreted in the clinic's local
+    // timezone and applied to `visitedAt`. Lets the global header date
+    // narrow the list to "encounters seen on this day".
+    if (query.date && /^\d{4}-\d{2}-\d{2}$/.test(query.date)) {
+      const clinic = await this.clinicModel.findById(clinicId);
+      const tz = clinic?.timezone || 'UTC';
+      const day = DateTime.fromISO(query.date, { zone: tz });
+      if (day.isValid) {
+        filter.visitedAt = {
+          $gte: day.startOf('day').toUTC().toJSDate(),
+          $lte: day.endOf('day').toUTC().toJSDate(),
+        };
+      }
+    }
 
     const limit = Number(query.limit) || 20;
     const offset = Number(query.offset) || 0;

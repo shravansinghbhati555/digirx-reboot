@@ -5,7 +5,13 @@ import type { AvailabilityWindow } from './doctor-availability-rule.schema';
 export type OverrideType =
   | 'CLOSED'
   | 'CUSTOM_WINDOWS'
-  | 'ADDITIONAL_WINDOWS';
+  | 'ADDITIONAL_WINDOWS'
+  // Subtract the given windows from the doctor's normal day schedule.
+  // Used for emergency-style "doctor is unavailable from X to Y" — the
+  // CUSTOM_WINDOWS type replaces the full day, which is the opposite of
+  // what a "block these hours" operator wants. BLOCKED_WINDOWS is the
+  // intuitive inverse.
+  | 'BLOCKED_WINDOWS';
 
 @Schema({ timestamps: true })
 export class DoctorAvailabilityOverride {

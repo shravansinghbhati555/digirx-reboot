@@ -43,6 +43,9 @@ export class NotificationsService {
     if (channel === NotificationChannel.WhatsApp) {
       return settings.modules.notifications.whatsapp.enabled;
     }
+    // Email currently has no per-clinic toggle in settings; treat as
+    // always-enabled. When SMTP is wired up, add `email.enabled` to
+    // ClinicSettingsV1 and route through here.
     return true;
   }
 

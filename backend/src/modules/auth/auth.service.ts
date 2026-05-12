@@ -102,11 +102,113 @@ export class AuthService {
       active: true,
     });
 
-    const adminRole = await this.roleModel.create({
-      clinicId: clinic._id,
-      name: 'Admin',
-      permissions: Object.values(Permission),
-    });
+    // Seed the five default roles every clinic gets out of the box.
+    // Only `Super Admin` is assigned to the signing-up user — the rest
+    // are available to attach to other staff as the clinic onboards
+    // them. `Super Admin` is the immutable / reserved role; the others
+    // are normal roles whose permission lists can be tweaked later.
+    const defaultRoles: Array<{ name: string; permissions: Permission[] }> = [
+      // Full access — assigned to the signup user.
+      {
+        name: 'Super Admin',
+        permissions: Object.values(Permission),
+      },
+      // Operational admin: runs day-to-day ops but can't change
+      // clinic-level config or create / disable users.
+      {
+        name: 'Manager',
+        permissions: [
+          Permission.ClinicRead,
+          Permission.BranchRead,
+          Permission.UserRead,
+          Permission.PatientRead,
+          Permission.PatientWrite,
+          Permission.AppointmentRead,
+          Permission.AppointmentWrite,
+          Permission.BillingRead,
+          Permission.BillingWrite,
+          Permission.DocumentRead,
+          Permission.DocumentWrite,
+          Permission.NotificationRead,
+          Permission.NotificationWrite,
+          Permission.InventoryRead,
+          Permission.InventoryWrite,
+          Permission.AuditRead,
+          Permission.AccessLogRead,
+          Permission.ReportsRead,
+          Permission.ReportsWrite,
+        ],
+      },
+      // Patient-facing reception: registers patients, books appointments,
+      // takes payments. Read-only on documents (no upload) and no
+      // inventory access.
+      {
+        name: 'Front Desk',
+        permissions: [
+          Permission.ClinicRead,
+          Permission.BranchRead,
+          Permission.PatientRead,
+          Permission.PatientWrite,
+          Permission.AppointmentRead,
+          Permission.AppointmentWrite,
+          Permission.BillingRead,
+          Permission.BillingWrite,
+          Permission.DocumentRead,
+          Permission.NotificationRead,
+        ],
+      },
+      // Clinicians: see and edit their patients, manage their own
+      // appointments, upload encounter / prescription documents.
+      // No billing write (front desk handles money) and no inventory.
+      {
+        name: 'Doctor',
+        permissions: [
+          Permission.ClinicRead,
+          Permission.BranchRead,
+          Permission.PatientRead,
+          Permission.PatientWrite,
+          Permission.AppointmentRead,
+          Permission.AppointmentWrite,
+          Permission.BillingRead,
+          Permission.DocumentRead,
+          Permission.DocumentWrite,
+          Permission.NotificationRead,
+          Permission.ReportsRead,
+        ],
+      },
+      // Pharmacy: manages stock, dispenses medicines, raises pharmacy
+      // bills. Reads prescription documents but doesn't edit patient
+      // records and doesn't manage appointments.
+      {
+        name: 'Pharmacist',
+        permissions: [
+          Permission.ClinicRead,
+          Permission.BranchRead,
+          Permission.PatientRead,
+          Permission.BillingRead,
+          Permission.BillingWrite,
+          Permission.DocumentRead,
+          Permission.InventoryRead,
+          Permission.InventoryWrite,
+          Permission.NotificationRead,
+          Permission.ReportsRead,
+        ],
+      },
+    ];
+
+    const createdRoles = await this.roleModel.insertMany(
+      defaultRoles.map((r) => ({
+        clinicId: clinic._id,
+        name: r.name,
+        permissions: r.permissions,
+      })),
+    );
+    const adminRole = createdRoles.find((r) => r.name === 'Super Admin');
+    if (!adminRole) {
+      // Defensive: insertMany should have created the row; bail rather
+      // than silently provisioning a user with no role.
+      throw new Error('Failed to provision Super Admin role for new clinic');
+    }
 
     const passwordHash = await bcrypt.hash(input.password, 10);
     let user;
@@ -265,6 +367,112 @@ export class AuthService {
         expiresAt: updated.expiresAt,
       },
     };
+  }
+
+  /**
+   * Issue a one-time reset token for an admin account. Behaves identically
+   * (200 ok, no error) regardless of whether the email exists, the account
+   * is disabled, or the user lacks the Admin role — this is the only way
+   * to avoid leaking which emails are registered admins via timing or
+   * status-code differences.
+   *
+   * Admin gating means doctors / front-desk / pharmacist users can't
+   * initiate a password reset on themselves — they have to ask an admin
+   * (which goes through the existing POST /users/:id/password-reset).
+   * Admins are detected by a role named "Super Admin" (case-insensitive),
+   * matching what /auth/signup seeds. Older clinics seeded with the
+   * legacy "Admin" name are also recognised so existing data keeps
+   * working.
+   *
+   * The raw token is delivered out-of-band: in dev it's logged to the
+   * server console; in prod this is the integration point for email
+   * (TODO). Only the bcrypt hash is stored on the user document.
+   */
+  async forgotPassword(input: { clinicId: string; email: string }) {
+    if (!Types.ObjectId.isValid(input.clinicId)) return { ok: true };
+    const clinicId = new Types.ObjectId(input.clinicId);
+    const email = input.email.trim().toLowerCase();
+
+    const user = await this.userModel.findOne({ clinicId, email });
+    if (!user) return { ok: true };
+    if (user.status !== UserStatus.Active) return { ok: true };
+    if (!user.roleIds?.length) return { ok: true };
+
+    const roles = await this.roleModel.find({
+      _id: { $in: user.roleIds },
+      clinicId,
+    });
+    const isAdmin = roles.some((r) => {
+      const n = (r.name ?? '').toLowerCase();
+      return n === 'super admin' || n === 'admin';
+    });
+    if (!isAdmin) return { ok: true };
+
+    const rawToken = crypto.randomBytes(32).toString('base64url');
+    const tokenHash = await bcrypt.hash(rawToken, 10);
+    user.passwordResetTokenHash = tokenHash;
+    user.passwordResetExpiresAt = new Date(Date.now() + 30 * 60_000);
+    await user.save();
+
+    // TODO: deliver via email (Nodemailer / SES / SendGrid). For dev we
+    // log the raw token so a developer can copy it into the reset form.
+    // Never log this in production — gate on NODE_ENV before adding the
+    // real email send so the log line goes away.
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[forgot-password] Reset token for ${email}: ${rawToken} (expires in 30 minutes)`,
+    );
+
+    return { ok: true };
+  }
+
+  /**
+   * Consume a reset token and set a new password. Token is single-use:
+   * verified against the stored bcrypt hash, then both token fields are
+   * cleared atomically with the new password hash. Every refresh session
+   * for the user is revoked so any device that was still holding a token
+   * is logged out.
+   */
+  async resetPasswordWithToken(input: {
+    clinicId: string;
+    email: string;
+    token: string;
+    newPassword: string;
+  }) {
+    if (!Types.ObjectId.isValid(input.clinicId)) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+    const clinicId = new Types.ObjectId(input.clinicId);
+    const email = input.email.trim().toLowerCase();
+
+    const user = await this.userModel
+      .findOne({ clinicId, email })
+      .select('+passwordResetTokenHash +passwordResetExpiresAt');
+
+    const invalid = new UnauthorizedException('Invalid or expired token');
+    if (!user) throw invalid;
+    if (user.status !== UserStatus.Active) throw invalid;
+    if (!user.passwordResetTokenHash || !user.passwordResetExpiresAt) {
+      throw invalid;
+    }
+    if (user.passwordResetExpiresAt.getTime() <= Date.now()) throw invalid;
+
+    const ok = await bcrypt.compare(input.token, user.passwordResetTokenHash);
+    if (!ok) throw invalid;
+
+    user.passwordHash = await bcrypt.hash(input.newPassword, 10);
+    user.passwordResetTokenHash = undefined;
+    user.passwordResetExpiresAt = undefined;
+    await user.save();
+
+    // Logs out every device — the password just changed, the user has to
+    // sign in again everywhere with the new credentials.
+    await this.sessionModel.updateMany(
+      { userId: user._id, revokedAt: null },
+      { $set: { revokedAt: new Date() } },
+    );
+
+    return { ok: true };
   }
 
   async logout(input: { sessionId: string }) {

@@ -276,6 +276,75 @@ export class ReportsService {
   }
 
   /**
+   * Daily (or weekly/monthly) count + value of issued bills, bucketed in the
+   * clinic's timezone. Mirrors `revenueTimeseries` but groups by `issuedAt`
+   * on the Bill collection — feeds the "Bills issued" KPI detail chart on
+   * the dashboard. Status filter includes Paid because issued → paid is the
+   * normal lifecycle and we want the issuance-day count, not the still-open
+   * count.
+   */
+  async billsIssuedTimeseries(
+    clinicId: Types.ObjectId,
+    from?: string,
+    to?: string,
+    bucketRaw?: string,
+    branchId?: string,
+  ) {
+    const bucket = normaliseBucket(bucketRaw);
+    const { start, end, tz } = await this.resolveRange(clinicId, from, to);
+    const branchFilter = branchId
+      ? { branchId: new Types.ObjectId(branchId) }
+      : {};
+
+    const issued = await this.billModel.aggregate<{
+      _id: Date;
+      count: number;
+      totalBilled: number;
+    }>([
+      {
+        $match: {
+          clinicId,
+          ...branchFilter,
+          status: { $in: [BillStatus.Issued, BillStatus.Paid] },
+          issuedAt: { $gte: start, $lte: end },
+        },
+      },
+      {
+        $group: {
+          _id: {
+            $dateTrunc: {
+              date: '$issuedAt',
+              unit: bucket,
+              timezone: tz,
+              startOfWeek: 'monday',
+            },
+          },
+          count: { $sum: 1 },
+          totalBilled: { $sum: '$total' },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+
+    const fmt = (d: Date) =>
+      DateTime.fromJSDate(d, { zone: 'utc' }).setZone(tz).toISODate()!;
+    const buckets = issued.map((r) => ({
+      bucket: fmt(r._id),
+      count: r.count,
+      totalBilled: r.totalBilled,
+    }));
+
+    return {
+      from,
+      to,
+      timezone: tz,
+      bucket,
+      branchId: branchId ?? null,
+      buckets,
+    };
+  }
+
+  /**
    * Cash-flow time series for charts. Buckets by day, week (ISO Mon–Sun), or
    * month using Mongo's `$dateTrunc` with the clinic timezone so the bucket
    * key is the local-date the operator expects to see in the chart.

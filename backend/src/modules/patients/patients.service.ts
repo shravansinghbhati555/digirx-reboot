@@ -313,12 +313,32 @@ export class PatientsService {
 
   async search(
     clinicId: Types.ObjectId,
-    input: { query?: string; limit?: number; before?: string },
+    input: { query?: string; limit?: number; before?: string; branchId?: string },
   ) {
     const limit = Math.max(1, Math.min(100, input.limit ?? 25));
     const q = (input.query ?? '').trim();
+
+    // Branch scoping is permissive: include patients whose
+    // `primaryBranchId` matches the requested branch AND patients with
+    // no primary branch set (legacy / clinic-wide patients). Without
+    // the missing-field branch, switching branches would hide every
+    // patient registered before primaryBranchId rolled out.
+    const branchClause = (() => {
+      if (!input.branchId) return null;
+      if (!Types.ObjectId.isValid(input.branchId)) return null;
+      const branchObj = new Types.ObjectId(input.branchId);
+      return {
+        $or: [
+          { primaryBranchId: branchObj },
+          { primaryBranchId: { $exists: false } },
+          { primaryBranchId: null },
+        ],
+      };
+    })();
+
     if (!q) {
       const filter: Record<string, unknown> = { clinicId };
+      if (branchClause) Object.assign(filter, branchClause);
       if (input.before) {
         const d = new Date(input.before);
         if (!isNaN(d.getTime()))
@@ -337,8 +357,10 @@ export class PatientsService {
     // Three-tier ranking: exact (regex on normalizedName) > phonetic > nothing.
     // We over-fetch a small window per tier and de-duplicate by _id so the
     // highest-quality match for each patient wins.
-    const exactFilter: Record<string, unknown> = {
-      clinicId,
+    //
+    // Mongo can have at most one top-level $or, so when a branch clause
+    // is in play we wrap both filters inside $and: [matchClause, branchClause].
+    const matchClause = {
       $or: [
         { normalizedName: { $regex: normalized, $options: 'i' } },
         ...(phoneLike ? [{ normalizedPhones: phoneLike }] : []),
@@ -348,6 +370,9 @@ export class PatientsService {
           : []),
       ],
     };
+    const exactFilter: Record<string, unknown> = branchClause
+      ? { clinicId, $and: [matchClause, branchClause] }
+      : { clinicId, ...matchClause };
     if (input.before) {
       const d = new Date(input.before);
       if (!isNaN(d.getTime())) {
@@ -366,11 +391,13 @@ export class PatientsService {
     const phoneticTokens = phonetic.split(' ').filter(Boolean);
     if (!phoneticTokens.length) return exact;
 
-    const phoneticFilter: Record<string, unknown> = {
-      clinicId,
+    const phoneticBase: Record<string, unknown> = {
       _id: { $nin: Array.from(seen).map((s) => new Types.ObjectId(s)) },
       namePhonetic: { $regex: phoneticTokens.join('|') },
     };
+    const phoneticFilter: Record<string, unknown> = branchClause
+      ? { clinicId, $and: [phoneticBase, branchClause] }
+      : { clinicId, ...phoneticBase };
     const fuzzy = await this.patientModel
       .find(phoneticFilter)
       .sort({ createdAt: -1 })

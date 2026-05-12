@@ -24,7 +24,7 @@ class AvailabilityWindowDto {
 }
 
 export class UpsertDoctorOverrideDto {
-  @IsIn(['CLOSED', 'CUSTOM_WINDOWS', 'ADDITIONAL_WINDOWS'])
+  @IsIn(['CLOSED', 'CUSTOM_WINDOWS', 'ADDITIONAL_WINDOWS', 'BLOCKED_WINDOWS'])
   type!: OverrideType;
 
   @IsOptional()

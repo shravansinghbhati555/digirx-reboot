@@ -13,6 +13,8 @@ import { Public } from '../../common/public.decorator';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { AuthService } from './auth.service';
+import { ConfirmResetPasswordDto } from './dto/confirm-reset-password.dto';
+import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
 import { SignupDto } from './dto/signup.dto';
 
@@ -67,6 +69,26 @@ export class AuthController {
       clinicName: out.clinicName,
       branchName: out.branchName,
     };
+  }
+
+  // Admin-only forgot-password flow. Always returns { ok: true } — see
+  // auth.service.ts for the reasoning. 5/min/IP is enough for a real user
+  // and cuts off enumeration-by-rate-budget attacks.
+  @Post('forgot-password')
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async forgotPassword(@Body() body: ForgotPasswordDto) {
+    return await this.auth.forgotPassword(body);
+  }
+
+  // Consumes the token from /auth/forgot-password. Returns 401 on
+  // invalid/expired token; same uniform error so an attacker can't
+  // distinguish "wrong token" from "expired".
+  @Post('reset-password')
+  @Public()
+  @Throttle({ default: { limit: 5, ttl: 60_000 } })
+  async resetPasswordWithToken(@Body() body: ConfirmResetPasswordDto) {
+    return await this.auth.resetPasswordWithToken(body);
   }
 
   @Post('refresh')

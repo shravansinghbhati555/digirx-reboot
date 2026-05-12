@@ -1,7 +1,10 @@
 import {
   BadRequestException,
   ForbiddenException,
+  forwardRef,
+  Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -9,6 +12,7 @@ import { DateTime } from 'luxon';
 import { Model, Types } from 'mongoose';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
 import { mergeClinicSettings } from '../tenancy/clinic-settings.types';
+import { AppointmentsService } from '../appointments/appointments.service';
 import { AuthzService } from '../authz/authz.service';
 import { Permission } from '../authz/permissions';
 import { DoctorAvailabilityRule } from './schemas/doctor-availability-rule.schema';
@@ -37,6 +41,8 @@ function normalizeWindows(
 
 @Injectable()
 export class AvailabilityService {
+  private readonly logger = new Logger(AvailabilityService.name);
+
   constructor(
     @InjectModel(DoctorAvailabilityRule.name)
     private readonly ruleModel: Model<DoctorAvailabilityRule>,
@@ -44,6 +50,11 @@ export class AvailabilityService {
     private readonly overrideModel: Model<DoctorAvailabilityOverride>,
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
     private readonly authz: AuthzService,
+    // forwardRef matches the circular dependency declared at the module
+    // level. AppointmentsService is injected at runtime, not at class
+    // construction, so Nest resolves both halves of the cycle cleanly.
+    @Inject(forwardRef(() => AppointmentsService))
+    private readonly appointments: AppointmentsService,
   ) {}
 
   /**
@@ -180,7 +191,9 @@ export class AvailabilityService {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date))
       throw new BadRequestException('date must be YYYY-MM-DD');
     const windows =
-      input.type === 'CUSTOM_WINDOWS' || input.type === 'ADDITIONAL_WINDOWS'
+      input.type === 'CUSTOM_WINDOWS' ||
+      input.type === 'ADDITIONAL_WINDOWS' ||
+      input.type === 'BLOCKED_WINDOWS'
         ? normalizeWindows(input.windows ?? [])
         : [];
 
@@ -194,7 +207,77 @@ export class AvailabilityService {
       { $set: { type: input.type, windows, note: input.note } },
       { upsert: true, new: true },
     );
-    return doc;
+
+    // Emergency-unavailable cascade. After ANY override save we ask the
+    // appointments service to re-validate each booked TIME appointment
+    // on `date` against the fresh rules + override state and move any
+    // that no longer fit (closed day, narrowed windows, etc.) to the
+    // doctor's next free slot — with WhatsApp + email notifications.
+    // Previously gated on type === 'CLOSED' only; that missed
+    // CUSTOM_WINDOWS overrides that punch a hole in the day and left
+    // mid-day "emergency" overrides cascading nothing.
+    //
+    // Wrapped in try/catch so a reschedule failure can never roll back
+    // the override itself — the doctor still needs to be marked
+    // unavailable even if a single notification fails. The result is
+    // returned to the caller as `_rescheduled` so the FE can render a
+    // confirmation summary.
+    let cascade:
+      | Awaited<ReturnType<AppointmentsService['rescheduleConflictsForDay']>>
+      | undefined;
+    this.logger.log(
+      `[override] Saved ${input.type} for doctor=${input.doctorUserId.toHexString()} date=${input.date} — running cascade`,
+    );
+    try {
+      cascade = await this.appointments.rescheduleConflictsForDay({
+        clinicId: input.clinicId,
+        branchId: input.branchId,
+        doctorUserId: input.doctorUserId,
+        affectedDate: input.date,
+      });
+    } catch (e) {
+      this.logger.warn(
+        `[override] Cascade failed for ${input.date}: ${e instanceof Error ? e.message : e}`,
+      );
+    }
+
+    return Object.assign(doc.toObject(), cascade ? { _rescheduled: cascade } : {});
+  }
+
+  /**
+   * Remove an override for a single date. The day reverts to the doctor's
+   * weekly rules. Returns `{ ok: true, deleted: true | false }` so the FE
+   * knows whether the row existed; missing-row delete is intentionally
+   * non-fatal so a stale list refresh doesn't 404.
+   *
+   * Important: previously-cascaded reschedules are not undone. A CLOSED
+   * override might have moved a patient to next Tuesday; removing the
+   * override here doesn't yank them back to the original date. The
+   * notification already went out — reversing it silently would surprise
+   * the patient.
+   */
+  async deleteOverride(input: {
+    clinicId: Types.ObjectId;
+    actorUserId?: Types.ObjectId;
+    branchId: Types.ObjectId;
+    doctorUserId: Types.ObjectId;
+    date: string;
+  }) {
+    await this.assertCanWriteForDoctor({
+      clinicId: input.clinicId,
+      actorUserId: input.actorUserId,
+      doctorUserId: input.doctorUserId,
+    });
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date)) {
+      throw new BadRequestException('date must be YYYY-MM-DD');
+    }
+    const res = await this.overrideModel.deleteOne({
+      clinicId: input.clinicId,
+      branchId: input.branchId,
+      doctorUserId: input.doctorUserId,
+      date: input.date,
+    });
+    return { ok: true, deleted: res.deletedCount > 0 };
   }
 
   async getDaySlots(input: {
@@ -246,7 +329,16 @@ export class AvailabilityService {
 
     const slotMinutes = rule?.slotMinutes ?? defaultSlotMinutes;
     const baseWindows = rule?.windows ?? [];
+    // `windows` drives slot-grid generation. `blockedWindows` filters
+    // individual slots out *after* the grid is generated — this preserves
+    // the doctor's normal :00 / :15 / :30 / :45 alignment when a small
+    // range is blocked. (If we subtracted the block from the window edge
+    // first, slot iteration would restart from the post-block edge and
+    // every subsequent slot would drift by the block size — see the bug
+    // report screenshots: a 5-min block at 15:59 shifted 16:15 onward to
+    // 16:04 / 16:19 / 16:34, hiding every aligned slot.)
     let windows: { startMinutes: number; endMinutes: number }[];
+    let blockedWindows: { startMinutes: number; endMinutes: number }[] = [];
     if (override?.type === 'CUSTOM_WINDOWS') {
       windows = override.windows ?? [];
     } else if (override?.type === 'ADDITIONAL_WINDOWS') {
@@ -257,23 +349,50 @@ export class AvailabilityService {
       windows = [...baseWindows, ...(override.windows ?? [])].slice().sort(
         (a, b) => a.startMinutes - b.startMinutes,
       );
+    } else if (override?.type === 'BLOCKED_WINDOWS') {
+      // Use the base windows for slot generation (keeps the slot grid
+      // aligned to the doctor's normal schedule), and remember the
+      // blocked ranges so we drop overlapping slots below.
+      windows = baseWindows;
+      blockedWindows = override.windows ?? [];
     } else {
       windows = baseWindows;
     }
 
     const slotDuration = input.duration ?? slotMinutes;
     const slots: { startAt: string; endAt: string }[] = [];
-    const windowsUtc: { startAt: string; endAt: string }[] = [];
-    for (const w of windows) {
-      windowsUtc.push({
+    // windowsUtc is what assertTimeSlotAllowed uses for its
+    // "appointment fits inside a window" check. For BLOCKED_WINDOWS we
+    // return the subtracted windows here so a free-form duration that
+    // spans the block fails the window check; the slot-existence check
+    // already catches the aligned case.
+    const reportedWindows =
+      override?.type === 'BLOCKED_WINDOWS'
+        ? subtractWindows(baseWindows, blockedWindows)
+        : windows;
+    const windowsUtc: { startAt: string; endAt: string }[] = reportedWindows.map(
+      (w) => ({
         startAt: day.startOf('day').plus({ minutes: w.startMinutes }).toUTC().toISO()!,
         endAt: day.startOf('day').plus({ minutes: w.endMinutes }).toUTC().toISO()!,
-      });
+      }),
+    );
+    for (const w of windows) {
       for (
         let m = w.startMinutes;
         m + slotDuration <= w.endMinutes;
         m += slotMinutes
       ) {
+        // Drop any slot that intersects a blocked range. Back-to-back
+        // edges (slot ends exactly when block starts, or starts exactly
+        // when block ends) are treated as non-overlapping so the
+        // adjacent slots survive.
+        if (blockedWindows.length) {
+          const slotEnd = m + slotDuration;
+          const overlapsBlock = blockedWindows.some(
+            (b) => m < b.endMinutes && slotEnd > b.startMinutes,
+          );
+          if (overlapsBlock) continue;
+        }
         const start = day.startOf('day').plus({ minutes: m });
         const end = start.plus({ minutes: slotDuration });
         slots.push({
@@ -344,4 +463,45 @@ export class AvailabilityService {
       );
     }
   }
+}
+
+/**
+ * Window-subtraction for BLOCKED_WINDOWS overrides. Treats each base
+ * window as a closed interval and removes any overlap with a blocked
+ * range. A blocked range that straddles two base windows correctly
+ * trims both; one that's entirely outside has no effect. The output is
+ * sorted by start time and contains no zero-or-negative-length pieces.
+ *
+ * Example:
+ *   base    = [09:00–18:00]      (540–1080)
+ *   blocked = [15:15–15:30]      (915–930)
+ *   result  = [09:00–15:15, 15:30–18:00]
+ *
+ * Used by getDaySlots when an override has type=BLOCKED_WINDOWS.
+ */
+function subtractWindows(
+  base: { startMinutes: number; endMinutes: number }[],
+  blocked: { startMinutes: number; endMinutes: number }[],
+): { startMinutes: number; endMinutes: number }[] {
+  let result = [...base];
+  for (const k of blocked) {
+    const next: { startMinutes: number; endMinutes: number }[] = [];
+    for (const b of result) {
+      // No overlap — keep the base window as-is.
+      if (k.endMinutes <= b.startMinutes || k.startMinutes >= b.endMinutes) {
+        next.push(b);
+        continue;
+      }
+      // Left segment survives if the block starts after the window begins.
+      if (b.startMinutes < k.startMinutes) {
+        next.push({ startMinutes: b.startMinutes, endMinutes: k.startMinutes });
+      }
+      // Right segment survives if the block ends before the window does.
+      if (k.endMinutes < b.endMinutes) {
+        next.push({ startMinutes: k.endMinutes, endMinutes: b.endMinutes });
+      }
+    }
+    result = next;
+  }
+  return result.sort((a, b) => a.startMinutes - b.startMinutes);
 }

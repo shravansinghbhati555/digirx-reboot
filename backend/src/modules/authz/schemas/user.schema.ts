@@ -34,6 +34,17 @@ export class User {
   @Prop({ select: false })
   passwordHash?: string;
 
+  // Forgot-password flow. The raw token is delivered out-of-band (email in
+  // prod, console log in dev) and only its bcrypt hash lives here, so a
+  // database leak can't be replayed to take over accounts. Both fields are
+  // cleared on a successful reset. `select: false` keeps them out of the
+  // default projection so they never accidentally ride along on a /me payload.
+  @Prop({ type: String, select: false })
+  passwordResetTokenHash?: string;
+
+  @Prop({ type: Date, select: false })
+  passwordResetExpiresAt?: Date;
+
   @Prop({ type: [Types.ObjectId], default: [], index: true })
   roleIds!: Types.ObjectId[];
 

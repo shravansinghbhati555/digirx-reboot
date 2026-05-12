@@ -1,7 +1,8 @@
-import { Module } from '@nestjs/common';
+import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 import { AuthzModule } from '../authz/authz.module';
+import { AppointmentsModule } from '../appointments/appointments.module';
 import { AvailabilityController } from './availability.controller';
 import { AvailabilityService } from './availability.service';
 import {
@@ -27,6 +28,12 @@ import {
       { name: Clinic.name, schema: ClinicSchema },
     ]),
     AuthzModule,
+    // AppointmentsModule already imports AvailabilityModule (to call
+    // assertTimeSlotAllowed). We need the reverse edge so a CLOSED
+    // override can fan out to AppointmentsService.rescheduleForClosedDay.
+    // forwardRef breaks the resulting cycle — Nest resolves both modules
+    // after the first pass.
+    forwardRef(() => AppointmentsModule),
   ],
   controllers: [AvailabilityController],
   providers: [AvailabilityService],

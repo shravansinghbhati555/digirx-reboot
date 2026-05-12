@@ -120,6 +120,7 @@ export class AppModule implements NestModule {
     consumer
       .apply(ClinicContextMiddleware)
       .exclude(
+        '/',
         'health',
         'metrics',
         { path: 'auth/*path', method: RequestMethod.ALL },

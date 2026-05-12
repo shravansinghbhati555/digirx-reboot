@@ -42,11 +42,18 @@ describe('AvailabilityService', () => {
       }),
     };
     authz = { getActor: jest.fn() };
+    // AppointmentsService is only used by the override cascade; these
+    // specs don't exercise that path so a no-op mock satisfies the
+    // constructor without pulling the real service into the test graph.
+    const appointments = {
+      rescheduleConflictsForDay: jest.fn().mockResolvedValue({ rescheduled: [], failed: [] }),
+    } as any;
     service = new AvailabilityService(
       ruleModel,
       overrideModel,
       clinicModel,
       authz as any,
+      appointments,
     );
   });
 

@@ -33,4 +33,12 @@ export enum Permission {
   // for clinics that haven't opted in.
   InventoryRead = 'inventory:read',
   InventoryWrite = 'inventory:write',
+
+  // Reports — added so a Super Admin can grant the Reports tab as its
+  // own toggle in the Roles matrix. The existing /reports/* API routes
+  // are still gated to BillingRead / AppointmentRead (unchanged), and
+  // those permissions still open the Reports screen too — Reports
+  // permissions are additive, not a replacement.
+  ReportsRead = 'reports:read',
+  ReportsWrite = 'reports:write',
 }
