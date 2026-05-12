@@ -121,7 +121,6 @@ export class AppModule implements NestModule {
       .apply(ClinicContextMiddleware)
       .exclude(
         { path: '/', method: RequestMethod.GET },
-        { path: '', method: RequestMethod.GET },
         'health',
         'metrics',
         { path: 'auth/*path', method: RequestMethod.ALL },
@@ -130,6 +129,19 @@ export class AppModule implements NestModule {
         { path: 'clinic/:id/branches', method: RequestMethod.GET },
         { path: 'share/*path', method: RequestMethod.ALL },
       )
-      .forRoutes('*');
+      // In Nest 11 / Express 5, `forRoutes('*')` walks the registered
+      // controllers and applies the middleware to each — but
+      // **controllers declared with an empty `@Controller()` prefix
+      // are silently skipped**. MeController + TenancyController are
+      // the only such controllers in this codebase, and both broke
+      // (`/me`, `/clinics/:id/settings`, …) with a 403
+      // "Missing authentication context" because the middleware never
+      // populated `req.context` for them.
+      //
+      // The reliable cross-version fix is to register the middleware
+      // for every method on every path with a concrete RouteInfo: an
+      // empty path + ALL methods compiles to a regex that matches
+      // every URL irrespective of controller prefix.
+      .forRoutes({ path: '*', method: RequestMethod.ALL });
   }
 }
