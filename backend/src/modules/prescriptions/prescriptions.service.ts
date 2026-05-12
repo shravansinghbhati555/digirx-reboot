@@ -15,6 +15,7 @@ import { Patient } from '../patients/schemas/patient.schema';
 import { User } from '../authz/schemas/user.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
+import { PrescriptionNumberingService } from './prescription-numbering.service';
 import {
   Prescription,
   type PrescriptionDocument,
@@ -44,6 +45,7 @@ export class PrescriptionsService {
     private readonly encounters: EncountersService,
     private readonly medicines: MedicinesService,
     private readonly notifications: NotificationsService,
+    private readonly numbering: PrescriptionNumberingService,
   ) { }
 
   /**
@@ -78,9 +80,19 @@ export class PrescriptionsService {
 
     if (existing) {
       existing.items = items as any;
+      // Back-fill prescriptionNo for legacy rows that pre-date the
+      // numbering work — once stamped, never re-mint.
+      if (!existing.prescriptionNo) {
+        existing.prescriptionNo = await this.numbering.mint(clinicId);
+      }
       return existing.save();
     }
 
+    // Mint the readable number BEFORE create so it lands atomically with
+    // the document. If the create fails we'll have burned a sequence
+    // value — that's intentional, gaps are preferable to duplicates
+    // (auditors flag duplicates, not gaps).
+    const prescriptionNo = await this.numbering.mint(clinicId);
     return await this.rxModel.create({
       clinicId,
       branchId: enc.branchId,
@@ -88,7 +100,27 @@ export class PrescriptionsService {
       patientId: enc.patientId,
       encounterId: enc._id,
       items,
+      prescriptionNo,
     });
+  }
+
+  /**
+   * Resolve a prescription by either its ObjectId hex or its human-readable
+   * prescriptionNo (e.g. "RX-000123"). Used by the medicine-bill drafter so
+   * the pharmacist can type whatever they read off the printed slip.
+   */
+  async findByIdOrNo(
+    clinicId: Types.ObjectId,
+    idOrNo: string,
+  ): Promise<Prescription | null> {
+    const trimmed = idOrNo.trim();
+    if (!trimmed) return null;
+    if (Types.ObjectId.isValid(trimmed) && trimmed.length === 24) {
+      return await this.rxModel.findOne({ _id: trimmed, clinicId }).exec();
+    }
+    return await this.rxModel
+      .findOne({ clinicId, prescriptionNo: trimmed.toUpperCase() })
+      .exec();
   }
 
   async createForEncounter(
@@ -241,6 +273,7 @@ export class PrescriptionsService {
           frequency: it.frequency?.trim(),
           duration: it.duration?.trim(),
           instructions: it.instructions?.trim(),
+          quantity: it.quantity,
         };
       }),
     );

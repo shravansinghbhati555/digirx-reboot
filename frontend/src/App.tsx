@@ -13,6 +13,7 @@ import { DocumentsScreen } from './ui/screens/DocumentsScreen';
 import { ReportsScreen } from './ui/screens/ReportsScreen';
 import { NotificationsScreen } from './ui/screens/NotificationsScreen';
 import { InventoryScreen } from './ui/screens/InventoryScreen';
+import { PharmacyScreen } from './ui/screens/PharmacyScreen';
 import { SettingsScreen } from './ui/screens/SettingsScreen';
 import { RolesScreen } from './ui/screens/RolesScreen';
 import { UsersScreen } from './ui/screens/UsersScreen';
@@ -50,6 +51,7 @@ function AuthedShell() {
         <Route path="/reports/*" element={<Guarded screenKey="reports"><ReportsScreen /></Guarded>} />
         <Route path="/notifications/*" element={<Guarded screenKey="notifications"><NotificationsScreen /></Guarded>} />
         <Route path="/inventory/*" element={<Guarded screenKey="inventory"><InventoryScreen /></Guarded>} />
+        <Route path="/pharmacy/*" element={<Guarded screenKey="pharmacy"><PharmacyScreen /></Guarded>} />
         <Route path="/users/*" element={<Guarded screenKey="users"><UsersScreen /></Guarded>} />
         <Route path="/roles/*" element={<Guarded screenKey="roles"><RolesScreen /></Guarded>} />
         <Route path="/settings/*" element={<Guarded screenKey="settings"><SettingsScreen /></Guarded>} />

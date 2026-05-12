@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useApp, type ScreenKey } from '../app/AppContext';
 import { canAccessScreen, Perm } from '../app/permissions';
+import { apiGet, apiPost } from '../app/api';
 import { Avatar } from './shared/primitives';
 import { Icon, type IconName } from './shared/Icon';
 import { DatePickerChip } from './shared/DatePickerChip';
@@ -15,6 +16,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'billing',       label: 'Billing',      icon: 'receipt' },
   { id: 'documents',     label: 'Documents',    icon: 'folder' },
   { id: 'inventory',     label: 'Inventory',    icon: 'pill' },
+  { id: 'pharmacy',      label: 'Pharmacy',     icon: 'receipt' },
   { id: 'reports',       label: 'Reports',      icon: 'barChart' },
   { id: 'notifications', label: 'Notifications', icon: 'bell' },
 ];
@@ -36,6 +38,7 @@ const ALL_CMD: { label: string; action: ScreenKey; icon: IconName }[] = [
   { label: 'New bill',           action: 'billing',      icon: 'plus' },
   { label: 'Go to Documents',    action: 'documents',    icon: 'folder' },
   { label: 'Go to Inventory',    action: 'inventory',    icon: 'pill' },
+  { label: 'Go to Pharmacy',     action: 'pharmacy',     icon: 'receipt' },
   { label: 'Go to Reports',      action: 'reports',      icon: 'barChart' },
   { label: 'Go to Notifications', action: 'notifications', icon: 'bell' },
   { label: 'Go to Settings',     action: 'settings',     icon: 'settings' },
@@ -90,13 +93,26 @@ function CommandPalette({ commands, onNavigate, onClose }: { commands: typeof AL
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { screen, setScreen, theme, toggleTheme, ctx, logout, selectedDate, setSelectedDate, permissions } = useApp();
+  const { screen, setScreen, theme, toggleTheme, ctx, setCtx, logout, selectedDate, setSelectedDate, permissions } = useApp();
   const [collapsed, setCollapsed] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const rail = collapsed ? 56 : 208;
   const userName = ctx.fullName ?? 'User';
   const userEmail = ctx.email ?? '';
+
+  // Branch list for the sidebar switcher. Only loaded for users who
+  // can read branches (typically clinic admins) — without that perm
+  // the GET 403s and we silently keep an empty list so the chip
+  // gracefully falls back to a non-interactive display.
+  const canSwitchBranch = permissions.has(Perm.BranchRead);
+  const [branches, setBranches] = useState<{ _id: string; name: string }[]>([]);
+  useEffect(() => {
+    if (!canSwitchBranch || !ctx.clinicId) { setBranches([]); return; }
+    apiGet<{ _id: string; name: string }[]>(ctx, `/clinics/${ctx.clinicId}/branches`)
+      .then(setBranches)
+      .catch(() => setBranches([]));
+  }, [canSwitchBranch, ctx.clinicId, ctx.accessToken]);
 
   const visibleNav = useMemo(
     () => NAV_ITEMS.filter((i) => canAccessScreen(permissions, i.id)),
@@ -171,19 +187,47 @@ export function AppShell({ children }: { children: ReactNode }) {
           )}
         </div>
 
-        {/* Clinic chip */}
+        {/* Clinic chip / branch switcher. For admins (branch:read +
+            more than one branch) the chip is an interactive popover
+            that flips the active branch — every screen subscribed to
+            ctx.branchId refetches when it changes. For everyone else
+            it stays a static display showing the user's bound branch.
+
+            Switching is a server round-trip: POST /auth/switch-branch
+            re-signs a JWT with the new branchId (the middleware reads
+            branchId from JWT claims, not from local state, so updating
+            ctx alone wouldn't change what the BE returns). On success
+            we save the rotated token + new branch into ctx — every
+            useEffect keyed on ctx.branchId then refetches. */}
         {!collapsed && ctx.clinicId && (
-          <div style={{ margin: '12px 12px 4px', padding: '8px 12px', background: 'var(--surface-muted)', borderRadius: 10, border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-              {ctx.clinicName ?? 'Clinic'}
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                {ctx.branchName ?? (ctx.branchId ? ctx.branchId.slice(-6) : 'No branch')}
-              </span>
-              <Icon name="chevronDown" size={12} style={{ color: 'var(--text-subtle)', flexShrink: 0 }} />
-            </div>
-          </div>
+          <BranchSwitcher
+            clinicName={ctx.clinicName ?? 'Clinic'}
+            currentBranchId={ctx.branchId}
+            currentBranchName={ctx.branchName}
+            branches={branches}
+            canSwitch={canSwitchBranch && branches.length > 1}
+            onSelect={async (b) => {
+              try {
+                const res = await apiPost<{ accessToken: string; branchId: string }>(
+                  ctx,
+                  '/auth/switch-branch',
+                  { branchId: b._id },
+                );
+                setCtx({
+                  ...ctx,
+                  accessToken: res.accessToken ?? ctx.accessToken,
+                  branchId: res.branchId,
+                  branchName: b.name,
+                });
+              } catch {
+                // Dev-header fallback (no JWT): the middleware reads
+                // x-branch-id from the header instead, so just update
+                // ctx locally and let the next request carry the new
+                // header.
+                setCtx({ ...ctx, branchId: b._id, branchName: b.name });
+              }
+            }}
+          />
         )}
 
         {/* Primary nav */}
@@ -244,7 +288,13 @@ export function AppShell({ children }: { children: ReactNode }) {
             </span>
           </button>
 
-          <DatePickerChip value={selectedDate} onChange={setSelectedDate} />
+          {/* The global date filter is only meaningful on the Dashboard
+              (KPIs, today/last-7-days rollups). On every other screen
+              it just creates noise — Patients/Appointments/Billing all
+              have their own in-screen filters. */}
+          {screen === 'dashboard' && (
+            <DatePickerChip value={selectedDate} onChange={setSelectedDate} />
+          )}
 
           <div style={{ flex: 1 }} />
 
@@ -283,6 +333,148 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {cmdOpen && <CommandPalette commands={visibleCmd} onNavigate={setScreen} onClose={() => setCmdOpen(false)} />}
       {helpOpen && <ShortcutsCheatsheet onClose={() => setHelpOpen(false)} />}
+    </div>
+  );
+}
+
+function BranchSwitcher({
+  clinicName,
+  currentBranchId,
+  currentBranchName,
+  branches,
+  canSwitch,
+  onSelect,
+}: {
+  clinicName: string;
+  currentBranchId?: string;
+  currentBranchName?: string;
+  branches: { _id: string; name: string }[];
+  canSwitch: boolean;
+  onSelect: (b: { _id: string; name: string }) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDoc(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) { if (e.key === 'Escape') setOpen(false); }
+    document.addEventListener('mousedown', onDoc);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      document.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const branchLabel = currentBranchName ?? (currentBranchId ? currentBranchId.slice(-6) : 'No branch');
+
+  // Static chip — same visual as before, no popover when the user
+  // can't switch (single-branch clinic or no branch:read perm).
+  if (!canSwitch) {
+    return (
+      <div style={{ margin: '12px 12px 4px', padding: '8px 12px', background: 'var(--surface-muted)', borderRadius: 10, border: '1px solid var(--border)' }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {clinicName}
+        </div>
+        <span style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {branchLabel}
+        </span>
+      </div>
+    );
+  }
+
+  return (
+    <div ref={ref} style={{ position: 'relative', margin: '12px 12px 4px' }}>
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        title="Switch branch"
+        style={{
+          width: '100%',
+          padding: '8px 12px',
+          background: open ? 'var(--brand-50)' : 'var(--surface-muted)',
+          borderRadius: 10,
+          border: `1px solid ${open ? 'var(--brand-500)' : 'var(--border)'}`,
+          cursor: 'pointer',
+          textAlign: 'left',
+          transition: 'border-color var(--dur-fast) var(--ease-out), background var(--dur-fast) var(--ease-out)',
+        }}>
+        <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+          {clinicName}
+        </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6, justifyContent: 'space-between' }}>
+          <span style={{ flex: 1, fontSize: 12, fontWeight: 600, color: open ? 'var(--brand-600)' : 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {branchLabel}
+          </span>
+          <Icon name="chevronDown" size={12} style={{
+            color: open ? 'var(--brand-600)' : 'var(--text-subtle)',
+            flexShrink: 0,
+            transition: 'transform var(--dur-fast) var(--ease-out)',
+            transform: open ? 'rotate(180deg)' : 'rotate(0)',
+          }} />
+        </div>
+      </button>
+
+      {open && (
+        <div role="listbox"
+          style={{
+            position: 'absolute',
+            top: 'calc(100% + 6px)',
+            left: 0,
+            right: 0,
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 10,
+            boxShadow: 'var(--e3)',
+            zIndex: 50,
+            padding: 4,
+            maxHeight: 280,
+            overflowY: 'auto',
+            animation: 'pickerIn var(--dur-base) var(--ease-out)',
+          }}>
+          <div style={{ padding: '6px 10px 4px', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            Switch branch
+          </div>
+          {branches.map((b) => {
+            const isSelected = b._id === currentBranchId;
+            return (
+              <button
+                key={b._id}
+                type="button"
+                role="option"
+                aria-selected={isSelected}
+                onClick={() => { onSelect(b); setOpen(false); }}
+                style={{
+                  width: '100%',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '8px 10px',
+                  border: 'none',
+                  borderRadius: 7,
+                  background: 'transparent',
+                  color: isSelected ? 'var(--brand-600)' : 'var(--text)',
+                  fontSize: 12,
+                  fontWeight: isSelected ? 700 : 500,
+                  cursor: 'pointer',
+                  textAlign: 'left',
+                  transition: 'background var(--dur-fast) var(--ease-out)',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--brand-bg-soft)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}>
+                <Icon name="mapPin" size={12} style={{ color: isSelected ? 'var(--brand-500)' : 'var(--text-subtle)' }} />
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{b.name}</span>
+                {isSelected && <Icon name="check" size={12} style={{ color: 'var(--brand-600)' }} />}
+              </button>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }

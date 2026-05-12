@@ -95,6 +95,34 @@ AppointmentSchema.index(
   { clinicId: 1, branchId: 1, doctorId: 1, startAt: 1 },
   { name: 'appt_time_lookup_idx' },
 );
+// TIME: prevent two appointments with the same exact start time on the
+// same doctor + branch. This is a DB-level fence behind the application
+// overlap check — anything bypassing the service (seed scripts, direct
+// DB writes, a race during the non-transactional fallback path on a
+// standalone Mongo) will hit this index and fail with a duplicate-key
+// error instead of silently double-booking the slot.
+//
+// Filtered on type=TIME and only slot-holding statuses so that
+// cancelling/no-showing an existing appointment frees the slot for a
+// new booking at the same start time.
+AppointmentSchema.index(
+  { clinicId: 1, branchId: 1, doctorId: 1, type: 1, startAt: 1 },
+  {
+    unique: true,
+    name: 'appt_time_no_dup_idx',
+    partialFilterExpression: {
+      type: AppointmentType.Time,
+      status: {
+        $in: [
+          AppointmentStatus.Booked,
+          AppointmentStatus.CheckedIn,
+          AppointmentStatus.InProgress,
+          AppointmentStatus.Done,
+        ],
+      },
+    },
+  },
+);
 // QUEUE: ensure unique token numbers per doctor per day (only applies to QUEUE docs).
 AppointmentSchema.index(
   {

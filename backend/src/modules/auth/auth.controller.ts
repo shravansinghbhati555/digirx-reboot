@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Post,
@@ -9,6 +10,8 @@ import {
 import type { Request, Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/public.decorator';
+import type { AppRequest } from '../../common/types';
+import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
 
@@ -59,6 +62,37 @@ export class AuthController {
       refreshCookieOptions(out.refresh.expiresAt),
     );
     return { accessToken: out.accessToken };
+  }
+
+  @Post('switch-branch')
+  @RequirePermissions()
+  async switchBranch(
+    @Req() req: AppRequest,
+    @Body() body: { branchId?: string },
+  ) {
+    if (!body?.branchId || typeof body.branchId !== 'string') {
+      throw new BadRequestException('branchId is required');
+    }
+    const actorUserId = req.context?.actorUserId;
+    const clinicId = req.context?.clinicId;
+    if (!actorUserId || !clinicId) {
+      throw new UnauthorizedException('Missing auth context');
+    }
+
+    // Pull the refresh session id from the cookie so we can persist the
+    // new branch on it. If the cookie is missing the switch still works
+    // but the choice won't survive the next /auth/refresh rotation.
+    const raw = req.cookies?.[REFRESH_COOKIE] as string | undefined;
+    const sessionId = raw ? raw.split('.', 2)[0] : '';
+
+    const out = await this.auth.switchBranch({
+      actorUserId,
+      clinicId,
+      sessionId,
+      targetBranchId: body.branchId,
+    });
+
+    return out;
   }
 
   @Post('logout')

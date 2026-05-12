@@ -159,6 +159,70 @@ export class InventoryService {
   }
 
   /**
+   * Stock-availability lookup tuned for the doctor's prescription typeahead
+   * and the receptionist's medicine-bill drafter. Returns active items only,
+   * each annotated with a coarse status the FE can render as a chip without
+   * doing its own thresholding.
+   *
+   *   IN_STOCK      onHand > reorderLevel  (or onHand > 0 when no threshold)
+   *   LOW_STOCK     0 < onHand <= reorderLevel
+   *   OUT_OF_STOCK  onHand === 0
+   *
+   * `branchId` is required so a doctor at Branch A doesn't see Branch B's
+   * stock when prescribing — mismatches at billing time would surprise the
+   * receptionist.
+   */
+  async availability(
+    clinicId: Types.ObjectId,
+    opts: { branchId: string; query?: string; limit?: number },
+  ) {
+    const limit = Math.max(1, Math.min(50, opts.limit ?? 20));
+    if (!Types.ObjectId.isValid(opts.branchId)) {
+      throw new NotFoundException('Branch not found');
+    }
+    const filter: Record<string, unknown> = {
+      clinicId,
+      branchId: new Types.ObjectId(opts.branchId),
+      active: true,
+    };
+
+    const q = (opts.query ?? '').trim();
+    if (q) {
+      const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const re = { $regex: escaped, $options: 'i' };
+      filter.$or = [{ name: re }, { sku: re }];
+    }
+
+    const items = await this.itemModel.find(filter).sort({ name: 1 }).limit(limit);
+    if (!items.length) return [];
+
+    const onHandById = await this.onHandByItemIds(
+      clinicId,
+      items.map((i) => i._id),
+    );
+    return items.map((it) => {
+      const onHand = onHandById.get(it._id.toHexString()) ?? 0;
+      const threshold = it.reorderLevel ?? 0;
+      let status: 'IN_STOCK' | 'LOW_STOCK' | 'OUT_OF_STOCK';
+      if (onHand === 0) status = 'OUT_OF_STOCK';
+      else if (threshold > 0 && onHand <= threshold) status = 'LOW_STOCK';
+      else status = 'IN_STOCK';
+      return {
+        _id: it._id,
+        name: it.name,
+        sku: it.sku,
+        unit: it.unit,
+        packUnit: it.packUnit,
+        packSize: it.packSize,
+        medicineCatalogItemId: it.medicineCatalogItemId,
+        onHand,
+        reorderLevel: it.reorderLevel,
+        status,
+      };
+    });
+  }
+
+  /**
    * List batches for a single item, oldest-expiry first (FIFO order).
    * Used by the inventory drawer to show what stock is on hand and when
    * each lot expires.

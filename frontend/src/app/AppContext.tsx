@@ -17,6 +17,7 @@ export type ScreenKey =
   | 'reports'
   | 'notifications'
   | 'inventory'
+  | 'pharmacy'
   | 'users'
   | 'roles'
   | 'settings';

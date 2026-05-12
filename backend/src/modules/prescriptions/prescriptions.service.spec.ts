@@ -13,7 +13,27 @@ describe('PrescriptionsService share flow', () => {
       findOneAndUpdate: jest.fn(),
     };
     encounters = { getById: jest.fn() };
-    service = new PrescriptionsService(rxModel, encounters);
+    // Constructor expanded with patient/user/clinic models, the medicines
+    // catalog assertion service, notifications, and the prescription
+    // numbering service for the human-readable `RX-000123` numbers.
+    // None are exercised by the share-flow tests, so empty stubs are
+    // sufficient — `numbering.mint` returns a fixed value when called.
+    const patientModel: any = {};
+    const userModel: any = {};
+    const clinicModel: any = {};
+    const medicines: any = { assertExists: jest.fn() };
+    const notifications: any = {};
+    const numbering: any = { mint: jest.fn().mockResolvedValue('RX-000001') };
+    service = new PrescriptionsService(
+      rxModel,
+      patientModel,
+      userModel,
+      clinicModel,
+      encounters,
+      medicines,
+      notifications,
+      numbering,
+    );
   });
 
   function makeRx(overrides: any = {}) {

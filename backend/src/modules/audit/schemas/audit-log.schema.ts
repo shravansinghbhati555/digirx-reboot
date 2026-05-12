@@ -28,6 +28,10 @@ export class AuditLog {
 
   @Prop({ required: true, trim: true })
   entityId!: string;
+  
+  /** Human-readable identifier for the entity (e.g. Patient Name, Bill Number). */
+  @Prop({ trim: true })
+  targetLabel?: string;
 
   @Prop({ type: Object })
   meta?: Record<string, unknown>;

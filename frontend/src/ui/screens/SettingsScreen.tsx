@@ -4,6 +4,10 @@ import { useApp } from '../../app/AppContext';
 import { Perm, type PermName } from '../../app/permissions';
 import { Checkbox, Field, Spinner, labelStyle, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
+// InventoryScreen used to be embedded under a Settings → Inventory tab,
+// but inventory now has its own top-level sidebar entry. The tab was
+// removed at the user's request to avoid two navigation paths to the
+// same screen.
 
 type ClinicBranding = {
   displayName: string | null;
@@ -101,7 +105,7 @@ export function SettingsScreen() {
           </button>
         ))}
       </div>
- 
+
       <div style={{ flex: 1, minWidth: 0, padding: '24px 32px', height: '100%', overflowY: 'auto' }}>
         <div key={tab} style={{ animation: 'slideUp 160ms ease-out', maxWidth: 800 }}>
           <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 20 }}>
@@ -458,13 +462,13 @@ function AvailabilityTab() {
       rs.map((r) =>
         targetSet.has(r.weekday)
           ? {
-              weekday: r.weekday,
-              // Deep-clone the windows so editing a target row later
-              // doesn't mutate the source's array too.
-              windows: source.windows.map((w) => ({ ...w })),
-              slotMinutes: source.slotMinutes,
-              active: source.active,
-            }
+            weekday: r.weekday,
+            // Deep-clone the windows so editing a target row later
+            // doesn't mutate the source's array too.
+            windows: source.windows.map((w) => ({ ...w })),
+            slotMinutes: source.slotMinutes,
+            active: source.active,
+          }
           : r,
       ),
     );
@@ -1246,11 +1250,11 @@ function TimePickerInput({
   return (
     <div style={{ flex: 1 }}>
       <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>{label}</label>
-      <div 
+      <div
         ref={containerRef}
         style={{ position: 'relative' }}
       >
-        <div 
+        <div
           onClick={() => !disabled && setShow(!show)}
           style={{ position: 'relative', cursor: disabled ? 'not-allowed' : 'pointer' }}
         >
@@ -1295,8 +1299,8 @@ function TimePickerInput({
                   const displayH = isPM ? (currentH === 12 ? 12 : currentH - 12) : (currentH === 0 ? 12 : currentH);
                   const active = displayH === h;
                   return (
-                    <div 
-                      key={h} 
+                    <div
+                      key={h}
                       onClick={() => {
                         const [_, m] = value.split(':');
                         const newH = isPM ? (h === 12 ? 12 : h + 12) : (h === 12 ? 0 : h);
@@ -1311,11 +1315,11 @@ function TimePickerInput({
               </div>
               {/* Minutes */}
               <div style={pickerColStyle}>
-                {['00','15','30','45'].map((m) => {
+                {['00', '15', '30', '45'].map((m) => {
                   const active = value.split(':')[1] === m;
                   return (
-                    <div 
-                      key={m} 
+                    <div
+                      key={m}
                       onClick={() => onChange(`${value.split(':')[0]}:${m}`)}
                       style={{ ...pickerItemStyle, background: active ? 'var(--brand-500)' : 'transparent', color: active ? 'var(--brand-text)' : 'var(--text)' }}
                     >
@@ -1326,13 +1330,13 @@ function TimePickerInput({
               </div>
               {/* AM/PM */}
               <div style={pickerColStyle}>
-                {['AM','PM'].map((p) => {
+                {['AM', 'PM'].map((p) => {
                   const currentH = parseInt(value.split(':')[0]);
                   const isPM = currentH >= 12;
                   const active = p === (isPM ? 'PM' : 'AM');
                   return (
-                    <div 
-                      key={p} 
+                    <div
+                      key={p}
                       onClick={() => {
                         const [h, m] = value.split(':').map(Number);
                         let newH = h;
@@ -1348,7 +1352,7 @@ function TimePickerInput({
                 })}
               </div>
             </div>
-            <button 
+            <button
               onClick={() => setShow(false)}
               style={{ width: '100%', height: 32, background: 'var(--brand-50)', color: 'var(--brand-500)', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
             >
@@ -1565,6 +1569,7 @@ type AuditRow = {
   action: 'CREATE' | 'UPDATE' | 'DELETE';
   entityType: string;
   entityId: string;
+  targetLabel?: string;
   meta?: { method?: string; path?: string };
   createdAt: string;
 };
@@ -1604,11 +1609,13 @@ const AUDIT_DETAIL_LABELS: Record<string, string> = {
   // Billing
   'POST /bills': 'Created bill (draft)',
   'PATCH /bills/:id': 'Updated bill',
+  'POST /bills/from-prescription/:id': 'Created bill from prescription',
   'POST /bills/:id/issue': 'Issued bill',
   'POST /bills/:id/payments': 'Recorded payment',
   'POST /catalog/services': 'Added service to catalog',
   // Documents
   'POST /documents/upload-url': 'Initiated document upload',
+  'POST /documents/:id/confirm': 'Confirmed document upload',
   'POST /documents/:id/share': 'Shared document',
   'POST /documents/:id/share/revoke': 'Revoked document share',
   // Prescriptions

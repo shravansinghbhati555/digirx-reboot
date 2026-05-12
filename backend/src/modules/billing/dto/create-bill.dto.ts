@@ -1,6 +1,7 @@
-import { ArrayMinSize, IsArray, IsMongoId, IsNumber, IsOptional, IsString, Length, Min, ValidateNested } from 'class-validator';
+import { ArrayMinSize, IsArray, IsEnum, IsMongoId, IsNumber, IsOptional, IsString, Length, Min, ValidateNested } from 'class-validator';
 import { Type } from 'class-transformer';
 import { BillItemDto } from './bill-item.dto';
+import { BillKind } from '../schemas/bill.schema';
 
 export class CreateBillDto {
   @IsMongoId()
@@ -16,6 +17,14 @@ export class CreateBillDto {
   @IsOptional()
   @IsMongoId()
   encounterId?: string;
+
+  /**
+   * Defaults to SERVICE on the schema, so existing callers don't need to
+   * send this. The pharmacy flow (Slice 4) sets MEDICINE explicitly.
+   */
+  @IsOptional()
+  @IsEnum(BillKind)
+  kind?: BillKind;
 
   @IsOptional()
   @IsString()

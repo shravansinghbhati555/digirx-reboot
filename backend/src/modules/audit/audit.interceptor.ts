@@ -61,6 +61,31 @@ export class AuditInterceptor implements NestInterceptor {
             }
           }
 
+          // Try to extract a human-readable label for the activity feed 
+          // (e.g. Patient Name, Bill No). We look at the response body.
+          let targetLabel: string | undefined;
+          if (value && typeof value === 'object') {
+            const v = value as Record<string, any>;
+            
+            // Priority 1: Top-level standard fields
+            targetLabel = v.fullName || v.name || v.label || v.billNo || v.prescriptionNo || v.mrn;
+            
+            // Priority 2: Standard nested wrappers (created patient, etc)
+            if (!targetLabel && v.created && typeof v.created === 'object') {
+              targetLabel = v.created.fullName || v.created.name || v.created.label;
+            }
+            if (!targetLabel && v.patient && typeof v.patient === 'object') {
+              targetLabel = v.patient.fullName || v.patient.name;
+            }
+            if (!targetLabel && v.patientId && typeof v.patientId === 'object') {
+              targetLabel = v.patientId.fullName || v.patientId.name;
+            }
+
+            // Priority 3: Specific entity fields if it's a simple string
+            if (!targetLabel && typeof v.billNo === 'string') targetLabel = v.billNo;
+            if (!targetLabel && typeof v.prescriptionNo === 'string') targetLabel = v.prescriptionNo;
+          }
+
           // Fire-and-forget; audit failures should not break API requests.
           void this.audit.write({
             clinicId: req.context!.clinicId,
@@ -69,6 +94,7 @@ export class AuditInterceptor implements NestInterceptor {
             action,
             entityType,
             entityId,
+            targetLabel,
             meta: {
               method,
               path: req.path,

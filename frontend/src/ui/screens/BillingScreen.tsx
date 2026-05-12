@@ -25,6 +25,9 @@ type Bill = {
   _id: string;
   billNo?: string;
   status: 'DRAFT' | 'ISSUED' | 'VOID' | 'PAID';
+  // Slice 1 added kind. Defaults to SERVICE on the BE so legacy bills
+  // load with the same shape they always had.
+  kind?: 'SERVICE' | 'MEDICINE';
   currency: string;
   subtotal: number;
   discount: number;
@@ -38,6 +41,7 @@ type Bill = {
   encounterId?: string;
   appointmentId?: string;
   notes?: string;
+  inventoryDispensedAt?: string;
 };
 
 type Payment = {
@@ -71,6 +75,30 @@ type CreditNote = {
 type BillRow = Bill & { totalPaid: number; outstanding: number; patientName?: string };
 type BillList = { branchId: string | null; count: number; rows: BillRow[] };
 
+/**
+ * Kind chip rendered on each bill row. SERVICE bills use the brand
+ * palette (default), MEDICINE bills use a green/pill palette so the
+ * pharmacy line of business is instantly recognizable in a mixed list.
+ * Bills without a kind (legacy rows pre-Slice-1) render as SERVICE,
+ * matching the BE default.
+ */
+function KindChip({ kind }: { kind?: 'SERVICE' | 'MEDICINE' }) {
+  const isMedicine = kind === 'MEDICINE';
+  const fg = isMedicine ? 'var(--success-text)' : 'var(--brand-600)';
+  const bg = isMedicine ? 'var(--success-bg)' : 'var(--brand-50)';
+  const border = isMedicine ? 'rgba(34,197,94,0.3)' : 'var(--brand-100)';
+  return (
+    <span style={{
+      display: 'inline-flex', alignItems: 'center', gap: 4,
+      fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 100,
+      background: bg, color: fg, border: `1px solid ${border}`,
+      whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em',
+    }}>
+      {isMedicine ? 'Medicine' : 'Service'}
+    </span>
+  );
+}
+
 const PAYMENT_METHODS: { id: string; label: string; icon: IconName }[] = [
   { id: 'CASH', label: 'Cash', icon: 'banknote' },
   { id: 'UPI', label: 'UPI', icon: 'smartphone' },
@@ -87,18 +115,30 @@ export function BillingScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'draft' | 'issued' | 'paid' | 'void'>('all');
+  // Slice 6 — second filter dimension. SERVICE is the historical default
+  // so an admin who never opens this control sees what they always have;
+  // pharmacy users will switch to MEDICINE for a focused list.
+  const [kindFilter, setKindFilter] = useState<'all' | 'service' | 'medicine'>('all');
   const [selected, setSelected] = useState<BillRow | null>(null);
   const [editingBill, setEditingBill] = useState<Bill | null>(null);
   const [showCreate, setShowCreate] = useState(false);
   const [lookupId, setLookupId] = useState('');
+  // Pagination — initial load grabs 500 (the BE's hard cap). When the
+  // response actually hits 500, we surface a "Load older" button that
+  // doubles the page size, up to 2000. For most clinics 500 is more
+  // than the lifetime bill count; this keeps the simple case simple
+  // and the busy-clinic case workable without a full cursor pager.
+  const PAGE_INITIAL = 500;
+  const [pageSize, setPageSize] = useState<number>(PAGE_INITIAL);
 
-  async function loadBills() {
+  async function loadBills(limit: number = pageSize) {
     setLoading(true);
     setError(null);
     try {
-      const qs = new URLSearchParams({ limit: '100' });
+      const qs = new URLSearchParams({ limit: String(limit) });
       if (ctx.branchId) qs.set('branchId', ctx.branchId);
       if (filter !== 'all') qs.set('status', filter);
+      if (kindFilter !== 'all') qs.set('kind', kindFilter.toUpperCase());
       const data = await apiGet<BillList>(ctx, `/bills?${qs.toString()}`);
       setBills(data.rows);
     } catch (e) {
@@ -108,7 +148,13 @@ export function BillingScreen() {
     }
   }
 
-  useEffect(() => { void loadBills(); }, [ctx.clinicId, ctx.branchId, filter]);
+  // Reset page size when filters change so a "Load older" expansion
+  // doesn't carry across to a different filter slice.
+  useEffect(() => {
+    setPageSize(PAGE_INITIAL);
+    void loadBills(PAGE_INITIAL);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ctx.clinicId, ctx.branchId, filter, kindFilter]);
 
   useEffect(() => {
     if (selectedBillId) {
@@ -139,28 +185,41 @@ export function BillingScreen() {
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       <div style={{ width: selected ? 520 : '100%', flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: selected ? '1px solid var(--border)' : 'none', transition: 'width 240ms ease-out' }}>
-        <div style={{ padding: '12px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 10, padding: 3, border: '1px solid var(--border)' }}>
+        <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 100, padding: 4, border: '1px solid var(--border)' }}>
             {(['all', 'draft', 'issued', 'paid', 'void'] as const).map((f) => (
               <button key={f} onClick={() => setFilter(f)}
-                style={{ padding: '5px 12px', borderRadius: 8, border: 'none', background: filter === f ? 'var(--surface)' : 'transparent', color: filter === f ? 'var(--text)' : 'var(--text-muted)', fontSize: 12, fontWeight: filter === f ? 600 : 400, cursor: 'pointer', textTransform: 'capitalize' }}>
+                style={{ padding: '6px 14px', borderRadius: 100, border: 'none', background: filter === f ? 'var(--brand-100)' : 'transparent', color: filter === f ? 'var(--text)' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer', textTransform: 'capitalize', transition: 'all 0.2s' }}>
                 {f}
               </button>
             ))}
           </div>
+          <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 100, padding: 4, border: '1px solid var(--border)' }}>
+            {([
+              { id: 'all', label: 'All kinds' },
+              { id: 'service', label: 'Service' },
+              { id: 'medicine', label: 'Medicine' },
+            ] as const).map((k) => (
+              <button key={k.id} onClick={() => setKindFilter(k.id)}
+                style={{ padding: '6px 14px', borderRadius: 100, border: 'none', background: kindFilter === k.id ? 'var(--brand-100)' : 'transparent', color: kindFilter === k.id ? 'var(--text)' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}>
+                {k.label}
+              </button>
+            ))}
+          </div>
           <div style={{ flex: 1 }} />
-          <input value={lookupId} onChange={(e) => setLookupId(e.target.value)} placeholder="Bill ID lookup…"
-            onKeyDown={(e) => e.key === 'Enter' && loadBill(lookupId)}
-            style={{ height: 34, padding: '0 12px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 9, fontSize: 12, color: 'var(--text)', outline: 'none', minWidth: 200, fontFamily: 'monospace' }} />
-          <button onClick={() => loadBill(lookupId)}
-            style={{ height: 34, padding: '0 14px', background: 'none', border: '1px solid var(--border)', borderRadius: 9, fontSize: 12, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
-            Load
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input value={lookupId} onChange={(e) => setLookupId(e.target.value)} placeholder="Bill ID lookup…"
+              onKeyDown={(e) => e.key === 'Enter' && loadBill(lookupId)}
+              style={{ height: 36, padding: '0 16px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 12, color: 'var(--text)', outline: 'none', minWidth: 220, fontFamily: 'monospace' }} />
+            <button onClick={() => loadBill(lookupId)}
+              style={{ height: 36, padding: '0 16px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 12, fontWeight: 700, color: 'var(--text)', cursor: 'pointer', transition: 'all 0.2s' }}>
+              Load
+            </button>
+          </div>
           <button onClick={() => canCreateBill && setShowCreate(true)}
             disabled={!canCreateBill}
-            title={canCreateBill ? undefined : 'You do not have permission to create bills'}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 34, padding: '0 14px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: canCreateBill ? 'pointer' : 'not-allowed', opacity: canCreateBill ? 1 : 0.5 }}>
-            <Icon name="plus" size={13} strokeWidth={2.5} /> New bill
+            style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, padding: '0 18px', background: 'var(--brand-600)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: canCreateBill ? 'pointer' : 'not-allowed', opacity: canCreateBill ? 1 : 0.5, boxShadow: '0 4px 12px rgba(37,99,235,0.2)' }}>
+            <Icon name="plus" size={14} strokeWidth={3} /> New bill
           </button>
         </div>
 
@@ -188,33 +247,64 @@ export function BillingScreen() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
-                  {['Bill no', 'Patient', 'Total', 'Outstanding', 'Status'].map((h, i) => (
-                    <th key={h} style={{ padding: '10px 16px', textAlign: i >= 2 && i <= 3 ? 'right' : 'left', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
+                  {['Bill no', 'Kind', 'Patient', 'Total', 'Outstanding', 'Status'].map((h, i) => (
+                    <th key={h} style={{ padding: '12px 20px', textAlign: i >= 3 && i <= 4 ? 'right' : 'left', fontSize: 10, fontWeight: 800, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {filtered.map((b) => (
                   <tr key={b._id} onClick={() => loadBill(b._id)}
+                    className="row-hover"
                     style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', background: selected?._id === b._id ? 'var(--brand-50)' : 'transparent' }}>
-                    <td style={{ padding: '12px 16px', fontSize: 12, color: 'var(--text-subtle)', fontFamily: 'monospace', fontWeight: 500 }}>{b.billNo ?? b._id.slice(-6)}</td>
-                    <td style={{ padding: '12px 16px' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                        <Avatar name={b.patientName ?? '?'} size={26} />
-                        <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 500 }}>
+                    <td style={{ padding: '14px 20px', fontSize: 12, color: 'var(--text-subtle)', fontFamily: 'monospace', fontWeight: 600 }}>{b.billNo ?? b._id.slice(-6).toUpperCase()}</td>
+                    <td style={{ padding: '14px 20px' }}>
+                      <KindChip kind={b.kind} />
+                    </td>
+                    <td style={{ padding: '14px 20px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <Avatar name={b.patientName ?? '?'} size={28} />
+                        <span style={{ fontSize: 14, color: 'var(--text)', fontWeight: 600 }}>
                           {b.patientName ?? <span style={{ color: 'var(--text-subtle)', fontStyle: 'italic' }}>Unknown patient</span>}
                         </span>
                       </div>
                     </td>
-                    <td style={{ padding: '12px 16px', fontSize: 13, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{formatMoney(b.total, b.currency)}</td>
-                    <td style={{ padding: '12px 16px', fontSize: 13, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600, color: b.outstanding > 0 ? 'var(--danger-500)' : 'var(--success-500)' }}>
+                    <td style={{ padding: '14px 20px', fontSize: 14, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700 }}>{formatMoney(b.total, b.currency)}</td>
+                    <td style={{ padding: '14px 20px', fontSize: 14, textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 700, color: b.outstanding > 0 ? 'var(--danger-500)' : 'var(--success-500)' }}>
                       {b.outstanding > 0 ? formatMoney(b.outstanding, b.currency) : '—'}
                     </td>
-                    <td style={{ padding: '12px 16px' }}><StatusPill status={b.status?.toLowerCase()} small /></td>
+                    <td style={{ padding: '14px 20px' }}><StatusPill status={b.status?.toLowerCase()} small /></td>
                   </tr>
                 ))}
               </tbody>
             </table>
+          )}
+          {/* "Load older" appears only when the response actually filled
+              the current page — implies more bills exist beyond it. Each
+              click doubles the page size up to the BE cap of 2000. */}
+          {!loading && !error && filtered.length > 0 && filtered.length >= pageSize && pageSize < 2000 && (
+            <div style={{ padding: '14px 16px', display: 'flex', justifyContent: 'center', borderTop: '1px solid var(--border)', background: 'var(--surface)' }}>
+              <button
+                onClick={() => {
+                  const next = Math.min(2000, pageSize * 2);
+                  setPageSize(next);
+                  void loadBills(next);
+                }}
+                style={{
+                  height: 36, padding: '0 18px',
+                  background: 'var(--surface-muted)', color: 'var(--text)',
+                  border: '1px solid var(--border)', borderRadius: 9,
+                  fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}>
+                Load older bills · showing {filtered.length}
+              </button>
+            </div>
+          )}
+          {!loading && !error && filtered.length >= 2000 && (
+            <div style={{ padding: '12px 16px', textAlign: 'center', fontSize: 11, color: 'var(--text-subtle)' }}>
+              Showing the most recent 2000 bills. Use the status / kind filters above to narrow further.
+            </div>
           )}
         </div>
       </div>

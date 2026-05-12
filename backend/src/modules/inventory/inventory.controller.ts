@@ -7,7 +7,6 @@ import {
   Post,
   Query,
   Req,
-  UseGuards,
 } from '@nestjs/common';
 import type { AppRequest } from '../../common/types';
 import { Permission } from '../authz/permissions';
@@ -16,11 +15,13 @@ import { CreateInventoryItemDto } from './dto/create-inventory-item.dto';
 import { DispenseStockDto } from './dto/dispense-stock.dto';
 import { ReceiveStockDto } from './dto/receive-stock.dto';
 import { UpdateInventoryItemDto } from './dto/update-inventory-item.dto';
-import { InventoryFeatureGuard } from './inventory.guard';
 import { InventoryService } from './inventory.service';
 
+// Feature guard removed at the user's request — the Settings → Inventory
+// tab is now the canonical entry point for stock management, so we
+// don't gate access behind a separate clinic-level flag. Permission
+// checks (inventory:read / inventory:write) still apply.
 @Controller('inventory')
-@UseGuards(InventoryFeatureGuard)
 export class InventoryController {
   constructor(private readonly inventory: InventoryService) {}
 
@@ -85,6 +86,27 @@ export class InventoryController {
   @RequirePermissions(Permission.InventoryRead)
   async listBatches(@Req() req: AppRequest, @Param('id') id: string) {
     return await this.inventory.listBatches(req.context!.clinicId, id);
+  }
+
+  /**
+   * Stock-availability lookup for the doctor's prescription typeahead and
+   * the receptionist's medicine-bill drafter. Branch-scoped — a doctor at
+   * Branch A doesn't see Branch B's stock.
+   */
+  @Get('availability')
+  @RequirePermissions(Permission.InventoryRead)
+  async availability(
+    @Req() req: AppRequest,
+    @Query('branchId') branchId: string,
+    @Query('query') query?: string,
+    @Query('limit') limitRaw?: string,
+  ) {
+    const limit = Number(limitRaw ?? 20) || 20;
+    return await this.inventory.availability(req.context!.clinicId, {
+      branchId,
+      query,
+      limit,
+    });
   }
 
   @Post('items/:id/dispense')

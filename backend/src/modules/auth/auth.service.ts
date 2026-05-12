@@ -27,6 +27,7 @@ export class AuthService {
   private async issueRefreshSession(input: {
     clinicId: Types.ObjectId;
     userId: Types.ObjectId;
+    branchId?: Types.ObjectId;
   }) {
     const raw = crypto.randomBytes(32).toString('base64url');
     const hash = await bcrypt.hash(raw, 10);
@@ -38,6 +39,7 @@ export class AuthService {
     const session = await this.sessionModel.create({
       clinicId: input.clinicId,
       userId: input.userId,
+      branchId: input.branchId,
       refreshTokenHash: hash,
       expiresAt,
     });
@@ -70,16 +72,18 @@ export class AuthService {
     const ok = await bcrypt.compare(input.password, user.passwordHash);
     if (!ok) throw invalid;
 
+    const effectiveBranchId = input.branchId ?? user.defaultBranchId?.toHexString();
     const claims: JwtClaims = {
       sub: user._id.toHexString(),
       clinicId: clinicId.toHexString(),
-      branchId: input.branchId ?? user.defaultBranchId?.toHexString(),
+      branchId: effectiveBranchId,
     };
 
     const accessToken = await this.accessToken(claims);
     const refresh = await this.issueRefreshSession({
       clinicId,
       userId: user._id,
+      branchId: effectiveBranchId ? new Types.ObjectId(effectiveBranchId) : undefined,
     });
 
     return {
@@ -142,6 +146,7 @@ export class AuthService {
     const claims: JwtClaims = {
       sub: updated.userId.toHexString(),
       clinicId: updated.clinicId.toHexString(),
+      branchId: updated.branchId?.toHexString(),
     };
     const accessToken = await this.accessToken(claims);
 
@@ -161,5 +166,67 @@ export class AuthService {
       { $set: { revokedAt: new Date() } },
     );
     return { ok: true };
+  }
+
+  /**
+   * Re-issues an access token bound to a different branch in the same
+   * clinic. The user must have the target branch in their `branchIds`
+   * list — admins typically have all branches, clinicians one. The
+   * refresh-session row is also updated so the new branch survives
+   * future token rotations.
+   *
+   * Returns the new JWT plus the resolved branch identity so the FE
+   * can update its local context atomically.
+   */
+  async switchBranch(input: {
+    actorUserId: Types.ObjectId;
+    clinicId: Types.ObjectId;
+    sessionId: string;
+    targetBranchId: string;
+  }) {
+    if (!Types.ObjectId.isValid(input.targetBranchId)) {
+      throw new UnauthorizedException('Invalid branchId');
+    }
+    const targetBranchId = new Types.ObjectId(input.targetBranchId);
+
+    const user = await this.userModel.findOne({
+      _id: input.actorUserId,
+      clinicId: input.clinicId,
+    });
+    if (!user) throw new UnauthorizedException('User not found in clinic');
+    if (user.status !== UserStatus.Active) {
+      throw new UnauthorizedException('User is not active');
+    }
+
+    const allowed = (user.branchIds ?? []).some((b) =>
+      b.equals(targetBranchId),
+    );
+    if (!allowed) {
+      throw new UnauthorizedException(
+        'User is not assigned to the requested branch',
+      );
+    }
+
+    const claims: JwtClaims = {
+      sub: input.actorUserId.toHexString(),
+      clinicId: input.clinicId.toHexString(),
+      branchId: targetBranchId.toHexString(),
+    };
+    const accessToken = await this.accessToken(claims);
+
+    // Persist on the session so the next /auth/refresh keeps the new
+    // branch. Without this, an 8-hour token rotation would silently
+    // reset the user to the JWT-baked branch.
+    if (Types.ObjectId.isValid(input.sessionId)) {
+      await this.sessionModel.updateOne(
+        { _id: new Types.ObjectId(input.sessionId) },
+        { $set: { branchId: targetBranchId } },
+      );
+    }
+
+    return {
+      accessToken,
+      branchId: targetBranchId.toHexString(),
+    };
   }
 }

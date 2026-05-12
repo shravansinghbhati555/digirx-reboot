@@ -329,7 +329,7 @@ function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => vo
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--bg)' }}>
-      <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '20px 24px' }}>
+      <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '16px 20px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
           <Avatar name={patient.fullName} size={52} />
           <div style={{ flex: 1, minWidth: 0 }}>
@@ -377,7 +377,7 @@ function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => vo
           />
         </div>
       </div>
-      <div className="scroll-y" style={{ flex: 1, padding: '20px 24px' }}>
+      <div className="scroll-y" style={{ flex: 1, padding: '16px 20px' }}>
         {tab === 'overview' && (
           <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
             {[
@@ -525,7 +525,7 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)', animation: 'fadeIn 150ms ease-out' }} onClick={onClose}>
       <div {...shakeProps}
-        style={{ background: 'var(--surface)', borderRadius: 20, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 480, overflow: 'hidden', animation: 'slideUp 200ms ease-out', ...shakeProps.style }} onClick={(e) => e.stopPropagation()}>
+        style={{ background: 'var(--surface)', borderRadius: 20, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 480, overflow: 'visible', animation: 'slideUp 200ms ease-out', ...shakeProps.style }} onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>New patient</div>
@@ -543,7 +543,7 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
           {step === 0 && (
             <>
               <Field label="Full name" value={form.fullName} onChange={(v) => set('fullName', v)} placeholder="e.g. Anjali Mehta" />
-              <Field label="Date of birth" value={form.dob} onChange={(v) => set('dob', v)} placeholder="YYYY-MM-DD" />
+              <Field label="Date of birth" value={form.dob} onChange={(v) => set('dob', v)} placeholder="Enter date of birth" type="date" />
               <div>
                 <label style={labelStyle}>Gender</label>
                 <div style={{ display: 'flex', gap: 8 }}>
@@ -661,12 +661,12 @@ function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; o
           </button>
         </div>
 
-        <div style={{ padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14, maxHeight: '70vh', overflowY: 'auto' }}>
+        <div style={{ padding: '20px 24px 280px', display: 'flex', flexDirection: 'column', gap: 14, maxHeight: '80vh', overflowY: 'auto' }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
             <div style={{ gridColumn: 'span 2' }}>
               <Field label="Full name" value={form.fullName} onChange={(v) => set('fullName', v)} />
             </div>
-            <Field label="Date of birth" value={form.dob} onChange={(v) => set('dob', v)} placeholder="YYYY-MM-DD" />
+            <Field label="Date of birth" value={form.dob} onChange={(v) => set('dob', v)} placeholder="Enter date of birth" type="date" />
             <div>
               <label style={labelStyle}>Gender</label>
               <div style={{ display: 'flex', gap: 6 }}>

@@ -48,6 +48,13 @@ const PERMISSION_GROUPS: PermGroup[] = [
     ],
   },
   {
+    title: 'Inventory',
+    rows: [
+      { perm: Perm.InventoryRead, label: 'View inventory & stock' },
+      { perm: Perm.InventoryWrite, label: 'Receive, dispense & manage items' },
+    ],
+  },
+  {
     title: 'Notifications',
     rows: [
       { perm: Perm.NotificationRead, label: 'View notifications' },
@@ -79,6 +86,7 @@ const WRITE_TO_READ: Partial<Record<PermName, PermName>> = {
   [Perm.AppointmentWrite]: Perm.AppointmentRead,
   [Perm.BillingWrite]: Perm.BillingRead,
   [Perm.DocumentWrite]: Perm.DocumentRead,
+  [Perm.InventoryWrite]: Perm.InventoryRead,
   [Perm.NotificationWrite]: Perm.NotificationRead,
   [Perm.ClinicWrite]: Perm.ClinicRead,
   [Perm.BranchWrite]: Perm.BranchRead,

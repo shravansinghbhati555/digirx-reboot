@@ -13,12 +13,15 @@ import { CreditNotesService } from '../credit-notes/credit-notes.service';
 import { CreateBillDto } from './dto/create-bill.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
-import { Bill, BillLineItem, BillStatus } from './schemas/bill.schema';
+import { Bill, BillKind, BillLineItem, BillStatus } from './schemas/bill.schema';
 import { Payment } from './schemas/payment.schema';
 import { ServiceCatalogItem } from './schemas/service-catalog-item.schema';
 import { Appointment } from '../appointments/schemas/appointment.schema';
 import { Encounter } from '../encounters/schemas/encounter.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
+import { Prescription } from '../prescriptions/schemas/prescription.schema';
+import { InventoryItem } from '../inventory/schemas/inventory-item.schema';
+import { InventoryService } from '../inventory/inventory.service';
 
 const CURRENCY_RE = /^[A-Z]{3}$/;
 
@@ -34,6 +37,17 @@ export class BillingService {
     @InjectModel(Encounter.name)
     private readonly encounterModel: Model<Encounter>,
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
+    // Read-only deps for the medicine-bill-from-prescription drafter
+    // (Slice 3). The drafter only needs to look up the prescription and
+    // resolve each item to an inventory row, so we inject the models
+    // directly rather than the services.
+    @InjectModel(Prescription.name) private readonly prescriptionModel: Model<Prescription>,
+    @InjectModel(InventoryItem.name) private readonly inventoryItemModel: Model<InventoryItem>,
+    // Slice 5 — used to FIFO-dispense each line of a fully-paid medicine
+    // bill. Reused as-is so the same overdraft guard + FIFO ordering
+    // applies whether the dispense is manual (Inventory drawer) or
+    // auto-triggered by a payment.
+    private readonly inventory: InventoryService,
     private readonly numbering: BillNumberingService,
     // forwardRef breaks the BillingModule ↔ CreditNotesModule cycle: each
     // depends on the other (this for void-blocking; CN service for the Bill
@@ -123,7 +137,173 @@ export class BillingService {
       tax,
       total,
       status: BillStatus.Draft,
+      // Defaults to SERVICE on the schema; explicit pass-through here so
+      // the pharmacy flow (Slice 3) can stamp MEDICINE.
+      kind: dto.kind ?? BillKind.Service,
       notes: dto.notes?.trim() || undefined,
+      createdBy: actorUserId,
+    });
+  }
+
+  /**
+   * Draft a kind=MEDICINE bill seeded from a prescription's items. The
+   * receptionist will adjust unit prices and quantities in the draft, then
+   * issue + collect payment via the existing flows. Slice 5 will hook the
+   * "fully paid" transition to FIFO-deduct inventory.
+   *
+   * Idempotent: if a non-void medicine bill already references this
+   * prescription's encounter, returns it unchanged. Avoids a double-click
+   * spawning two drafts.
+   *
+   * Items resolve in this order:
+   *   1. By `medicineCatalogItemId` → InventoryItem.medicineCatalogItemId
+   *      (the strong link the typeahead writes when the doctor picked
+   *      from inventory).
+   *   2. By case-insensitive name match against InventoryItem.name (the
+   *      free-text fallback for doctors who typed without picking).
+   * Items that match neither still appear on the bill — receptionist
+   * either removes them or links the catalog manually.
+   */
+  async createBillFromPrescription(
+    clinicId: Types.ObjectId,
+    actorUserId: Types.ObjectId | undefined,
+    prescriptionIdOrNo: string,
+  ): Promise<Bill> {
+    // Accept either a 24-char ObjectId hex (programmatic callers, FE
+    // recent-prescriptions list) or the human-readable prescriptionNo
+    // ("RX-000123") that's printed on the slip. Pharmacist types the
+    // latter most often — that's the whole point of the readable
+    // number we mint at sign time.
+    const trimmed = (prescriptionIdOrNo ?? '').trim();
+    if (!trimmed) throw new NotFoundException('Prescription not found');
+
+    let rx: Prescription | null = null;
+    if (Types.ObjectId.isValid(trimmed) && trimmed.length === 24) {
+      rx = await this.prescriptionModel.findOne({ _id: trimmed, clinicId });
+    } else {
+      // Match the print-side casing; pharmacist may type "rx-000123" too.
+      rx = await this.prescriptionModel.findOne({
+        clinicId,
+        prescriptionNo: trimmed.toUpperCase(),
+      });
+    }
+    if (!rx) throw new NotFoundException('Prescription not found');
+    if (!rx.items || rx.items.length === 0) {
+      throw new BadRequestException(
+        'Prescription has no items — nothing to bill',
+      );
+    }
+
+    // Idempotency: a medicine bill already drafted/issued/paid for this
+    // prescription's encounter is the canonical record. Re-issue would be
+    // a double-charge; instead the receptionist edits the existing one.
+    const existing = await this.billModel.findOne({
+      clinicId,
+      encounterId: rx.encounterId,
+      kind: BillKind.Medicine,
+      status: { $ne: BillStatus.Void },
+    });
+    if (existing) return existing;
+
+    // Resolve each prescription item to an inventory row (or leave the
+    // line as a customName-only entry if no match).
+    const catalogIds = rx.items
+      .map((it) => it.medicineCatalogItemId)
+      .filter((id): id is Types.ObjectId => !!id);
+
+    const itemsByCatalog = new Map<string, InventoryItem & { _id: Types.ObjectId }>();
+    if (catalogIds.length) {
+      const found = await this.inventoryItemModel.find({
+        clinicId,
+        branchId: rx.branchId,
+        medicineCatalogItemId: { $in: catalogIds },
+        active: true,
+      });
+      for (const it of found as Array<InventoryItem & { _id: Types.ObjectId }>) {
+        if (it.medicineCatalogItemId) {
+          itemsByCatalog.set(it.medicineCatalogItemId.toHexString(), it);
+        }
+      }
+    }
+
+    // For free-text rows, look up by name. We do one combined query with
+    // an OR of the candidate names so the lookup is O(1) round trips.
+    const freeTextNames = rx.items
+      .filter((it) => !it.medicineCatalogItemId && it.customName)
+      .map((it) => it.customName!.trim())
+      .filter((n) => n.length > 0);
+
+    const itemsByName = new Map<string, InventoryItem & { _id: Types.ObjectId }>();
+    if (freeTextNames.length) {
+      const escaped = freeTextNames.map((n) =>
+        n.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'),
+      );
+      const found = await this.inventoryItemModel.find({
+        clinicId,
+        branchId: rx.branchId,
+        active: true,
+        $or: escaped.map((n) => ({
+          name: { $regex: `^${n}$`, $options: 'i' },
+        })),
+      });
+      for (const it of found as Array<InventoryItem & { _id: Types.ObjectId }>) {
+        itemsByName.set(it.name.toLowerCase(), it);
+      }
+    }
+
+    const lineItems = rx.items.map((it) => {
+      const catalogMatch = it.medicineCatalogItemId
+        ? itemsByCatalog.get(it.medicineCatalogItemId.toHexString())
+        : undefined;
+      const nameMatch =
+        !catalogMatch && it.customName
+          ? itemsByName.get(it.customName.trim().toLowerCase())
+          : undefined;
+      const inventoryItem = catalogMatch ?? nameMatch;
+      const quantity =
+        Number.isInteger(it.quantity) && (it.quantity ?? 0) > 0
+          ? (it.quantity as number)
+          : 1;
+      return {
+        // Medicine bill items don't reference the service catalog.
+        serviceCatalogItemId: undefined,
+        inventoryItemId: inventoryItem?._id,
+        // Display name: prefer inventory name (canonical) over the
+        // doctor's free text. Falls back to customName when neither
+        // resolved, so even unmatched lines render with a label.
+        customName:
+          inventoryItem?.name ?? it.customName?.trim() ?? 'Medicine',
+        quantity,
+        // Default to 0 — receptionist sets the price before issuing.
+        // Pulling unitCost from the latest batch would conflate cost and
+        // price; clinics mark up by varying amounts and we shouldn't guess.
+        unitPrice: 0,
+        amount: 0,
+      };
+    });
+
+    const { subtotal, discount, tax, total } = computeTotals({
+      items: lineItems,
+    });
+    const currency = await this.resolveCurrency(clinicId, undefined);
+
+    return await this.billModel.create({
+      clinicId,
+      branchId: rx.branchId,
+      patientId: rx.patientId,
+      // encounterId, but NOT appointmentId — the existing
+      // unique-bill-per-appointment index is for service bills. Keeping
+      // appointmentId null on medicine bills lets a single visit have
+      // both a service bill and a medicine bill without an index conflict.
+      encounterId: rx.encounterId,
+      currency,
+      items: lineItems,
+      subtotal,
+      discount,
+      tax,
+      total,
+      status: BillStatus.Draft,
+      kind: BillKind.Medicine,
       createdBy: actorUserId,
     });
   }
@@ -322,13 +502,106 @@ export class BillingService {
       totalPaid >= bill.total &&
       bill.total > 0
     ) {
-      await this.billModel.updateOne(
+      // findOneAndUpdate (not updateOne) so we can branch on whether
+      // this caller actually won the Issued → Paid transition. Two
+      // concurrent payments racing past the total: only one will see
+      // the matching status and trigger the dispense.
+      const flipped = await this.billModel.findOneAndUpdate(
         { _id: bill._id, clinicId, status: BillStatus.Issued },
         { $set: { status: BillStatus.Paid, paidAt: new Date() } },
+        { new: true },
       );
+
+      // Slice 5 — auto-dispense inventory for medicine bills the moment
+      // they become fully paid. Three guards in order:
+      //   1. We won the status flip (lost-race callers exit here).
+      //   2. Bill kind is MEDICINE.
+      //   3. inventoryDispensedAt is still null (idempotency stamp wins
+      //      over best-effort retries).
+      if (flipped && flipped.kind === BillKind.Medicine) {
+        await this.dispenseMedicineBill(flipped, actorUserId);
+      }
     }
 
     return { payment, replayed };
+  }
+
+  /**
+   * FIFO-deduct each medicine-bill line from inventory. Called once per
+   * bill at the moment its status flips to Paid. Idempotent: a follow-up
+   * call (refund-then-pay race) sees `inventoryDispensedAt` already
+   * stamped and exits without touching stock again.
+   *
+   * Per-line behaviour:
+   *   - Lines with `inventoryItemId`: dispense `quantity`. Insufficient
+   *     stock throws ConflictException, which we swallow and continue —
+   *     receptionist already saw the chip at billing time, we don't
+   *     pretend to roll back the payment over a stockout.
+   *   - Lines without `inventoryItemId` (free-text / unmatched): skipped.
+   */
+  private async dispenseMedicineBill(
+    bill: Bill & { _id: Types.ObjectId },
+    actorUserId: Types.ObjectId | undefined,
+  ): Promise<void> {
+    // Idempotency anchor: claim the dispense slot atomically before
+    // doing any inventory work. If another caller already stamped, we
+    // skip cleanly. The claim has no movement IDs yet — we'll patch
+    // them in below once dispenses complete.
+    //
+    // Filter is `as any` because Mongoose's strict typing rejects the
+    // `$in: [null, undefined]` idiom we want here (matches both rows
+    // that explicitly have null and rows that lack the field on legacy
+    // bills written before the Slice 1 schema change).
+    const claim = await this.billModel.findOneAndUpdate(
+      {
+        _id: bill._id,
+        clinicId: bill.clinicId,
+        kind: BillKind.Medicine,
+        inventoryDispensedAt: { $in: [null, undefined] },
+      } as any,
+      { $set: { inventoryDispensedAt: new Date() } },
+      { new: true },
+    );
+    if (!claim) return; // Already dispensed by a sibling caller — done.
+
+    const movementIds: Types.ObjectId[] = [];
+    for (const line of bill.items ?? []) {
+      if (!line.inventoryItemId || !line.quantity) continue;
+      try {
+        const result = await this.inventory.dispenseStock(
+          bill.clinicId,
+          actorUserId,
+          line.inventoryItemId.toHexString(),
+          {
+            quantity: Number(line.quantity),
+            billId: bill._id.toHexString(),
+            reason: `Auto-dispense from medicine bill ${bill.billNo ?? bill._id.toHexString().slice(-6)}`,
+          },
+        );
+        for (const m of result.movements ?? []) {
+          if ((m as any)._id) movementIds.push((m as any)._id as Types.ObjectId);
+        }
+      } catch (err) {
+        // ConflictException (insufficient stock) is the expected miss
+        // case; the receptionist saw the warning chip at billing time
+        // and accepted it. Anything else (DB errors etc.) we also
+        // swallow here so a stock-side hiccup doesn't strand the bill
+        // in a half-paid state — operator can manually reconcile via
+        // the inventory drawer.
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[BillingService] auto-dispense failed for bill ${bill._id.toHexString()} item ${line.inventoryItemId.toHexString()}:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+
+    if (movementIds.length > 0) {
+      await this.billModel.updateOne(
+        { _id: bill._id, clinicId: bill.clinicId },
+        { $set: { inventoryMovementIds: movementIds } },
+      );
+    }
   }
 
   async getBill(clinicId: Types.ObjectId, id: string) {
@@ -339,9 +612,15 @@ export class BillingService {
 
   async listBills(
     clinicId: Types.ObjectId,
-    opts: { branchId?: string; patientId?: string; status?: string; limit?: number } = {},
+    opts: {
+      branchId?: string;
+      patientId?: string;
+      status?: string;
+      kind?: string;
+      limit?: number;
+    } = {},
   ) {
-    const { branchId, patientId, status, limit = 100 } = opts;
+    const { branchId, patientId, status, kind, limit = 100 } = opts;
     const match: Record<string, unknown> = { clinicId };
     if (branchId) match.branchId = new Types.ObjectId(branchId);
     // Patient filter — without this, /bills?patientId=… returned every bill
@@ -359,6 +638,15 @@ export class BillingService {
         upper === BillStatus.Void
       ) {
         match.status = upper;
+      }
+    }
+    // Kind filter — Pharmacy screen passes 'MEDICINE'; the existing
+    // BillingScreen lists everything (or filters to SERVICE later in
+    // Slice 6). Unknown values are ignored rather than rejected.
+    if (kind) {
+      const upper = kind.toUpperCase();
+      if (upper === BillKind.Service || upper === BillKind.Medicine) {
+        match.kind = upper;
       }
     }
 
@@ -395,7 +683,11 @@ export class BillingService {
         },
       },
       { $sort: { createdAt: -1 } },
-      { $limit: Math.max(1, Math.min(500, limit)) },
+      // Hard cap at 2000 so the "Load older" expansion path on the FE
+      // can reach the historical tail of busy clinics without a full
+      // cursor-pager. Above 2000 the FE ought to switch to filtered
+      // search rather than paginate.
+      { $limit: Math.max(1, Math.min(2000, limit)) },
       { $project: { payments: 0, patient: 0 } },
     ]);
 
@@ -499,6 +791,9 @@ export class BillingService {
     clinicId: Types.ObjectId,
     items: Array<{
       serviceCatalogItemId?: string;
+      // Set on MEDICINE-bill lines so dispense (Slice 5) can resolve
+      // the stock row directly. SERVICE-bill lines won't carry this.
+      inventoryItemId?: string;
       customName?: string;
       quantity: number;
       unitPrice: number;
@@ -528,11 +823,16 @@ export class BillingService {
       const hasCatalog =
         typeof i.serviceCatalogItemId === 'string' &&
         i.serviceCatalogItemId.length > 0;
+      const hasInventory =
+        typeof i.inventoryItemId === 'string' &&
+        i.inventoryItemId.length > 0;
       const hasCustom =
         typeof i.customName === 'string' && i.customName.trim().length > 0;
-      if (!hasCatalog && !hasCustom)
+      // A MEDICINE line resolves via inventoryItemId; SERVICE lines via
+      // serviceCatalogItemId. Either can also carry a free-text name.
+      if (!hasCatalog && !hasInventory && !hasCustom)
         throw new BadRequestException(
-          'Each item must have serviceCatalogItemId or customName',
+          'Each item must have serviceCatalogItemId, inventoryItemId, or customName',
         );
 
       const service = hasCatalog
@@ -544,6 +844,9 @@ export class BillingService {
       return {
         serviceCatalogItemId: hasCatalog
           ? new Types.ObjectId(i.serviceCatalogItemId)
+          : undefined,
+        inventoryItemId: hasInventory
+          ? new Types.ObjectId(i.inventoryItemId)
           : undefined,
         customName: hasCustom ? i.customName!.trim() : service?.name,
         quantity: qty,

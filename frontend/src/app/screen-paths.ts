@@ -17,6 +17,7 @@ export const SCREEN_PATHS: Record<ScreenKey, string> = {
   reports: '/reports',
   notifications: '/notifications',
   inventory: '/inventory',
+  pharmacy: '/pharmacy',
   users: '/users',
   roles: '/roles',
   settings: '/settings',

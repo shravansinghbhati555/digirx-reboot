@@ -30,11 +30,18 @@ describe('DocumentsService share flow', () => {
         .fn()
         .mockResolvedValue(new Date(Date.now() + 365 * 86_400_000)),
     };
+    // Friend added a StorageService dep for the hard-delete path
+    // (deleteDocument). Tests don't exercise that path, so a stub with
+    // the methods the service calls is enough.
+    const storageService = {
+      deleteObject: jest.fn().mockResolvedValue(undefined),
+    };
     service = new DocumentsService(
       docModel,
       shareModel,
       accessLogModel,
       retention,
+      storageService as any,
     );
   });
 

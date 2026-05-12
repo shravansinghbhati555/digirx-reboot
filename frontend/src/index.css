@@ -63,16 +63,16 @@
 }
 
 [data-theme="dark"] {
-  --bg:            #0B0F17;
-  --surface:       #121826;
-  --surface-muted: #1A2233;
-  --border:        #232B3D;
-  --border-strong: #2E3A50;
-  --text:          #E6EBF2;
-  --text-muted:    #97A2B5;
-  --text-subtle:   #5A6880;
-  --brand-50:      #0D1B33;
-  --brand-100:     #1A2E4A;
+  --bg:            #0B0E14;
+  --surface:       #11151D;
+  --surface-muted: #181D26;
+  --border:        #1F2530;
+  --border-strong: #2A313D;
+  --text:          #F1F5F9;
+  --text-muted:    #94A3B8;
+  --text-subtle:   #475569;
+  --brand-50:      #0F172A;
+  --brand-100:     #1E293B;
 }
 
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -250,4 +250,42 @@ button {
 .time-picker-custom::-webkit-calendar-picker-indicator {
   display: none !important;
   -webkit-appearance: none;
+}
+
+/* ---------- Themed native pickers (calendar / time / select) -----------
+   The browser's built-in popovers for <input type="date">, <input
+   type="time"> and <select> read `color-scheme` to decide between their
+   light and dark chrome. Setting it on every relevant control means the
+   popover that drops down from a date field automatically renders dark
+   in dark mode and light in light mode. accent-color tints the selected
+   day / checked radio with the brand blue.
+   color-scheme is inherited, but native form controls deliberately
+   ignore inheritance and read it from their own computed style — hence
+   the explicit selectors here. */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"],
+input[type="month"],
+input[type="week"],
+select {
+  color-scheme: light;
+  accent-color: var(--brand-500);
+}
+[data-theme='dark'] input[type="date"],
+[data-theme='dark'] input[type="time"],
+[data-theme='dark'] input[type="datetime-local"],
+[data-theme='dark'] input[type="month"],
+[data-theme='dark'] input[type="week"],
+[data-theme='dark'] select {
+  color-scheme: dark;
+}
+/* The calendar-picker icon is a Chromium-rendered glyph — invert it in
+   dark mode so it's visible against the dark input background. */
+[data-theme='dark'] input[type="date"]::-webkit-calendar-picker-indicator,
+[data-theme='dark'] input[type="time"]::-webkit-calendar-picker-indicator,
+[data-theme='dark'] input[type="datetime-local"]::-webkit-calendar-picker-indicator,
+[data-theme='dark'] input[type="month"]::-webkit-calendar-picker-indicator,
+[data-theme='dark'] input[type="week"]::-webkit-calendar-picker-indicator {
+  filter: invert(0.85);
+  cursor: pointer;
 }

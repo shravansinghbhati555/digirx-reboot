@@ -26,12 +26,18 @@ export class AccessLogsService {
       path?: string;
       method?: string;
       statusCode?: number;
+      /** When true, only return mutating verbs (POST/PATCH/PUT/DELETE).
+       *  Useful for the Dashboard "Recent activity" feed which would
+       *  otherwise be filled with /reports/* GETs from its own polling
+       *  and never surface an actual create/update event. */
+      writesOnly?: boolean;
     },
   ) {
     const limit = Math.max(1, Math.min(200, query.limit ?? 50));
     const filter: any = { clinicId };
     if (query.path) filter.path = query.path;
     if (query.method) filter.method = query.method.toUpperCase();
+    else if (query.writesOnly) filter.method = { $in: ['POST', 'PATCH', 'PUT', 'DELETE'] };
     if (query.statusCode) filter.statusCode = query.statusCode;
     if (query.before) {
       const d = new Date(query.before);

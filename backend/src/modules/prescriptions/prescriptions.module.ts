@@ -7,10 +7,15 @@ import { PdfModule } from '../pdf/pdf.module';
 import { StorageModule } from '../storage/storage.module';
 import { PrescriptionsController } from './prescriptions.controller';
 import { PrescriptionsService } from './prescriptions.service';
+import { PrescriptionNumberingService } from './prescription-numbering.service';
 import {
   Prescription,
   PrescriptionSchema,
 } from './schemas/prescription.schema';
+import {
+  PrescriptionCounter,
+  PrescriptionCounterSchema,
+} from './schemas/prescription-counter.schema';
 import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
 import { User, UserSchema } from '../authz/schemas/user.schema';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
@@ -21,6 +26,7 @@ import { Encounter, EncounterSchema } from '../encounters/schemas/encounter.sche
   imports: [
     MongooseModule.forFeature([
       { name: Prescription.name, schema: PrescriptionSchema },
+      { name: PrescriptionCounter.name, schema: PrescriptionCounterSchema },
       { name: Patient.name, schema: PatientSchema },
       { name: User.name, schema: UserSchema },
       { name: Clinic.name, schema: ClinicSchema },
@@ -34,6 +40,6 @@ import { Encounter, EncounterSchema } from '../encounters/schemas/encounter.sche
     MedicinesModule,
   ],
   controllers: [PrescriptionsController],
-  providers: [PrescriptionsService],
+  providers: [PrescriptionsService, PrescriptionNumberingService],
 })
 export class PrescriptionsModule {}

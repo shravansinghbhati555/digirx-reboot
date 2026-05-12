@@ -1,4 +1,15 @@
-import { ArrayMinSize, IsArray, IsMongoId, IsOptional, IsString, MaxLength, ValidateNested } from 'class-validator';
+import {
+  ArrayMinSize,
+  IsArray,
+  IsInt,
+  IsMongoId,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+  ValidateNested,
+} from 'class-validator';
 import { Type } from 'class-transformer';
 
 export class CreatePrescriptionItemDto {
@@ -30,6 +41,13 @@ export class CreatePrescriptionItemDto {
   @IsString()
   @MaxLength(1000)
   instructions?: string;
+
+  /** Total units to dispense at the pharmacy (e.g. 10 tablets). */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(10_000)
+  quantity?: number;
 }
 
 export class CreatePrescriptionDto {
