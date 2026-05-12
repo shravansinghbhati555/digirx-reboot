@@ -14,6 +14,7 @@ import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { AuthService } from './auth.service';
 import { LoginDto } from './dto/login.dto';
+import { SignupDto } from './dto/signup.dto';
 
 const REFRESH_COOKIE = 'digirx_refresh';
 
@@ -39,6 +40,32 @@ export class AuthController {
       userId: out.userId,
       clinicId: out.clinicId,
       branchId: out.branchId,
+    };
+  }
+
+  // Capped at 3/min/IP — signup creates a Clinic + admin User and we
+  // don't want it abused for tenant-spam. Lighter than the 10/min login
+  // throttle because the cost of a successful signup is much higher.
+  @Post('signup')
+  @Public()
+  @Throttle({ default: { limit: 3, ttl: 60_000 } })
+  async signup(
+    @Body() body: SignupDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const out = await this.auth.signup(body);
+    res.cookie(
+      REFRESH_COOKIE,
+      `${out.refresh.sessionId}.${out.refresh.refreshToken}`,
+      refreshCookieOptions(out.refresh.expiresAt),
+    );
+    return {
+      accessToken: out.accessToken,
+      userId: out.userId,
+      clinicId: out.clinicId,
+      branchId: out.branchId,
+      clinicName: out.clinicName,
+      branchName: out.branchName,
     };
   }
 

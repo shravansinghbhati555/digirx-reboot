@@ -1,10 +1,15 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import bcrypt from 'bcrypt';
 import crypto from 'crypto';
+import { DateTime } from 'luxon';
 import { Model, Types } from 'mongoose';
+import { Role } from '../authz/schemas/role.schema';
 import { User, UserStatus } from '../authz/schemas/user.schema';
+import { Permission } from '../authz/permissions';
+import { Clinic } from '../tenancy/schemas/clinic.schema';
+import { Branch } from '../tenancy/schemas/branch.schema';
 import { JwtClaims } from './auth.types';
 import { Session } from './schemas/session.schema';
 
@@ -12,6 +17,9 @@ import { Session } from './schemas/session.schema';
 export class AuthService {
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
+    @InjectModel(Role.name) private readonly roleModel: Model<Role>,
+    @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
+    @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
     @InjectModel(Session.name) private readonly sessionModel: Model<Session>,
     private readonly jwt: JwtService,
   ) { }
@@ -48,6 +56,105 @@ export class AuthService {
       sessionId: session._id.toHexString(),
       refreshToken: raw,
       expiresAt,
+    };
+  }
+
+  /**
+   * Bootstrap a new clinic + admin in one call. Creates Clinic, a default
+   * Branch, an "Admin" Role with every Permission, and the admin User with
+   * a bcrypt-hashed password. Auto-issues an access token + refresh session
+   * so the caller can drop straight into the app like login does.
+   *
+   * Idempotency is intentionally NOT provided: a clinic with the same name
+   * is allowed (clinics aren't unique by name in the schema), but the
+   * (clinicId, email) compound index will block a duplicate admin inside
+   * the same clinic.
+   */
+  async signup(input: {
+    clinicName: string;
+    branchName?: string;
+    countryCode?: string;
+    timezone?: string;
+    currency?: string;
+    phoneCountryCode?: string;
+    adminName: string;
+    adminEmail: string;
+    password: string;
+  }) {
+    const timezone = input.timezone || 'Asia/Kolkata';
+    if (!DateTime.local().setZone(timezone).isValid) {
+      throw new BadRequestException(`Invalid IANA timezone: ${timezone}`);
+    }
+    const email = input.adminEmail.trim().toLowerCase();
+
+    const clinic = await this.clinicModel.create({
+      name: input.clinicName.trim(),
+      countryCode: (input.countryCode || 'IN').toUpperCase(),
+      timezone,
+      currency: (input.currency || 'INR').toUpperCase(),
+      phoneCountryCode: input.phoneCountryCode || '+91',
+      settings: {},
+    });
+
+    const branch = await this.branchModel.create({
+      clinicId: clinic._id,
+      name: (input.branchName || 'Main').trim(),
+      active: true,
+    });
+
+    const adminRole = await this.roleModel.create({
+      clinicId: clinic._id,
+      name: 'Admin',
+      permissions: Object.values(Permission),
+    });
+
+    const passwordHash = await bcrypt.hash(input.password, 10);
+    let user;
+    try {
+      user = await this.userModel.create({
+        clinicId: clinic._id,
+        branchIds: [branch._id],
+        defaultBranchId: branch._id,
+        email,
+        name: input.adminName.trim(),
+        status: UserStatus.Active,
+        passwordHash,
+        roleIds: [adminRole._id],
+      });
+    } catch (e) {
+      // Unique-index collision on (clinicId, email) — extremely unlikely
+      // for a brand-new clinic, but guard anyway so we don't leave a
+      // half-formed tenant if a race somehow lands here.
+      if ((e as { code?: number }).code === 11000) {
+        throw new ConflictException('Email already in use in this clinic');
+      }
+      throw e;
+    }
+
+    const claims: JwtClaims = {
+      sub: user._id.toHexString(),
+      clinicId: clinic._id.toHexString(),
+      branchId: branch._id.toHexString(),
+    };
+    const accessToken = await this.accessToken(claims);
+    const refresh = await this.issueRefreshSession({
+      clinicId: clinic._id,
+      userId: user._id,
+      branchId: branch._id,
+    });
+
+    return {
+      accessToken,
+      refresh: {
+        sessionId: refresh.sessionId,
+        refreshToken: refresh.refreshToken,
+        expiresAt: refresh.expiresAt,
+      },
+      userId: claims.sub,
+      clinicId: claims.clinicId,
+      branchId: claims.branchId!,
+      clinicName: clinic.name,
+      branchName: branch.name,
     };
   }
 

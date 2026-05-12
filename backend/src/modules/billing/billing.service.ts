@@ -6,6 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
+import { DateTime } from 'luxon';
 import { Model, Types } from 'mongoose';
 import { computeTotals } from './billing.utils';
 import { BillNumberingService } from './bill-numbering.service';
@@ -617,10 +618,11 @@ export class BillingService {
       patientId?: string;
       status?: string;
       kind?: string;
+      date?: string;
       limit?: number;
     } = {},
   ) {
-    const { branchId, patientId, status, kind, limit = 100 } = opts;
+    const { branchId, patientId, status, kind, date, limit = 100 } = opts;
     const match: Record<string, unknown> = { clinicId };
     if (branchId) match.branchId = new Types.ObjectId(branchId);
     // Patient filter — without this, /bills?patientId=… returned every bill
@@ -628,6 +630,20 @@ export class BillingService {
     // currently selected. Real cross-patient leak inside a tenant.
     if (patientId && Types.ObjectId.isValid(patientId)) {
       match.patientId = new Types.ObjectId(patientId);
+    }
+    // Date filter — `date=YYYY-MM-DD` is interpreted in the clinic's
+    // local timezone and applied to `createdAt`. Lets the global header
+    // date filter narrow the bill list to "what got billed that day".
+    if (date && /^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      const clinic = await this.clinicModel.findById(clinicId);
+      const tz = clinic?.timezone || 'UTC';
+      const day = DateTime.fromISO(date, { zone: tz });
+      if (day.isValid) {
+        match.createdAt = {
+          $gte: day.startOf('day').toUTC().toJSDate(),
+          $lte: day.endOf('day').toUTC().toJSDate(),
+        };
+      }
     }
     if (status) {
       const upper = status.toUpperCase();
