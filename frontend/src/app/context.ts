@@ -10,6 +10,8 @@ export type DevContext = {
   accessToken?: string;
   email?: string;
   fullName?: string;
+  /** IANA timezone string (Asia/Kolkata, …). Drives date calculations. */
+  timezone?: string;
   permissions?: string[];
 };
 

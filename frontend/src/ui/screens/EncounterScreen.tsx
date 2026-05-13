@@ -71,6 +71,7 @@ const VITAL_FIELDS: { key: string; label: string; unit: string }[] = [
   { key: 'pulse', label: 'Pulse', unit: 'bpm' },
   { key: 'rr', label: 'RR', unit: '/min' },
   { key: 'weight', label: 'Weight', unit: 'kg' },
+  { key: 'height', label: 'Height', unit: 'cm' },
 ];
 
 function getAge(dob?: string): number | null {
@@ -93,7 +94,7 @@ function genderWord(g?: string): string {
 }
 
 function mapVitalsToUi(v: any): Record<string, string> {
-  const out = { bp: '', spo2: '', temp: '', pulse: '', rr: '', weight: '' };
+  const out = { bp: '', spo2: '', temp: '', pulse: '', rr: '', weight: '', height: '' };
   if (!v || typeof v !== 'object') return out;
   if (v.bpSystolic != null && v.bpDiastolic != null) {
     out.bp = `${v.bpSystolic}/${v.bpDiastolic}`;
@@ -115,6 +116,8 @@ function mapVitalsToUi(v: any): Record<string, string> {
   else if (v.rr) out.rr = String(v.rr);
   if (v.weightKg != null) out.weight = String(v.weightKg);
   else if (v.weight) out.weight = String(v.weight);
+  if (v.heightCm != null) out.height = String(v.heightCm);
+  else if (v.height) out.height = String(v.height);
   return out;
 }
 
@@ -149,7 +152,30 @@ function mapVitalsToBe(v: Record<string, string>): Record<string, any> {
     const val = parseFloat(v.weight);
     if (!isNaN(val)) out.weightKg = val;
   }
+  if (v.height) {
+    const val = parseFloat(v.height);
+    if (!isNaN(val)) out.heightCm = val;
+  }
   return out;
+}
+
+function statusToken(s: string): string {
+  return (s || '').toLowerCase().replace(/_/g, '-');
+}
+
+function isoToTime(iso: string | undefined): string {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return iso;
+  return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: true });
+}
+
+function isoToRange(start: string | undefined, end: string | undefined): string {
+  if (!start) return '—';
+  const st = isoToTime(start);
+  if (!end) return st;
+  const et = isoToTime(end);
+  return `${st} - ${et}`;
 }
 
 export function EncounterScreen() {
@@ -164,6 +190,8 @@ export function EncounterScreen() {
   const [recent, setRecent] = useState<(Encounter & { patientId: { fullName: string; mrn?: string } })[]>([]);
   const [loadingRecent, setLoadingRecent] = useState(false);
   const [recentQuery, setRecentQuery] = useState('');
+  const [queue, setQueue] = useState<any[]>([]);
+  const [loadingQueue, setLoadingQueue] = useState(false);
 
   // Patient search (only used while no patient is selected)
   const [patientQuery, setPatientQuery] = useState('');
@@ -192,10 +220,12 @@ export function EncounterScreen() {
           setEncounterId(enc._id);
           const pid = typeof enc.patientId === 'object' ? enc.patientId._id : enc.patientId;
           setPatientId(pid);
+          // Clear it so we don't jump back here if we navigate away and return
+          setSelectedAppointmentId(undefined);
         }
       })
       .catch(() => undefined);
-  }, [selectedAppointmentId, ctx]);
+  }, [selectedAppointmentId, ctx, setSelectedAppointmentId]);
 
   useEffect(() => {
     if (encounter) return;
@@ -205,6 +235,26 @@ export function EncounterScreen() {
       .catch(() => setRecent([]))
       .finally(() => setLoadingRecent(false));
   }, [encounter, ctx]);
+
+  useEffect(() => {
+    if (encounter) return;
+    setLoadingQueue(true);
+    // Use the clinic's timezone to calculate "Today"
+    const tz = ctx.timezone || 'Asia/Kolkata';
+    const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+
+    const qs = new URLSearchParams({
+      branchId: ctx.branchId || '',
+      date: today,
+    });
+    apiGet<any[]>(ctx, `/appointments?${qs.toString()}`)
+      .then((appts) => {
+        // Show both waiting (CHECKED_IN) and active (IN_PROGRESS) patients
+        setQueue(appts.filter(a => a.status === 'CHECKED_IN' || a.status === 'IN_PROGRESS'));
+      })
+      .catch(() => setQueue([]))
+      .finally(() => setLoadingQueue(false));
+  }, [encounter, ctx.branchId]);
 
   useEffect(() => {
     if (!patientId.trim()) { setPatient(null); return; }
@@ -249,6 +299,29 @@ export function EncounterScreen() {
       setDoctorId(enc.doctorId);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function startFromQueue(appt: any) {
+    setError(null);
+    try {
+      // 1. Look for existing draft encounter for this appointment
+      const existing = await apiGet<any>(ctx, `/encounters/by-appointment/${appt._id}`);
+      if (existing) {
+        await loadEncounter(existing._id);
+        return;
+      }
+
+      // 2. If no draft exists (fallback), start a new one
+      setPatientId(appt.patientId._id || appt.patientId);
+      setDoctorId(appt.doctorId);
+      setSelectedAppointmentId(appt._id);
+      await startEncounter();
+    } catch (e) {
+      setPatientId(appt.patientId._id || appt.patientId);
+      setDoctorId(appt.doctorId);
+      setSelectedAppointmentId(appt._id);
+      await startEncounter();
     }
   }
 
@@ -305,7 +378,7 @@ export function EncounterScreen() {
           {/* Left Side: Start New */}
           <div style={{ flex: 1, minWidth: 380, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 24, display: 'flex', flexDirection: 'column', gap: 20 }}>
             <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', marginBottom: -4 }}>Start session</div>
-            
+
             {/* Patient picker */}
             <div>
               <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>Patient</label>
@@ -423,7 +496,7 @@ export function EncounterScreen() {
                         onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-muted)')}
                         onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
                       >
-                          <Avatar name={typeof r.patientId === 'object' ? r.patientId.fullName : '?'} size={36} />
+                        <Avatar name={typeof r.patientId === 'object' ? r.patientId.fullName : '?'} size={36} />
                         <div style={{ flex: 1, minWidth: 0 }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
@@ -446,7 +519,64 @@ export function EncounterScreen() {
                 )}
               </div>
             </div>
-            
+
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, display: 'flex', flexDirection: 'column', flex: 1 }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>Patients waiting</div>
+                <div style={{ fontSize: 12, color: 'var(--brand-600)', fontWeight: 600 }}>{queue.length} ready</div>
+              </div>
+
+              <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
+                {loadingQueue ? (
+                  <div style={{ padding: 40, textAlign: 'center' }}><Spinner /></div>
+                ) : queue.length === 0 ? (
+                  <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>
+                    No patients waiting in the queue.
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {queue.map((a) => (
+                      <button key={a._id} onClick={() => startFromQueue(a)}
+                        style={{
+                          width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px',
+                          textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderRadius: 10,
+                          transition: 'background 100ms', border: '1px solid transparent'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'var(--brand-50)';
+                          e.currentTarget.style.borderColor = 'var(--brand-100)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'none';
+                          e.currentTarget.style.borderColor = 'transparent';
+                        }}
+                      >
+                        <Avatar name={a.patientId?.fullName || '?'} size={36} />
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                            <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+                              {a.patientId?.fullName || '—'}
+                            </span>
+                            <StatusPill status={statusToken(a.status)} small />
+                          </div>
+                          <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 2, fontWeight: 500 }}>
+                            {a.type === 'QUEUE' ? `Token #${a.queueNumber}` : isoToRange(a.startAt, a.endAt)}
+                            {' · '}
+                            {a.status === 'IN_PROGRESS' ? (
+                              <span style={{ color: 'var(--info-700)', fontWeight: 600 }}>In consultation</span>
+                            ) : (
+                              <span style={{ color: 'var(--success-700)', fontWeight: 600 }}>Ready for visit</span>
+                            )}
+                          </div>
+                        </div>
+                        <Icon name="play" size={14} style={{ color: 'var(--brand-500)' }} />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+
             <div style={{ padding: '0 8px', fontSize: 11, color: 'var(--text-subtle)', display: 'flex', alignItems: 'center', gap: 6 }}>
               <Icon name="info" size={12} />
               Showing up to 50 most recent sessions from all branches.
@@ -457,7 +587,19 @@ export function EncounterScreen() {
     );
   }
 
-  return <EncounterEditor encounter={encounter} patient={patient} onChanged={setEncounter} onClose={() => { setEncounter(null); setEncounterId(undefined); }} />;
+  return (
+    <EncounterEditor
+      encounter={encounter}
+      patient={patient}
+      onChanged={setEncounter}
+      onClose={() => {
+        setEncounter(null);
+        setEncounterId(undefined);
+        setSelectedAppointmentId(undefined);
+        setSelectedEncounterId(undefined);
+      }}
+    />
+  );
 }
 
 function EncounterEditor({
@@ -639,20 +781,20 @@ function EncounterEditor({
               ctx,
               `/encounters/${encounter._id}/prescriptions`,
               {
-              items: filled.map((r) => ({
-                // Prefer the medicineCatalogItemId when the doctor picked an
-                // inventory option — the medicine bill drafter (Slice 3)
-                // resolves stock through it. Free-text rows persist only the
-                // customName.
-                medicineCatalogItemId: r.medicineCatalogItemId || undefined,
-                customName: r.med,
-                dosage: r.dose || undefined,
-                frequency: r.freq || undefined,
-                duration: r.dur || undefined,
-                instructions: r.note || undefined,
-                quantity: r.qty.trim() ? Number(r.qty) || undefined : undefined,
-              })),
-            });
+                items: filled.map((r) => ({
+                  // Prefer the medicineCatalogItemId when the doctor picked an
+                  // inventory option — the medicine bill drafter (Slice 3)
+                  // resolves stock through it. Free-text rows persist only the
+                  // customName.
+                  medicineCatalogItemId: r.medicineCatalogItemId || undefined,
+                  customName: r.med,
+                  dosage: r.dose || undefined,
+                  frequency: r.freq || undefined,
+                  duration: r.dur || undefined,
+                  instructions: r.note || undefined,
+                  quantity: r.qty.trim() ? Number(r.qty) || undefined : undefined,
+                })),
+              });
             if (res?._id) setPrescriptionId(res._id);
             if (res?.prescriptionNo) setPrescriptionNo(res.prescriptionNo);
           }
@@ -788,7 +930,7 @@ function EncounterEditor({
           </code>
           <div style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 14, marginBottom: 6 }}>Visited</div>
           <div style={{ color: 'var(--text-muted)' }}>{new Date(encounter.visitedAt).toLocaleString('en-IN')}</div>
-          
+
           <div style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 14, marginBottom: 8 }}>Billing</div>
           {billLoading ? (
             <Skeleton height={40} width="100%" radius={10} />

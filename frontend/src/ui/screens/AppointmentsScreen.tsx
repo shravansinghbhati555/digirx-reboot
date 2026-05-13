@@ -14,7 +14,7 @@ type Appointment = {
   type: AppointmentType;
   status: string;
   doctorId: string;
-  patientId: string;
+  patientId: any;
   startAt?: string;
   endAt?: string;
   queueDate?: string;
@@ -32,14 +32,23 @@ type PatientLite = {
   tags?: string[];
 };
 
+type UserListItem = {
+  _id: string;
+  name: string;
+  roleIds: string[];
+  branchIds: string[];
+  roles: { _id: string; name: string }[];
+};
+
 // MRN is the human-readable identifier; fall back to a `_id` tail only when
 // no MRN was minted (legacy data) or when the patient lookup hasn't resolved.
 function patientRefLabel(
   p: { mrn?: string; _id: string } | undefined,
-  id?: string,
+  id?: any,
 ): string {
   if (p?.mrn) return p.mrn;
-  const fallback = (p?._id ?? id ?? '').slice(-6);
+  const rawId = typeof id === 'object' ? id?._id : id;
+  const fallback = (p?._id ?? rawId ?? '').toString().slice(-6);
   return fallback ? `#${fallback}` : '—';
 }
 
@@ -337,20 +346,33 @@ export function AppointmentsScreen() {
       const qs = new URLSearchParams({ branchId: ctx.branchId, date });
       const data = await apiGet<Appointment[]>(ctx, `/appointments?${qs.toString()}`);
       setItems(data);
-      // Lazy-load patient names
-      const ids = Array.from(new Set(data.map((a) => a.patientId).filter(Boolean)));
-      if (ids.length) {
-        const next = new Map(patients);
-        await Promise.all(ids.filter((id) => !next.has(id)).map(async (id) => {
-          try {
-            const p = await apiGet<PatientLite>(ctx, `/patients/${id}`);
-            next.set(id, p);
-          } catch {
-            next.set(id, { _id: id, fullName: id.slice(-6) });
-          }
-        }));
-        setPatients(next);
+      // Populate the patients map from the already-populated data if available,
+      // otherwise lazy-load the rest.
+      const next = new Map(patients);
+      const missingIds: string[] = [];
+
+      for (const a of data) {
+        if (!a.patientId) continue;
+        if (typeof a.patientId === 'object' && a.patientId._id) {
+          next.set(a.patientId._id, a.patientId);
+        } else if (typeof a.patientId === 'string' && !next.has(a.patientId)) {
+          missingIds.push(a.patientId);
+        }
       }
+
+      if (missingIds.length > 0) {
+        await Promise.all(
+          Array.from(new Set(missingIds)).map(async (id) => {
+            try {
+              const p = await apiGet<PatientLite>(ctx, `/patients/${id}`);
+              next.set(id, p);
+            } catch {
+              next.set(id, { _id: id, fullName: id.slice(-6) });
+            }
+          })
+        );
+      }
+      setPatients(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -387,17 +409,36 @@ export function AppointmentsScreen() {
         return [d, [] as Appointment[]] as const;
       }
     }))
-      .then((results) => {
+      .then(async (results) => {
         const map = new Map<string, Appointment[]>();
         results.forEach(([d, items]) => map.set(d, items));
         setWeekItems(map);
         // Also pull in patient names from week data
-        const ids = Array.from(new Set(results.flatMap(([, items]) => items.map((a) => a.patientId))));
         const next = new Map(patients);
-        Promise.all(ids.filter((id) => !next.has(id)).map(async (id) => {
-          try { next.set(id, await apiGet<PatientLite>(ctx, `/patients/${id}`)); }
-          catch { next.set(id, { _id: id, fullName: id.slice(-6) }); }
-        })).then(() => setPatients(next));
+        const missingIds: string[] = [];
+
+        results.flatMap(([, items]) => items).forEach(a => {
+          if (!a.patientId) return;
+          if (typeof a.patientId === 'object' && a.patientId._id) {
+            next.set(a.patientId._id, a.patientId);
+          } else if (typeof a.patientId === 'string' && !next.has(a.patientId)) {
+            missingIds.push(a.patientId);
+          }
+        });
+
+        if (missingIds.length > 0) {
+          await Promise.all(
+            Array.from(new Set(missingIds)).map(async (id) => {
+              try {
+                const p = await apiGet<PatientLite>(ctx, `/patients/${id}`);
+                next.set(id, p);
+              } catch {
+                next.set(id, { _id: id, fullName: id.slice(-6) });
+              }
+            })
+          );
+        }
+        setPatients(next);
       })
       .finally(() => setWeekLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -433,8 +474,10 @@ export function AppointmentsScreen() {
     setDate(d.toISOString().slice(0, 10));
   }
 
-  function getName(id: string): string {
-    return patients.get(id)?.fullName ?? id.slice(-6);
+  function getName(id: any): string {
+    const stringId = typeof id === 'object' ? id?._id : id;
+    if (!stringId) return '—';
+    return patients.get(stringId)?.fullName ?? (typeof stringId === 'string' ? stringId.slice(-6) : '—');
   }
 
   return (
@@ -654,6 +697,7 @@ function ApptSheet({
   const [busy, setBusy] = useState(false);
   const [bill, setBill] = useState<any>(null);
   const [billLoading, setBillLoading] = useState(true);
+  const [showTriage, setShowTriage] = useState(false);
 
   useEffect(() => {
     setBillLoading(true);
@@ -664,16 +708,7 @@ function ApptSheet({
   }, [appt._id, ctx]);
 
   async function checkIn() {
-    setBusy(true);
-    try {
-      await apiPost(ctx, `/appointments/${appt._id}/checkin`, {});
-      toast(`${patientName} checked in`, 'success');
-      onChanged();
-    } catch (e) {
-      toast(e instanceof Error ? e.message : 'Check-in failed', 'error');
-    } finally {
-      setBusy(false);
-    }
+    setShowTriage(true);
   }
 
   function startEncounter() {
@@ -790,7 +825,160 @@ function ApptSheet({
             </button>
           )}
         </div>
+
+        {showTriage && (
+          <TriageModal
+            appt={appt}
+            patientName={patientName}
+            onClose={() => setShowTriage(false)}
+            onSaved={() => {
+              setShowTriage(false);
+              onChanged();
+            }}
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+function TriageModal({
+  appt, patientName, onClose, onSaved,
+}: {
+  appt: Appointment; patientName: string; onClose: () => void; onSaved: () => void;
+}) {
+  const { ctx } = useApp();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [complaint, setComplaint] = useState('');
+  const [vitals, setVitals] = useState<Record<string, string>>({
+    bp: '', spo2: '', temp: '', pulse: '', rr: '', weight: '', height: ''
+  });
+
+  async function save() {
+    setBusy(true);
+    try {
+      // 1. Check in if still BOOKED
+      if (appt.status === 'BOOKED') {
+        await apiPost(ctx, `/appointments/${appt._id}/checkin`, {});
+      }
+      
+      // 2. Create/Get Encounter Draft
+      let encId: string;
+      try {
+        const existing = await apiGet<any>(ctx, `/encounters/by-appointment/${appt._id}`);
+        encId = existing._id;
+      } catch {
+        const newEnc = await apiPost<any>(ctx, '/encounters', {
+          appointmentId: appt._id,
+          patientId: appt.patientId?._id || appt.patientId,
+          doctorId: appt.doctorId,
+          branchId: ctx.branchId,
+          chiefComplaint: complaint,
+        });
+        encId = newEnc._id;
+      }
+
+      // 3. Save Vitals (using same mapping as EncounterScreen)
+      const out: Record<string, any> = {};
+      if (vitals.bp) {
+        const parts = vitals.bp.split('/');
+        const sys = parseInt(parts[0]?.trim());
+        const dia = parseInt(parts[1]?.trim());
+        if (!isNaN(sys)) out.bpSystolic = sys;
+        if (!isNaN(dia)) out.bpDiastolic = dia;
+      }
+      if (vitals.spo2) {
+        const val = parseInt(vitals.spo2);
+        if (!isNaN(val)) out.spo2 = val;
+      }
+      if (vitals.temp) {
+        const val = parseFloat(vitals.temp);
+        if (!isNaN(val)) out.temperatureC = parseFloat(((val - 32) * 5 / 9).toFixed(1));
+      }
+      if (vitals.pulse) {
+        const val = parseInt(vitals.pulse);
+        if (!isNaN(val)) out.pulseBpm = val;
+      }
+      if (vitals.rr) {
+        const val = parseInt(vitals.rr);
+        if (!isNaN(val)) out.respiratoryRate = val;
+      }
+      if (vitals.weight) {
+        const val = parseFloat(vitals.weight);
+        if (!isNaN(val)) out.weightKg = val;
+      }
+      if (vitals.height) {
+        const val = parseFloat(vitals.height);
+        if (!isNaN(val)) out.heightCm = val;
+      }
+
+      await apiPatch(ctx, `/encounters/${encId}`, { 
+        vitals: out, 
+        chiefComplaint: complaint || undefined 
+      });
+
+      // 4. Status is already CHECKED_IN from step 1
+      toast('Triage completed & Patient checked in', 'success');
+      onSaved();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Failed to save triage', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+       <div className="modal-content" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, width: '100%', maxWidth: 440, padding: 24, boxShadow: 'var(--e4)' }}>
+         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+           <div>
+             <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Patient Triage</h3>
+             <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{patientName}</p>
+           </div>
+           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-subtle)', cursor: 'pointer' }}><Icon name="x" size={20} /></button>
+         </div>
+
+         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <ModalInput label="Weight (kg)" value={vitals.weight} onChange={v => setVitals({...vitals, weight: v})} type="number" />
+              <ModalInput label="Height (cm)" value={vitals.height} onChange={v => setVitals({...vitals, height: v})} type="number" />
+              <ModalInput label="Temp (°F)" value={vitals.temp} onChange={v => setVitals({...vitals, temp: v})} type="number" />
+              <ModalInput label="Pulse (bpm)" value={vitals.pulse} onChange={v => setVitals({...vitals, pulse: v})} type="number" />
+              <ModalInput label="SpO2 (%)" value={vitals.spo2} onChange={v => setVitals({...vitals, spo2: v})} type="number" />
+              <ModalInput label="RR (/min)" value={vitals.rr} onChange={v => setVitals({...vitals, rr: v})} type="number" />
+              <ModalInput label="BP (mmHg)" value={vitals.bp} onChange={v => setVitals({...vitals, bp: v})} placeholder="120/80" />
+            </div>
+            <div>
+              <label style={labelStyle}>Chief Complaint</label>
+              <textarea 
+                value={complaint} onChange={e => setComplaint(e.target.value)}
+                placeholder="Optional notes..."
+                style={{ width: '100%', height: 80, padding: 10, borderRadius: 10, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', fontSize: 13, outline: 'none', resize: 'none' }}
+              />
+            </div>
+         </div>
+
+         <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
+           <button onClick={save} disabled={busy} style={{ flex: 1, height: 44, background: 'var(--brand-500)', color: 'white', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+             {busy ? <Spinner size={16} /> : <><Icon name="check" size={16} /> Check In & Save</>}
+           </button>
+           <button onClick={onClose} style={{ flex: 1, height: 44, background: 'none', border: '1px solid var(--border)', borderRadius: 10, fontWeight: 600, cursor: 'pointer' }}>
+             Cancel
+           </button>
+         </div>
+       </div>
+    </div>
+  );
+}
+
+function ModalInput({ label, value, onChange, type = 'text', placeholder }: { label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string }) {
+  return (
+    <div>
+      <label style={labelStyle}>{label}</label>
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        style={{ width: '100%', height: 38, padding: '0 10px', borderRadius: 8, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', fontSize: 13, color: 'var(--text)', outline: 'none' }}
+      />
     </div>
   );
 }
@@ -882,8 +1070,9 @@ function BookSheet({
   // It defaults to the signed-in user (the common single-doctor case) but
   // is editable so a receptionist booking on someone else's behalf doesn't
   // silently query the wrong doctor's hours — the bug we shipped this for.
-  const [doctorId, setDoctorId] = useState(ctx.userId);
-  const [doctors, setDoctors] = useState<Array<{ _id: string; name: string }>>([]);
+  const [doctorId, setDoctorId] = useState('');
+  const [doctors, setDoctors] = useState<UserListItem[]>([]);
+  const [doctorsLoading, setDoctorsLoading] = useState(false);
   const [room, setRoom] = useState<typeof ROOMS[number]>('Room 1');
   const [notes, setNotes] = useState('');
 
@@ -891,19 +1080,24 @@ function BookSheet({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load patient list (step 1) — refetch on query change
   useEffect(() => {
     if (step !== 1) return;
+    const q = patientQuery.trim();
+    if (q.length < 3) {
+      setPatients([]);
+      setPatientsLoading(false);
+      return;
+    }
     setPatientsLoading(true);
     const qs = new URLSearchParams();
-    if (patientQuery.trim()) qs.set('query', patientQuery.trim());
+    qs.set('query', q);
     qs.set('limit', '50');
     const t = setTimeout(() => {
       apiGet<PatientLite[]>(ctx, `/patients?${qs.toString()}`)
         .then(setPatients)
         .catch((e) => setError(e instanceof Error ? e.message : String(e)))
         .finally(() => setPatientsLoading(false));
-    }, 200);
+    }, 400);
     return () => clearTimeout(t);
   }, [step, patientQuery, ctx]);
 
@@ -920,10 +1114,29 @@ function BookSheet({
   // in that case the picker degrades to a one-option list (the signed-in
   // user), which preserves the previous behavior.
   useEffect(() => {
-    apiGet<Array<{ _id: string; name: string }>>(ctx, '/users')
-      .then((list) => setDoctors(list))
-      .catch(() => setDoctors([]));
-  }, [ctx.clinicId, ctx.accessToken]);
+    setDoctorsLoading(true);
+    apiGet<UserListItem[]>(ctx, '/users')
+      .then((list) => {
+        // Only show users who have the exact 'Doctor' role.
+        const branchDoctors = list.filter((u) => {
+          const hasBranch = !ctx.branchId || (u.branchIds && u.branchIds.includes(ctx.branchId));
+          const isDoctor = u.roles.some((r) => r.name.toLowerCase() === 'doctor');
+          return hasBranch && isDoctor;
+        });
+        setDoctors(branchDoctors);
+
+        // Pick a default doctor: either the first one in the list, 
+        // or the current user if they happen to be a doctor in this branch.
+        const meAsDoctor = branchDoctors.find(d => d._id === ctx.userId);
+        if (meAsDoctor) {
+          setDoctorId(meAsDoctor._id);
+        } else if (branchDoctors.length > 0) {
+          setDoctorId(branchDoctors[0]._id);
+        }
+      })
+      .catch(() => setDoctors([]))
+      .finally(() => setDoctorsLoading(false));
+  }, [ctx.clinicId, ctx.accessToken, ctx.branchId, ctx.userId]);
 
   // Resolve the picked doctor's display label. Prefer the users list (so
   // switching the picker updates the label), then fall back to ctx.fullName
@@ -970,13 +1183,17 @@ function BookSheet({
           status: (s.status ?? 'available') as SlotStatus,
           bookedBy: s.bookedBy ?? null,
         }));
-        setSlots(labeled);
+
+        // Filter out past slots from the primary 'slots' state so that the 
+        // total count and grid stay in sync with the user's view.
+        const futureSlots = labeled.filter(s => s.status !== 'past');
+        setSlots(futureSlots);
+
         if (typeof r.slotMinutes === 'number' && r.slotMinutes > 0) setSlotMinutes(r.slotMinutes);
-        // Auto-pick the first AVAILABLE slot — never booked, past, or
-        // too-short. If the receptionist switches duration and their
-        // selected slot becomes unavailable, we rotate to a still-valid one.
-        const firstAvail = labeled.find((s) => s.status === 'available');
-        const stillValid = labeled.find(
+
+        // Auto-pick the first AVAILABLE slot
+        const firstAvail = futureSlots.find((s) => s.status === 'available');
+        const stillValid = futureSlots.find(
           (s) => s.label === slotStart && s.status === 'available',
         );
         if (firstAvail && !stillValid) {
@@ -1082,6 +1299,9 @@ function BookSheet({
               query={patientQuery} onQuery={setPatientQuery}
               patients={patients} loading={patientsLoading}
               selected={selectedPatient} onPick={setSelectedPatient}
+              doctorId={doctorId} setDoctorId={setDoctorId}
+              doctors={doctors} doctorName={doctorName}
+              doctorsLoading={doctorsLoading}
             />
           )}
 
@@ -1093,11 +1313,9 @@ function BookSheet({
               date={date} setDate={setDate}
               slotStart={slotStart} setSlotStart={setSlotStart}
               slots={slots} slotsLoading={slotsLoading} slotMinutes={slotMinutes}
+              doctorsLoading={doctorsLoading}
               apptType={apptType} setApptType={setApptType}
               duration={duration} setDuration={setDuration}
-              doctorId={doctorId} setDoctorId={setDoctorId}
-              doctors={doctors}
-              doctorName={doctorName}
               room={room} setRoom={setRoom}
               notes={notes} setNotes={setNotes}
             />
@@ -1162,13 +1380,29 @@ function BookSheet({
 
 function PatientStep({
   query, onQuery, patients, loading, selected, onPick,
+  doctorId, setDoctorId, doctors, doctorName, doctorsLoading,
 }: {
   query: string; onQuery: (v: string) => void;
   patients: PatientLite[]; loading: boolean;
   selected: PatientLite | null; onPick: (p: PatientLite) => void;
+  doctorId: string; setDoctorId: (v: string) => void;
+  doctors: Array<{ _id: string; name: string }>;
+  doctorName: string;
+  doctorsLoading: boolean;
 }) {
   return (
     <>
+      <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: '12px 16px', marginBottom: 6 }}>
+        <label style={{ ...labelStyle, fontSize: 10, color: 'var(--text-subtle)' }}>Select Doctor</label>
+        <DoctorPicker
+          doctorId={doctorId}
+          setDoctorId={setDoctorId}
+          doctors={doctors}
+          fallbackLabel={doctorName}
+          loading={doctorsLoading}
+        />
+      </div>
+
       <div style={{ position: 'relative' }}>
         <Icon name="search" size={15} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
         <input value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Search by name or phone…"
@@ -1180,12 +1414,17 @@ function PatientStep({
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 380, overflowY: 'auto' }}>
-        {loading && patients.length === 0 && (
+        {query.trim().length < 3 ? (
+          <div style={{ padding: '40px 24px', textAlign: 'center' }}>
+            <Icon name="search" size={32} style={{ color: 'var(--text-subtle)', opacity: 0.2, marginBottom: 12 }} />
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-muted)' }}>Search Patients</div>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 4 }}>Enter at least 3 characters to search...</div>
+          </div>
+        ) : loading && patients.length === 0 ? (
           <div style={{ padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--text-subtle)' }}>Searching…</div>
-        )}
-        {!loading && patients.length === 0 && (
-          <div style={{ padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--text-subtle)' }}>No patients match.</div>
-        )}
+        ) : !loading && patients.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--text-subtle)' }}>No patients match "{query}".</div>
+        ) : null}
         {patients.map((p) => {
           const age = getAge(p.dob);
           const phone = p.phones?.[0] ?? '';
@@ -1226,7 +1465,6 @@ function DetailsStep({
   apptKind, setApptKind,
   date, setDate, slotStart, setSlotStart, slots, slotsLoading, slotMinutes,
   apptType, setApptType, duration, setDuration,
-  doctorId, setDoctorId, doctors, doctorName,
   room, setRoom, notes, setNotes,
 }: {
   patient: PatientLite | null;
@@ -1237,9 +1475,6 @@ function DetailsStep({
   slots: SlotChoice[]; slotsLoading: boolean; slotMinutes: number;
   apptType: typeof APPT_TYPES[number]; setApptType: (v: typeof APPT_TYPES[number]) => void;
   duration: number; setDuration: (v: number) => void;
-  doctorId: string; setDoctorId: (v: string) => void;
-  doctors: Array<{ _id: string; name: string }>;
-  doctorName: string;
   room: typeof ROOMS[number]; setRoom: (v: typeof ROOMS[number]) => void;
   notes: string; setNotes: (v: string) => void;
 }) {
@@ -1299,7 +1534,7 @@ function DetailsStep({
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
               <label style={{ ...labelStyle, marginBottom: 0 }}>Time slot</label>
               <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
-                {slotsLoading ? 'Loading…' : `${slots.length} available`}
+                {slotsLoading ? 'Loading…' : `${slots.filter(s => s.status === 'available').length} available`}
               </span>
             </div>
             <TimeSlotGrid
@@ -1338,35 +1573,12 @@ function DetailsStep({
         </>
       )}
 
-      {apptKind === 'TIME' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div>
-            <label style={labelStyle}>Doctor</label>
-            <DoctorPicker
-              doctorId={doctorId}
-              setDoctorId={setDoctorId}
-              doctors={doctors}
-              fallbackLabel={doctorName}
-            />
-          </div>
-          <div>
-            <label style={labelStyle}>Room</label>
-            <select value={room} onChange={(e) => setRoom(e.target.value as typeof ROOMS[number])} style={selectStyle}>
-              {ROOMS.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </div>
-        </div>
-      ) : (
-        <div>
-          <label style={labelStyle}>Doctor</label>
-          <DoctorPicker
-            doctorId={doctorId}
-            setDoctorId={setDoctorId}
-            doctors={doctors}
-            fallbackLabel={doctorName}
-          />
-        </div>
-      )}
+      <div>
+        <label style={labelStyle}>Room</label>
+        <select value={room} onChange={(e) => setRoom(e.target.value as typeof ROOMS[number])} style={selectStyle}>
+          {ROOMS.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
 
       <div>
         <label style={labelStyle}>
@@ -1397,18 +1609,25 @@ function TimeSlotGrid({
   // typical clinic hours; slots the doctor's rules don't cover render as
   // dim "off-hours" cells. Backend-returned slots that fall outside this
   // window get added so we never silently hide the doctor's actual hours.
+  // O(1) lookup from grid label → slot status / metadata.
+  const slotByLabel = new Map(available.map((s) => [s.label, s]));
+
   const startMin = 8 * 60;
   const endMin = 20 * 60;
   const step = Math.max(5, Math.min(180, slotMinutes || 15));
   const grid: string[] = [];
   for (let m = startMin; m + step <= endMin; m += step) {
-    grid.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+    const label = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    // Past slots are already filtered out of the 'available' prop by the parent.
+    // If a grid label is not in 'available', it's an 'off-hours' slot.
+    // We only hide it if it's actually in the past (based on current time).
+    grid.push(label);
   }
-  for (const s of available) if (!grid.includes(s.label)) grid.push(s.label);
+  // Also add any special slots from backend that might be outside our 08:00–20:00 grid
+  for (const s of available) {
+    if (!grid.includes(s.label)) grid.push(s.label);
+  }
   grid.sort();
-
-  // O(1) lookup from grid label → slot status / metadata.
-  const slotByLabel = new Map(available.map((s) => [s.label, s]));
 
   return (
     <div>
@@ -1417,6 +1636,11 @@ function TimeSlotGrid({
         maxHeight: 240, overflowY: 'auto',
         padding: 8, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
       }}>
+        {grid.length === 0 && (
+          <div style={{ gridColumn: '1 / -1', padding: '32px 0', textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>
+            No future slots available for this day.
+          </div>
+        )}
         {grid.map((t) => {
           const slot = slotByLabel.get(t);
           // The doctor doesn't have rules for this minute → off-hours.
@@ -1478,11 +1702,10 @@ function TimeSlotGrid({
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11, color: 'var(--text-subtle)', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 12, marginTop: 12, fontSize: 11, color: 'var(--text-subtle)', flexWrap: 'wrap', padding: '0 4px' }}>
         <Legend swatch="var(--surface)" border="var(--border)" label="Available" />
         <Legend swatch="rgba(239,68,68,0.12)" border="rgba(239,68,68,0.4)" label="Booked" />
-        <Legend swatch="var(--surface-muted)" border="var(--border)" label="Past" />
-        <Legend swatch="rgba(245,158,11,0.08)" border="rgba(245,158,11,0.35)" label="Won't fit duration" />
+        <Legend swatch="rgba(245,158,11,0.08)" border="rgba(245,158,11,0.35)" label="Won't fit" />
       </div>
     </div>
   );
@@ -1504,15 +1727,16 @@ const offHoursStyle: React.CSSProperties = {
 
 function slotStyle(status: SlotStatus, isSelected: boolean): React.CSSProperties {
   const base: React.CSSProperties = {
-    padding: '7px 4px',
-    borderRadius: 8,
+    padding: '10px 4px',
+    borderRadius: 10,
     fontSize: 12,
-    fontFamily: 'monospace',
-    transition: 'all 120ms',
+    fontFamily: "'Manrope', sans-serif",
+    transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
+    border: '1.5px solid transparent',
   };
   if (status === 'available') {
     return {
@@ -1574,12 +1798,13 @@ function Legend({ swatch, border, label }: { swatch: string; border: string; lab
 }
 
 function DoctorPicker({
-  doctorId, setDoctorId, doctors, fallbackLabel,
+  doctorId, setDoctorId, doctors, fallbackLabel, loading,
 }: {
   doctorId: string;
   setDoctorId: (v: string) => void;
   doctors: Array<{ _id: string; name: string }>;
   fallbackLabel: string;
+  loading?: boolean;
 }) {
   // If the current doctorId isn't in the fetched list (e.g., the caller
   // lacks user:read or the list hasn't landed yet), surface a synthetic
@@ -1590,15 +1815,20 @@ function DoctorPicker({
     <select
       value={doctorId}
       onChange={(e) => setDoctorId(e.target.value)}
-      style={selectStyle}
+      style={{ ...selectStyle, cursor: loading ? 'wait' : 'pointer', opacity: loading ? 0.7 : 1 }}
+      disabled={loading}
     >
-      {!inList && doctorId && (
+      {loading && <option value="">Loading doctors...</option>}
+      {!loading && !inList && doctorId && (
         <option value={doctorId}>{fallbackLabel}</option>
       )}
-      {doctors.map((d) => (
-        <option key={d._id} value={d._id}>Dr. {d.name}</option>
-      ))}
-      {doctors.length === 0 && !doctorId && (
+      {doctors.map((d) => {
+        const displayName = d.name.toLowerCase().startsWith('dr.') ? d.name : `Dr. ${d.name}`;
+        return (
+          <option key={d._id} value={d._id}>{displayName}</option>
+        );
+      })}
+      {!loading && doctors.length === 0 && !doctorId && (
         <option value="">— no doctors available —</option>
       )}
     </select>

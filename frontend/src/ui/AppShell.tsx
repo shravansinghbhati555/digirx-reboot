@@ -9,39 +9,39 @@ import { DatePickerChip } from './shared/DatePickerChip';
 type NavItem = { id: ScreenKey; label: string; icon: IconName };
 
 const NAV_ITEMS: NavItem[] = [
-  { id: 'dashboard',     label: 'Dashboard',    icon: 'dashboard' },
-  { id: 'patients',      label: 'Patients',     icon: 'users' },
-  { id: 'appointments',  label: 'Appointments', icon: 'calendar' },
-  { id: 'encounters',    label: 'Encounters',   icon: 'clipboard' },
-  { id: 'billing',       label: 'Billing',      icon: 'receipt' },
-  { id: 'documents',     label: 'Documents',    icon: 'folder' },
-  { id: 'inventory',     label: 'Inventory',    icon: 'pill' },
-  { id: 'pharmacy',      label: 'Pharmacy',     icon: 'receipt' },
-  { id: 'reports',       label: 'Reports',      icon: 'barChart' },
+  { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
+  { id: 'patients', label: 'Patients', icon: 'users' },
+  { id: 'appointments', label: 'Appointments', icon: 'calendar' },
+  { id: 'encounters', label: 'Encounters', icon: 'clipboard' },
+  { id: 'billing', label: 'Billing', icon: 'receipt' },
+  { id: 'documents', label: 'Documents', icon: 'folder' },
+  { id: 'inventory', label: 'Inventory', icon: 'pill' },
+  { id: 'pharmacy', label: 'Pharmacy', icon: 'receipt' },
+  { id: 'reports', label: 'Reports', icon: 'barChart' },
   { id: 'notifications', label: 'Notifications', icon: 'bell' },
 ];
 
 const ADMIN_ITEMS: NavItem[] = [
-  { id: 'users',    label: 'Users',               icon: 'users' },
-  { id: 'roles',    label: 'Roles & Permissions', icon: 'shield' },
-  { id: 'settings', label: 'Settings',            icon: 'settings' },
+  { id: 'users', label: 'Users', icon: 'users' },
+  { id: 'roles', label: 'Roles & Permissions', icon: 'shield' },
+  { id: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
 const ALL_CMD: { label: string; action: ScreenKey; icon: IconName }[] = [
-  { label: 'Go to Dashboard',    action: 'dashboard',    icon: 'dashboard' },
-  { label: 'Go to Patients',     action: 'patients',     icon: 'users' },
+  { label: 'Go to Dashboard', action: 'dashboard', icon: 'dashboard' },
+  { label: 'Go to Patients', action: 'patients', icon: 'users' },
   { label: 'Go to Appointments', action: 'appointments', icon: 'calendar' },
-  { label: 'Go to Encounters',   action: 'encounters',   icon: 'clipboard' },
-  { label: 'Go to Billing',      action: 'billing',      icon: 'receipt' },
-  { label: 'New patient',        action: 'patients',     icon: 'plus' },
-  { label: 'Book appointment',   action: 'appointments', icon: 'plus' },
-  { label: 'New bill',           action: 'billing',      icon: 'plus' },
-  { label: 'Go to Documents',    action: 'documents',    icon: 'folder' },
-  { label: 'Go to Inventory',    action: 'inventory',    icon: 'pill' },
-  { label: 'Go to Pharmacy',     action: 'pharmacy',     icon: 'receipt' },
-  { label: 'Go to Reports',      action: 'reports',      icon: 'barChart' },
+  { label: 'Go to Encounters', action: 'encounters', icon: 'clipboard' },
+  { label: 'Go to Billing', action: 'billing', icon: 'receipt' },
+  { label: 'New patient', action: 'patients', icon: 'plus' },
+  { label: 'Book appointment', action: 'appointments', icon: 'plus' },
+  { label: 'New bill', action: 'billing', icon: 'plus' },
+  { label: 'Go to Documents', action: 'documents', icon: 'folder' },
+  { label: 'Go to Inventory', action: 'inventory', icon: 'pill' },
+  { label: 'Go to Pharmacy', action: 'pharmacy', icon: 'receipt' },
+  { label: 'Go to Reports', action: 'reports', icon: 'barChart' },
   { label: 'Go to Notifications', action: 'notifications', icon: 'bell' },
-  { label: 'Go to Settings',     action: 'settings',     icon: 'settings' },
+  { label: 'Go to Settings', action: 'settings', icon: 'settings' },
 ];
 
 function CommandPalette({ commands, onNavigate, onClose }: { commands: typeof ALL_CMD; onNavigate: (s: ScreenKey) => void; onClose: () => void }) {
@@ -56,7 +56,7 @@ function CommandPalette({ commands, onNavigate, onClose }: { commands: typeof AL
   const run = (cmd: typeof ALL_CMD[number]) => { onNavigate(cmd.action); onClose(); };
   const handleKey = (e: React.KeyboardEvent) => {
     if (e.key === 'ArrowDown') { e.preventDefault(); setHi((h) => Math.min(h + 1, filtered.length - 1)); }
-    if (e.key === 'ArrowUp')   { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); }
+    if (e.key === 'ArrowUp') { e.preventDefault(); setHi((h) => Math.max(h - 1, 0)); }
     if (e.key === 'Enter' && filtered[hi]) run(filtered[hi]);
     if (e.key === 'Escape') onClose();
   };

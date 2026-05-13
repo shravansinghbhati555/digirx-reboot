@@ -46,11 +46,11 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
   const [ownerName, setOwnerName] = useState('');
   const [category, setCategory] = useState<DocumentCategory>('OTHER');
   const [access, setAccess] = useState<'INTERNAL_ONLY' | 'SHAREABLE_WITH_TOKEN'>('INTERNAL_ONLY');
-  
+
   const [documents, setDocuments] = useState<ServerDoc[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sharing, setSharing] = useState<ServerDoc | null>(null);
@@ -112,7 +112,7 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
         xhr.onerror = () => reject(new Error('Upload network error'));
         xhr.send(file);
       });
-      
+
       await apiPost(ctx, `/documents/${res.documentId}/confirm`, {});
       toast(`${file.name} uploaded`, 'success');
       void fetchDocuments();
@@ -138,6 +138,8 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
       await apiDelete(ctx, `/documents/${doc._id}`);
       toast('Document deleted', 'success');
       setDocuments(docs => docs.filter(d => d._id !== doc._id));
+      if (previewing?._id === doc._id) setPreviewing(null);
+      if (sharing?._id === doc._id) setSharing(null);
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Delete failed', 'error');
     }
@@ -170,28 +172,28 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
           {!isEmbedded && (
             <div style={{ flex: '1 1 300px' }}>
               {ownerType === 'PATIENT' ? (
-                <PatientSearch 
-                  onSelect={(p) => { setOwnerId(p._id); setOwnerName(p.fullName); }} 
-                  selectedName={ownerName} 
-                  onClear={() => { setOwnerId(''); setOwnerName(''); }} 
+                <PatientSearch
+                  onSelect={(p) => { setOwnerId(p._id); setOwnerName(p.fullName); }}
+                  selectedName={ownerName}
+                  onClear={() => { setOwnerId(''); setOwnerName(''); }}
                 />
               ) : ownerType === 'USER' ? (
-                <UserSearch 
-                  onSelect={(u) => { setOwnerId(u._id); setOwnerName(u.name); }} 
-                  selectedName={ownerName} 
-                  onClear={() => { setOwnerId(''); setOwnerName(''); }} 
+                <UserSearch
+                  onSelect={(u) => { setOwnerId(u._id); setOwnerName(u.name); }}
+                  selectedName={ownerName}
+                  onClear={() => { setOwnerId(''); setOwnerName(''); }}
                 />
               ) : ownerType === 'APPOINTMENT' ? (
-                <AppointmentSearch 
-                  onSelect={(a) => { setOwnerId(a._id); setOwnerName(`Appointment ${a._id.slice(-6).toUpperCase()}`); }} 
+                <AppointmentSearch
+                  onSelect={(a) => { setOwnerId(a._id); setOwnerName(`Appointment ${a._id.slice(-6).toUpperCase()}`); }}
                   selectedId={ownerId}
-                  onClear={() => { setOwnerId(''); setOwnerName(''); }} 
+                  onClear={() => { setOwnerId(''); setOwnerName(''); }}
                 />
               ) : ownerType === 'ENCOUNTER' ? (
-                <EncounterSearch 
-                  onSelect={(e) => { setOwnerId(e._id); setOwnerName(e.readableId || `Encounter ${e._id.slice(-6).toUpperCase()}`); }} 
+                <EncounterSearch
+                  onSelect={(e) => { setOwnerId(e._id); setOwnerName(e.readableId || `Encounter ${e._id.slice(-6).toUpperCase()}`); }}
                   selectedId={ownerId}
-                  onClear={() => { setOwnerId(''); setOwnerName(''); }} 
+                  onClear={() => { setOwnerId(''); setOwnerName(''); }}
                 />
               ) : (
                 <Field label={`${ownerType.charAt(0) + ownerType.slice(1).toLowerCase()} ID`} value={ownerId} onChange={setOwnerId} placeholder="Enter ID here..." />
@@ -221,9 +223,9 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) void handleFile(f); }}
           onClick={() => progress === null && fileInputRef.current?.click()}
-          style={{ 
-            border: `2px dashed ${progress !== null ? 'var(--border)' : 'var(--brand-300)'}`, 
-            borderRadius: 14, padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, 
+          style={{
+            border: `2px dashed ${progress !== null ? 'var(--border)' : 'var(--brand-300)'}`,
+            borderRadius: 14, padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
             cursor: progress !== null ? 'default' : 'pointer', background: 'var(--surface-muted)', transition: 'all 0.2s ease',
             opacity: (!ownerId && !isEmbedded) ? 0.6 : 1,
             pointerEvents: (!ownerId && !isEmbedded) ? 'none' : 'auto'
@@ -296,7 +298,7 @@ function DocCard({ doc, onPreview, onDownload, onShare, onDelete, showOwner }: {
   const cat = DOCUMENT_CATEGORIES.find(c => c.value === doc.category) || DOCUMENT_CATEGORIES[5];
 
   return (
-    <div 
+    <div
       onClick={onPreview}
       style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 16, display: 'flex', gap: 14, position: 'relative', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)', cursor: 'pointer' }}
       onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--brand-400)')}
@@ -305,7 +307,7 @@ function DocCard({ doc, onPreview, onDownload, onShare, onDelete, showOwner }: {
       <div style={{ width: 48, height: 48, borderRadius: 12, background: 'var(--surface-muted)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         <Icon name={cat.icon as any} size={22} style={{ color: 'var(--brand-500)' }} />
       </div>
-      
+
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={doc.fileName}>{doc.fileName}</div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 3 }}>

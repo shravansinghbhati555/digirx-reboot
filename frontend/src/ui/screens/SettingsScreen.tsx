@@ -252,9 +252,9 @@ function ClinicTab() {
                 </datalist>
               </div>
               <Field label="Currency (ISO 4217)" value={currency} onChange={(v) => setCurrency(v.toUpperCase())} placeholder="INR" />
-              <Row label="Clinic ID">
+              {/* <Row label="Clinic ID">
                 <code style={{ fontFamily: 'monospace', fontSize: 11 }}>{data.clinic._id}</code>
-              </Row>
+              </Row> */}
             </div>
           </div>
 

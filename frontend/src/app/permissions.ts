@@ -29,19 +29,19 @@ export type PermName = typeof Perm[keyof typeof Perm];
 // Permissions required to access each screen. `null` = open to any signed-in user.
 // "Any one suffices" semantics.
 export const SCREEN_REQUIRED: Record<ScreenKey, PermName[] | null> = {
-  dashboard:     [Perm.ClinicWrite],
-  patients:      [Perm.PatientRead],
-  appointments:  [Perm.AppointmentRead],
-  encounters:    [Perm.PatientRead],
-  billing:       [Perm.BillingRead],
-  documents:     [Perm.DocumentRead],
-  reports:       [Perm.BillingRead],
+  dashboard: [Perm.ClinicWrite],
+  patients: [Perm.PatientRead],
+  appointments: [Perm.AppointmentRead],
+  encounters: [Perm.PatientRead],
+  billing: [Perm.BillingRead],
+  documents: [Perm.DocumentRead],
+  reports: [Perm.BillingRead],
   notifications: [Perm.NotificationRead],
-  inventory:     [Perm.InventoryRead],
-  pharmacy:      [Perm.BillingRead],
-  users:         [Perm.UserRead],
-  roles:         [Perm.UserRead],
-  settings:      [Perm.ClinicRead],
+  inventory: [Perm.InventoryRead],
+  pharmacy: [Perm.BillingRead],
+  users: [Perm.UserRead],
+  roles: [Perm.UserRead],
+  settings: [Perm.ClinicRead],
 };
 
 export function hasPerm(set: Set<string>, perm: PermName): boolean {

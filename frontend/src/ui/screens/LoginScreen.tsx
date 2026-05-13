@@ -76,6 +76,7 @@ export function LoginScreen() {
       branchName: pendingBranch?.name,
       accessToken: pendingAuth.accessToken,
       email: pendingAuth.email,
+      timezone: pendingAuth.clinic.timezone,
     });
     toast(mode === 'signup' ? 'Account created' : 'Signed in', 'success');
   };
