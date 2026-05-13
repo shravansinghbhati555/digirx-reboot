@@ -41,4 +41,12 @@ export enum Permission {
   // permissions are additive, not a replacement.
   ReportsRead = 'reports:read',
   ReportsWrite = 'reports:write',
+
+  // Dashboard tab — gates access to the home Dashboard screen and its
+  // KPI tiles. Individual tiles (Revenue / Bills / Pending /
+  // Appointments) are gated by their underlying data permissions
+  // (ReportsRead, BillingRead, ClinicWrite respectively) so a role
+  // that has DashboardRead but no BillingRead sees only the tiles it
+  // can actually fetch data for.
+  DashboardRead = 'dashboard:read',
 }

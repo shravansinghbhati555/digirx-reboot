@@ -118,6 +118,7 @@ export class AuthService {
       {
         name: 'Manager',
         permissions: [
+          Permission.DashboardRead,
           Permission.ClinicRead,
           Permission.BranchRead,
           Permission.UserRead,
@@ -145,6 +146,7 @@ export class AuthService {
       {
         name: 'Front Desk',
         permissions: [
+          Permission.DashboardRead,
           Permission.ClinicRead,
           Permission.BranchRead,
           Permission.PatientRead,
@@ -182,6 +184,7 @@ export class AuthService {
       {
         name: 'Pharmacist',
         permissions: [
+          Permission.DashboardRead,
           Permission.ClinicRead,
           Permission.BranchRead,
           Permission.PatientRead,
