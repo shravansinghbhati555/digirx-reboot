@@ -53,12 +53,13 @@ export class DocumentsService {
     sizeBytes: number;
     storageKey: string;
     access?: DocumentAccess;
+    status?: DocumentStatus;
     createdBy?: Types.ObjectId;
   }) {
     return await this.docModel.create({
       ...input,
       access: input.access ?? DocumentAccess.InternalOnly,
-      status: DocumentStatus.Uploading,
+      status: input.status ?? DocumentStatus.Uploading,
     });
   }
 

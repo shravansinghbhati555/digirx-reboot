@@ -15,12 +15,18 @@ import { CreateBillDto } from './dto/create-bill.dto';
 import { CreatePaymentDto } from './dto/create-payment.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
 import { Bill, BillKind, BillLineItem, BillStatus } from './schemas/bill.schema';
+import { DocumentCategory, DocumentOwnerType, DocumentStatus } from '../documents/schemas/document.schema';
+import { Branch } from '../tenancy/schemas/branch.schema';
+import { PdfService } from '../pdf/pdf.service';
+import { StorageService } from '../storage/storage.service';
+import { DocumentsService } from '../documents/documents.service';
 import { Payment } from './schemas/payment.schema';
 import { ServiceCatalogItem } from './schemas/service-catalog-item.schema';
 import { Appointment } from '../appointments/schemas/appointment.schema';
 import { Encounter } from '../encounters/schemas/encounter.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
 import { Prescription } from '../prescriptions/schemas/prescription.schema';
+import { Patient } from '../patients/schemas/patient.schema';
 import { InventoryItem } from '../inventory/schemas/inventory-item.schema';
 import { InventoryService } from '../inventory/inventory.service';
 
@@ -31,6 +37,7 @@ export class BillingService {
   constructor(
     @InjectModel(Bill.name) private readonly billModel: Model<Bill>,
     @InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
+    @InjectModel(Patient.name) private readonly patientModel: Model<Patient>,
     @InjectModel(ServiceCatalogItem.name)
     private readonly serviceModel: Model<ServiceCatalogItem>,
     @InjectModel(Appointment.name)
@@ -38,6 +45,7 @@ export class BillingService {
     @InjectModel(Encounter.name)
     private readonly encounterModel: Model<Encounter>,
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
+    @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
     // Read-only deps for the medicine-bill-from-prescription drafter
     // (Slice 3). The drafter only needs to look up the prescription and
     // resolve each item to an inventory row, so we inject the models
@@ -50,6 +58,9 @@ export class BillingService {
     // auto-triggered by a payment.
     private readonly inventory: InventoryService,
     private readonly numbering: BillNumberingService,
+    private readonly pdf: PdfService,
+    private readonly storage: StorageService,
+    private readonly documents: DocumentsService,
     // forwardRef breaks the BillingModule ↔ CreditNotesModule cycle: each
     // depends on the other (this for void-blocking; CN service for the Bill
     // schema). Nest resolves it after both modules have initialized.
@@ -362,7 +373,10 @@ export class BillingService {
       { $set: { billNo, status: BillStatus.Issued, issuedAt } },
       { new: true },
     );
-    if (updated) return updated;
+    if (updated) {
+      void this.ensurePdfGenerated(clinicId, updated._id.toHexString());
+      return updated;
+    }
 
     return await this.getBill(clinicId, id);
   }
@@ -817,6 +831,80 @@ export class BillingService {
     if (!encounterId && !appointmentId) return null;
 
     return await this.billModel.findOne(match).sort({ createdAt: -1 });
+  }
+
+  async ensurePdfGenerated(clinicId: Types.ObjectId, id: string, actorUserId?: Types.ObjectId) {
+    const bill = await this.getBill(clinicId, id);
+
+    // Regenerate the PDF when the bill is freshly Paid so the PAID stamp shows.
+    const isPaid = bill.status === BillStatus.Paid;
+    const cachedDocId = bill.pdfDocumentId;
+
+    if (!cachedDocId || isPaid) {
+      const [clinic, patient, branch] = await Promise.all([
+        this.clinicModel.findById(clinicId),
+        this.patientModel.findOne({
+          _id: bill.patientId,
+          clinicId,
+        }),
+        this.branchModel.findOne({
+          _id: bill.branchId,
+          clinicId,
+        }),
+      ]);
+
+      const bytes = await this.pdf.billPdf({
+        clinicName: clinic?.name || 'Clinic',
+        branchName: branch?.name,
+        clinicAddress: branch?.addressLine,
+        clinicPhone: branch?.phone,
+        billNo: bill.billNo,
+        patientName: patient?.fullName ?? 'Patient',
+        patientAge: patient?.dob ? Math.floor((Date.now() - new Date(patient.dob).getTime()) / 31557600000) : undefined,
+        patientGender: patient?.gender,
+        issuedAtIso: bill.issuedAt?.toISOString?.() ?? '',
+        currency: bill.currency,
+        items: (bill.items ?? []).map((it: any) => ({
+          name:
+            it.customName ??
+            it.serviceCatalogItemId?.toHexString?.() ??
+            'Service',
+          quantity: it.quantity,
+          unitPrice: it.unitPrice,
+          amount: it.amount,
+        })),
+        subtotal: bill.subtotal,
+        discount: bill.discount,
+        tax: bill.tax,
+        total: bill.total,
+        paid: isPaid,
+        paidAtIso: bill.paidAt?.toISOString?.() ?? undefined,
+      });
+
+      const suffix = isPaid ? '/bill-paid.pdf' : '/bill.pdf';
+      const key = `clinic/${clinicId.toHexString()}/bill/${bill._id.toHexString()}${suffix}`;
+      await this.storage.putObject({
+        key,
+        body: bytes,
+        contentType: 'application/pdf',
+      });
+      const doc = await this.documents.createForOwner({
+        clinicId,
+        ownerType: DocumentOwnerType.Bill,
+        ownerId: bill._id,
+        mimeType: 'application/pdf',
+        fileName: `bill-${bill.billNo ?? bill._id.toHexString().slice(-6)}${isPaid ? '-paid' : ''}.pdf`,
+        sizeBytes: bytes.length,
+        storageKey: key,
+        status: DocumentStatus.Available,
+        createdBy: actorUserId,
+      });
+      await this.billModel.updateOne({ _id: bill._id }, { $set: { pdfDocumentId: doc._id } });
+      bill.pdfDocumentId = doc._id as any;
+    }
+
+    if (!bill.pdfDocumentId) throw new Error('Failed to generate PDF');
+    return bill.pdfDocumentId;
   }
 
   private async mapItems(

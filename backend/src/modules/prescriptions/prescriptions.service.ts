@@ -20,6 +20,12 @@ import {
   Prescription,
   type PrescriptionDocument,
 } from './schemas/prescription.schema';
+import { PdfService } from '../pdf/pdf.service';
+import { StorageService } from '../storage/storage.service';
+import { DocumentsService } from '../documents/documents.service';
+import { DocumentCategory, DocumentOwnerType, DocumentStatus } from '../documents/schemas/document.schema';
+import { Branch } from '../tenancy/schemas/branch.schema';
+import { Encounter, EncounterStatus } from '../encounters/schemas/encounter.schema';
 
 const DEFAULT_RX_SHARE_EXPIRY_SECONDS = 7 * 24 * 60 * 60;
 
@@ -42,10 +48,15 @@ export class PrescriptionsService {
     @InjectModel(Patient.name) private readonly patientModel: Model<Patient>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
+    @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
+    @InjectModel(Encounter.name) private readonly encounterModel: Model<Encounter>,
     private readonly encounters: EncountersService,
     private readonly medicines: MedicinesService,
     private readonly notifications: NotificationsService,
     private readonly numbering: PrescriptionNumberingService,
+    private readonly pdfService: PdfService,
+    private readonly storage: StorageService,
+    private readonly documents: DocumentsService,
   ) { }
 
   /**
@@ -93,7 +104,7 @@ export class PrescriptionsService {
     // value — that's intentional, gaps are preferable to duplicates
     // (auditors flag duplicates, not gaps).
     const prescriptionNo = await this.numbering.mint(clinicId);
-    return await this.rxModel.create({
+    const rx = await this.rxModel.create({
       clinicId,
       branchId: enc.branchId,
       doctorId: enc.doctorId,
@@ -102,6 +113,12 @@ export class PrescriptionsService {
       items,
       prescriptionNo,
     });
+
+    if (enc.status === EncounterStatus.Signed) {
+      void this.ensurePdfGenerated(clinicId, rx._id.toHexString());
+    }
+
+    return rx;
   }
 
   /**
@@ -326,6 +343,118 @@ export class PrescriptionsService {
       // fresh share with sendVia produces a fresh dedupeKey.
       dedupeKey: `rx:${input.rx._id.toHexString()}:share:${input.rx.shareToken}:${input.channel}`,
       templateKey: 'prescription_share',
+    });
+  }
+
+  async ensurePdfGenerated(clinicId: Types.ObjectId, id: string, actorUserId?: Types.ObjectId) {
+    const rx = await this.rxModel.findOne({ _id: id, clinicId }).exec();
+    if (!rx) throw new NotFoundException('Prescription not found');
+
+    if (!rx.pdfDocumentId) {
+      const bytes = await this.generatePdfBytes(rx, clinicId);
+      const key = `clinic/${clinicId.toHexString()}/prescription/${rx._id.toHexString()}/prescription.pdf`;
+
+      await this.storage.putObject({
+        key,
+        body: bytes,
+        contentType: 'application/pdf',
+      });
+
+      const doc = await this.documents.createForOwner({
+        clinicId,
+        category: DocumentCategory.Prescription,
+        ownerType: DocumentOwnerType.Prescription,
+        ownerId: rx._id,
+        mimeType: 'application/pdf',
+        fileName: `prescription-${rx.prescriptionNo || rx._id.toHexString().slice(-6)}.pdf`,
+        sizeBytes: bytes.length,
+        storageKey: key,
+        status: DocumentStatus.Available,
+        createdBy: actorUserId || rx.doctorId,
+      });
+
+      await this.rxModel.updateOne({ _id: rx._id }, { $set: { pdfDocumentId: doc._id } });
+      rx.pdfDocumentId = doc._id as any;
+    }
+
+    if (!rx.pdfDocumentId) throw new Error('Failed to generate PDF');
+    return rx.pdfDocumentId;
+  }
+
+  async getShareData(token: string) {
+    const rx = await this.getByShareToken(token);
+    const clinicId = rx.clinicId;
+
+    const [clinic, branch, patient, doctor, encounter] = await Promise.all([
+      this.clinicModel.findById(clinicId),
+      this.branchModel.findById(rx.branchId),
+      this.patientModel.findOne({ _id: rx.patientId, clinicId }),
+      this.userModel.findOne({ _id: rx.doctorId, clinicId }),
+      this.encounterModel.findOne({ _id: rx.encounterId, clinicId }),
+    ]);
+
+    // Calculate age
+    let age = '';
+    if (patient?.dob) {
+      const birth = new Date(patient.dob);
+      const now = new Date();
+      let a = now.getFullYear() - birth.getFullYear();
+      if (
+        now.getMonth() < birth.getMonth() ||
+        (now.getMonth() === birth.getMonth() && now.getDate() < birth.getDate())
+      )
+        a--;
+      age = String(a);
+    }
+
+    return {
+      rx,
+      clinic,
+      branch,
+      patient,
+      doctor,
+      encounter,
+      age,
+    };
+  }
+
+  private async generatePdfBytes(rx: Prescription, clinicId: Types.ObjectId): Promise<Uint8Array> {
+    const [clinic, branch, patient, doctor, encounter] = await Promise.all([
+      this.clinicModel.findById(clinicId),
+      this.branchModel.findById(rx.branchId),
+      this.patientModel.findOne({ _id: rx.patientId, clinicId }),
+      this.userModel.findOne({ _id: rx.doctorId, clinicId }),
+      this.encounterModel.findOne({ _id: rx.encounterId, clinicId }),
+    ]);
+
+    // Calculate age
+    let age = '';
+    if (patient?.dob) {
+      const birth = new Date(patient.dob);
+      const now = new Date();
+      let a = now.getFullYear() - birth.getFullYear();
+      if (now.getMonth() < birth.getMonth() || (now.getMonth() === birth.getMonth() && now.getDate() < birth.getDate())) a--;
+      age = String(a);
+    }
+
+    return await this.pdfService.prescriptionPdf({
+      clinicName: clinic?.name ?? 'Clinic',
+      clinicAddress: branch?.addressLine,
+      clinicPhone: branch?.phone,
+      patientName: patient?.fullName ?? 'Patient',
+      patientAge: age || undefined,
+      patientGender: patient?.gender,
+      doctorName: doctor?.name ?? 'Doctor',
+      createdAtIso: (rx as any).createdAt?.toISOString?.() ?? new Date().toISOString(),
+      diagnosis: encounter?.diagnosis,
+      vitals: encounter?.vitals as Record<string, string> | undefined,
+      items: (rx.items ?? []).map((it: any) => ({
+        name: it.customName ?? it.medicineCatalogItemId?.toHexString?.() ?? 'Medicine',
+        dosage: it.dosage,
+        frequency: it.frequency,
+        duration: it.duration,
+        instructions: it.instructions,
+      })),
     });
   }
 }
