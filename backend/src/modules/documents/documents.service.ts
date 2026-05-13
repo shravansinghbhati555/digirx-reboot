@@ -79,6 +79,7 @@ export class DocumentsService {
     const query: QueryFilter<Document> = {
       clinicId,
       status: DocumentStatus.Available,
+      deletedAt: null,
     };
     if (filters?.ownerType) query.ownerType = filters.ownerType;
     if (filters?.ownerId) query.ownerId = new Types.ObjectId(filters.ownerId);

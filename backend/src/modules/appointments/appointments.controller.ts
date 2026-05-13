@@ -19,7 +19,7 @@ import { AppointmentsService } from './appointments.service';
 
 @Controller('appointments')
 export class AppointmentsController {
-  constructor(private readonly appts: AppointmentsService) {}
+  constructor(private readonly appts: AppointmentsService) { }
 
   @Post()
   @RequirePermissions(Permission.AppointmentWrite)

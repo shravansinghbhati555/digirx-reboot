@@ -6,6 +6,7 @@ import {
   IsMongoId,
   IsOptional,
   IsString,
+  Matches,
   MaxLength,
   MinLength,
 } from 'class-validator';
@@ -29,7 +30,7 @@ export class UpdatePatientDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  @MaxLength(32, { each: true })
+  @Matches(/^\d{10}$/, { each: true, message: 'Each phone number must be exactly 10 digits' })
   phones?: string[];
 
   @IsOptional()

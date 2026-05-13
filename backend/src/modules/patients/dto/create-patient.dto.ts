@@ -1,4 +1,4 @@
-import { IsArray, IsEmail, IsEnum, IsISO8601, IsMongoId, IsOptional, IsString, MaxLength, MinLength } from 'class-validator';
+import { IsArray, IsEmail, IsEnum, IsISO8601, IsMongoId, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { PatientGender } from '../schemas/patient.schema';
 
 export class CreatePatientDto {
@@ -18,7 +18,7 @@ export class CreatePatientDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  @MaxLength(32, { each: true })
+  @Matches(/^\d{10}$/, { each: true, message: 'Each phone number must be exactly 10 digits' })
   phones?: string[];
 
   @IsOptional()

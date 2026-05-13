@@ -41,11 +41,11 @@ export type EnrichedSlot =
   | { startAt: string; endAt: string; status: 'available' }
   | { startAt: string; endAt: string; status: 'past' }
   | {
-      startAt: string;
-      endAt: string;
-      status: 'booked';
-      bookedBy: { apptId: string; patientName: string | null; status: string };
-    };
+    startAt: string;
+    endAt: string;
+    status: 'booked';
+    bookedBy: { apptId: string; patientName: string | null; status: string };
+  };
 
 const CANCELLABLE_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.Booked,
@@ -64,6 +64,7 @@ const ALLOWED_STATUS_TRANSITIONS: Record<AppointmentStatus, AppointmentStatus[]>
     AppointmentStatus.Cancelled,
     AppointmentStatus.NoShow,
   ],
+
   [AppointmentStatus.InProgress]: [
     AppointmentStatus.Done,
     AppointmentStatus.Cancelled,
@@ -125,7 +126,7 @@ export class AppointmentsService {
     @InjectModel(Patient.name) private readonly patientModel: Model<Patient>,
     @InjectConnection() private readonly connection: Connection,
     private readonly availability: AvailabilityService,
-  ) {}
+  ) { }
 
   async create(
     clinicId: Types.ObjectId,
@@ -392,7 +393,8 @@ export class AppointmentsService {
           { type: AppointmentType.Queue, queueDate: date },
         ],
       })
-      .sort({ startAt: 1, queueNumber: 1 });
+      .sort({ startAt: 1, queueNumber: 1 })
+      .populate({ path: 'patientId', select: 'fullName mrn' });
   }
 
   async findAll(
@@ -418,20 +420,7 @@ export class AppointmentsService {
       .lean();
   }
 
-  /**
-   * Returns every slot for the doctor's day with its real status. The
-   * front-desk needs to *see* booked slots (so they can read the doctor's
-   * day at a glance) — they're not filtered out, just marked.
-   *
-   * Slot status:
-   *   - `past`      — slot's startAt is before now. Cannot be booked.
-   *   - `booked`    — an active TIME appointment overlaps this slot.
-   *   - `available` — open. Default.
-   *
-   * `booked` slots include a `bookedBy` ref so the UI can surface a
-   * patient-name tooltip without a second fetch. `populate('patientId')`
-   * with a `fullName` projection avoids leaking PHI we don't need.
-   */
+
   async availableSlots(input: {
     clinicId: Types.ObjectId;
     branchId: string;
@@ -467,48 +456,37 @@ export class AppointmentsService {
         doctorId: doctorObjId,
         type: AppointmentType.Time,
         status: { $in: ACTIVE_TIME_STATUSES },
-        startAt: { $gte: dayStartUtc, $lte: dayEndUtc },
+        startAt: { $lt: dayEndUtc },
+        endAt: { $gt: dayStartUtc },
       })
       .populate({ path: 'patientId', select: 'fullName' });
 
-    // Build a lookup keyed on `startAt|endAt` so a slot match is O(1).
-    // Two booked appts at the same exact slot is structurally impossible
-    // (the partial unique index in the schema enforces that), so the
-    // map is safe to be 1:1.
-    const bookedByKey = new Map<
-      string,
-      { apptId: string; patientName: string | null; status: string }
-    >();
-    for (const a of booked) {
-      if (!a.startAt || !a.endAt) continue;
-      const key = `${a.startAt.toISOString()}|${a.endAt.toISOString()}`;
-      const populatedPatient = a.patientId as unknown as
-        | { fullName?: string }
-        | null;
-      bookedByKey.set(key, {
-        apptId: a._id.toHexString(),
-        patientName: populatedPatient?.fullName ?? null,
-        status: a.status,
-      });
-    }
-
     // Use Luxon for "now" so the comparison is in the same timezone context
-    // as slot generation — both anchored to the clinic's IANA zone.
-    // A 30-second grace window prevents a slot from flickering to "past"
-    // while the receptionist is mid-click.
     const nowDt = DateTime.now().setZone(tz).minus({ seconds: 30 });
     const slots: EnrichedSlot[] = daySlots.slots.map((s) => {
-      const key = `${s.startAt}|${s.endAt}`;
-      const slotStartDt = DateTime.fromISO(s.startAt, { zone: 'utc' }).setZone(tz);
-      const conflict = bookedByKey.get(key);
+      const sStart = new Date(s.startAt);
+      const sEnd = new Date(s.endAt);
+
+      // Find ANY appointment that overlaps this specific slot
+      const conflict = booked.find(a =>
+        a.startAt && a.endAt && a.startAt < sEnd && a.endAt > sStart
+      );
+
       if (conflict) {
+        const populatedPatient = conflict.patientId as unknown as { fullName?: string } | null;
         return {
           startAt: s.startAt,
           endAt: s.endAt,
           status: 'booked' as const,
-          bookedBy: conflict,
+          bookedBy: {
+            apptId: conflict._id.toHexString(),
+            patientName: populatedPatient?.fullName ?? null,
+            status: conflict.status,
+          },
         };
       }
+
+      const slotStartDt = DateTime.fromISO(s.startAt, { zone: 'utc' }).setZone(tz);
       if (slotStartDt.isValid && slotStartDt < nowDt) {
         return {
           startAt: s.startAt,

@@ -33,7 +33,7 @@ export class EncountersService implements OnModuleInit {
     private readonly apptModel: Model<Appointment>,
     @InjectModel(EncounterCounter.name)
     private readonly counterModel: Model<EncounterCounter>,
-  ) {}
+  ) { }
 
   async onModuleInit() {
     await this.backfillMissingReadableIds();
