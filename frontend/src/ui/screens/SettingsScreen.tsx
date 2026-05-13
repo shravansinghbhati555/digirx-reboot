@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiGet, apiPatch, apiPost, apiPut } from '../../app/api';
+import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { emitAvailabilityChanged } from '../../app/events';
 import { Perm, type PermName } from '../../app/permissions';
+import { isValidIndianMobile, normalizeIndianMobile } from '../../app/validators';
 import { Checkbox, Field, Spinner, labelStyle, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
 // InventoryScreen used to be embedded under a Settings → Inventory tab,
@@ -330,12 +332,20 @@ type WeeklyRule = {
   slotMinutes?: number;
   active: boolean;
 };
+type OverrideType = 'CLOSED' | 'CUSTOM_WINDOWS' | 'BLOCKED_WINDOWS';
 type DoctorOverride = {
   _id?: string;
   date: string;
-  type: 'CLOSED' | 'CUSTOM_WINDOWS';
+  type: OverrideType;
   windows?: AvailabilityWindow[];
   note?: string;
+  // Populated by the BE on the response to PUT/PATCH whenever the
+  // override save triggered an auto-reschedule cascade. Lets the FE
+  // surface a "N appointment(s) moved" toast without an extra fetch.
+  _rescheduled?: {
+    rescheduled: Array<{ appointmentId: string; patientName: string; newStartAt: string }>;
+    failed: Array<{ appointmentId: string; reason: string }>;
+  };
 };
 type DaySlots = {
   timezone: string;
@@ -388,7 +398,7 @@ function AvailabilityTab() {
   const [error, setError] = useState<string | null>(null);
 
   const [overrideDate, setOverrideDate] = useState('');
-  const [overrideType, setOverrideType] = useState<'CLOSED' | 'CUSTOM_WINDOWS'>('CLOSED');
+  const [overrideType, setOverrideType] = useState<OverrideType>('CLOSED');
   const [overrideWindows, setOverrideWindows] = useState<AvailabilityWindow[]>([]);
   const [overrideNote, setOverrideNote] = useState('');
   const [savingOverride, setSavingOverride] = useState(false);
@@ -497,6 +507,8 @@ function AvailabilityTab() {
         })),
       };
       await apiPut<WeeklyRule[]>(ctx, `/availability/doctors/${doctorId.trim()}/rules${branchQs()}`, body);
+      // Rule changes can invalidate open slot pickers / day views.
+      emitAvailabilityChanged();
       toast('Weekly rules saved', 'success');
       await load();
     } catch (e) {
@@ -511,15 +523,78 @@ function AvailabilityTab() {
     setSavingOverride(true); setError(null);
     try {
       const body: Record<string, unknown> = { type: overrideType, note: overrideNote || undefined };
-      if (overrideType === 'CUSTOM_WINDOWS') body.windows = overrideWindows;
-      await apiPut<DoctorOverride>(ctx, `/availability/doctors/${doctorId.trim()}/overrides/${overrideDate}${branchQs()}`, body);
-      toast(`Override saved for ${overrideDate}`, 'success');
+      // Both window-bearing types ship the windows; CLOSED carries nothing.
+      if (overrideType === 'CUSTOM_WINDOWS' || overrideType === 'BLOCKED_WINDOWS') {
+        body.windows = overrideWindows;
+      }
+      const saved = await apiPut<DoctorOverride>(ctx, `/availability/doctors/${doctorId.trim()}/overrides/${overrideDate}${branchQs()}`, body);
+      // Tell open screens (Appointments day view, booking slot picker)
+      // to refetch — the override likely invalidates the slots they
+      // were last showing.
+      emitAvailabilityChanged();
+      const movedCount = saved._rescheduled?.rescheduled.length ?? 0;
+      const failedCount = saved._rescheduled?.failed.length ?? 0;
+      if (movedCount > 0) {
+        toast(
+          `Override saved · ${movedCount} appointment(s) rescheduled${failedCount > 0 ? ` (${failedCount} could not be moved)` : ''}`,
+          'success',
+        );
+      } else if (failedCount > 0) {
+        toast(
+          `Override saved · ${failedCount} appointment(s) need manual reschedule (no free slot found)`,
+          'info',
+        );
+      } else {
+        toast(`Override saved for ${overrideDate}`, 'success');
+      }
       setOverrideDate(''); setOverrideType('CLOSED'); setOverrideWindows([]); setOverrideNote('');
       await load();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSavingOverride(false);
+    }
+  }
+
+  // Load an existing override into the editor above so the operator can
+  // tweak its date / type / windows / note and re-save. The PUT endpoint
+  // is upsert-by-date, so saving with the same date overwrites the row.
+  function editOverride(o: DoctorOverride) {
+    setOverrideDate(o.date);
+    setOverrideType(
+      o.type === 'CUSTOM_WINDOWS' || o.type === 'BLOCKED_WINDOWS' ? o.type : 'CLOSED',
+    );
+    setOverrideWindows(
+      o.type === 'CUSTOM_WINDOWS' || o.type === 'BLOCKED_WINDOWS'
+        ? (o.windows ?? [])
+        : [],
+    );
+    setOverrideNote(o.note ?? '');
+    setError(null);
+  }
+
+  async function removeOverride(o: DoctorOverride) {
+    if (!canWriteThis) return;
+    // Plain confirm() is consistent with other destructive actions in
+    // the codebase; a styled confirm modal would be a larger refactor.
+    if (!window.confirm(`Remove override for ${o.date}? The day will revert to the weekly schedule.`)) {
+      return;
+    }
+    setError(null);
+    try {
+      await apiDelete(ctx, `/availability/doctors/${doctorId.trim()}/overrides/${o.date}${branchQs()}`);
+      // Same signal as save — the day reverts to weekly rules and any
+      // open slot picker should refetch.
+      emitAvailabilityChanged();
+      toast(`Override removed for ${o.date}`, 'success');
+      // If the editor was showing this same date, clear it so the user
+      // doesn't accidentally re-save the row they just deleted.
+      if (overrideDate === o.date) {
+        setOverrideDate(''); setOverrideType('CLOSED'); setOverrideWindows([]); setOverrideNote('');
+      }
+      await load();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
     }
   }
 
@@ -621,17 +696,26 @@ function AvailabilityTab() {
           <Field label="Date" value={overrideDate} onChange={setOverrideDate} placeholder="YYYY-MM-DD" type="date" />
           <div>
             <label style={labelStyle}>Type</label>
-            <div style={{ display: 'flex', gap: 8 }}>
-              {(['CLOSED', 'CUSTOM_WINDOWS'] as const).map((t) => (
-                <button key={t} onClick={() => setOverrideType(t)} disabled={!canWriteThis}
-                  style={{ flex: 1, height: 40, border: `1.5px solid ${overrideType === t ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 10, background: overrideType === t ? 'var(--brand-50)' : 'var(--surface-muted)', color: overrideType === t ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: canWriteThis ? 'pointer' : 'not-allowed' }}>
-                  {t === 'CLOSED' ? 'Closed' : 'Custom windows'}
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              {([
+                { v: 'CLOSED' as const, label: 'Closed all day' },
+                { v: 'BLOCKED_WINDOWS' as const, label: 'Block specific hours' },
+                { v: 'CUSTOM_WINDOWS' as const, label: 'Replace day windows' },
+              ]).map(({ v, label }) => (
+                <button key={v} onClick={() => setOverrideType(v)} disabled={!canWriteThis}
+                  style={{ flex: '1 1 0', minWidth: 100, height: 40, border: `1.5px solid ${overrideType === v ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 10, background: overrideType === v ? 'var(--brand-50)' : 'var(--surface-muted)', color: overrideType === v ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: canWriteThis ? 'pointer' : 'not-allowed' }}>
+                  {label}
                 </button>
               ))}
             </div>
+            <div style={{ marginTop: 6, fontSize: 11, color: 'var(--text-subtle)', lineHeight: 1.5 }}>
+              {overrideType === 'CLOSED' && 'No appointments allowed all day. Existing bookings get rescheduled to the next free slot.'}
+              {overrideType === 'BLOCKED_WINDOWS' && 'Mark specific hours unavailable; the rest of the doctor’s normal day stays open. Use this for emergencies.'}
+              {overrideType === 'CUSTOM_WINDOWS' && 'Replace the doctor’s entire day with the windows below. Anything outside the windows is unavailable.'}
+            </div>
           </div>
         </div>
-        {overrideType === 'CUSTOM_WINDOWS' && (
+        {(overrideType === 'CUSTOM_WINDOWS' || overrideType === 'BLOCKED_WINDOWS') && (
           <div style={{ marginTop: 12 }}>
             <WindowsEditor value={overrideWindows} onChange={setOverrideWindows} disabled={!canWriteThis} />
           </div>
@@ -657,15 +741,63 @@ function AvailabilityTab() {
           <div style={{ marginTop: 18 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>Existing overrides</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {overrides.map((o) => (
-                <div key={(o._id ?? '') + o.date} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 12px', background: 'var(--surface-muted)', borderRadius: 9, border: '1px solid var(--border)' }}>
-                  <code style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text)', minWidth: 96 }}>{o.date}</code>
-                  <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 100, background: o.type === 'CLOSED' ? 'var(--danger-bg)' : 'var(--info-bg)', color: o.type === 'CLOSED' ? 'var(--danger-text)' : 'var(--info-text)' }}>
-                    {o.type === 'CLOSED' ? 'Closed' : `${(o.windows ?? []).length} window(s)`}
-                  </span>
-                  {o.note && <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{o.note}</span>}
-                </div>
-              ))}
+              {overrides.map((o) => {
+                const isEditing = overrideDate === o.date;
+                return (
+                  <div key={(o._id ?? '') + o.date}
+                    style={{
+                      display: 'flex', alignItems: 'center', gap: 10,
+                      padding: '8px 12px',
+                      background: isEditing ? 'var(--brand-bg-soft)' : 'var(--surface-muted)',
+                      borderRadius: 9,
+                      border: `1px solid ${isEditing ? 'var(--brand-500)' : 'var(--border)'}`,
+                    }}>
+                    <code style={{ fontFamily: 'monospace', fontSize: 12, color: 'var(--text)', minWidth: 96 }}>{o.date}</code>
+                    {(() => {
+                      const badge =
+                        o.type === 'CLOSED'
+                          ? { label: 'Closed', bg: 'var(--danger-bg)', fg: 'var(--danger-text)' }
+                          : o.type === 'BLOCKED_WINDOWS'
+                            ? { label: `${(o.windows ?? []).length} blocked`, bg: 'var(--warning-bg)', fg: 'var(--warning-text)' }
+                            : { label: `${(o.windows ?? []).length} custom`, bg: 'var(--info-bg)', fg: 'var(--info-text)' };
+                      return (
+                        <span style={{ fontSize: 11, fontWeight: 600, padding: '2px 8px', borderRadius: 100, background: badge.bg, color: badge.fg }}>
+                          {badge.label}
+                        </span>
+                      );
+                    })()}
+                    {o.note && <span style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.note}</span>}
+                    <div style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+                      <button type="button" onClick={() => editOverride(o)}
+                        disabled={!canWriteThis}
+                        title={canWriteThis ? 'Edit override' : 'You do not have permission to edit'}
+                        aria-label={`Edit override for ${o.date}`}
+                        style={{
+                          width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7,
+                          cursor: canWriteThis ? 'pointer' : 'not-allowed',
+                          opacity: canWriteThis ? 1 : 0.5,
+                          color: 'var(--text-muted)',
+                        }}>
+                        <Icon name="edit" size={13} />
+                      </button>
+                      <button type="button" onClick={() => { void removeOverride(o); }}
+                        disabled={!canWriteThis}
+                        title={canWriteThis ? 'Delete override' : 'You do not have permission to delete'}
+                        aria-label={`Delete override for ${o.date}`}
+                        style={{
+                          width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7,
+                          cursor: canWriteThis ? 'pointer' : 'not-allowed',
+                          opacity: canWriteThis ? 1 : 0.5,
+                          color: 'var(--danger-500)',
+                        }}>
+                        <Icon name="trash" size={13} />
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         )}
@@ -1138,12 +1270,22 @@ function BranchSheet({ mode, initial, onClose, onSaved }: {
 
   async function submit() {
     if (!name.trim()) { setError('Branch name is required.'); return; }
+    let phoneNormalized: string | undefined;
+    if (phone.trim()) {
+      if (!isValidIndianMobile(phone)) {
+        setError('Enter a valid 10-digit Indian mobile number.');
+        return;
+      }
+      phoneNormalized = normalizeIndianMobile(phone) ?? undefined;
+    }
     setSaving(true); setError(null);
     try {
       const body: Record<string, unknown> = {
         name: name.trim(),
         addressLine: addressLine.trim() || undefined,
-        phone: phone.trim() || undefined,
+        // Persist the canonical 10-digit form so two branches typing
+        // "9876543210" and "+91 9876543210" land on the same value.
+        phone: phoneNormalized,
         open: open || undefined,
         close: close || undefined,
         slotsPerDay: slotsPerDay.trim() ? Math.max(0, Number(slotsPerDay) || 0) : undefined,
@@ -1633,6 +1775,7 @@ const AUDIT_DETAIL_LABELS: Record<string, string> = {
   'PUT /availability/doctors/:doctorUserId/rules': 'Updated doctor availability',
   'PUT /availability/doctors/:doctorUserId/overrides/:date': 'Set availability override',
   'PATCH /availability/doctors/:doctorUserId/overrides/:date/close': 'Closed clinic for date',
+  'DELETE /availability/doctors/:doctorUserId/overrides/:date': 'Remove availability override',
   // Auth / roles
   'PATCH /roles/:id': 'Updated role',
   'PATCH /users/:id/roles': 'Updated user roles',

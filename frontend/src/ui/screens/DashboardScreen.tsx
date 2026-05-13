@@ -1,10 +1,16 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { apiGet } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { Perm, usePerm } from '../../app/permissions';
 import { Sparkline, StatusPill, formatINR } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
 import { Counter } from '../shared/Counter';
 import { Skeleton } from '../shared/Skeleton';
+import { AreaChart } from '../shared/AreaChart';
+import { DatePickerChip } from '../shared/DatePickerChip';
+import {
+  HBarChart, KpiDetailModal, SectionHeader, StatCard, StatGrid, VBarChart, usePolling,
+} from '../shared/KpiDetailModal';
 import type { ReactNode } from 'react';
 
 type RevenueResp = {
@@ -24,14 +30,10 @@ type PendingResp = { branchId: string | null; count: number; rows: PendingRow[] 
 type AuditLog = { _id: string; action: string; entityType: string; entityId: string; targetLabel?: string; meta?: { method?: string; path?: string }; createdAt: string };
 type AuditLogsResp = { rows: AuditLog[]; nextBefore?: string };
 
-function daysAgoIso(base: string, n: number) {
-  const [y, m, d] = base.split('-').map(Number);
+function shortDayLabel(iso: string): string {
+  const [y, m, d] = iso.split('-').map(Number);
   const dt = new Date(y, (m ?? 1) - 1, d ?? 1);
-  dt.setDate(dt.getDate() - n);
-  const y2 = dt.getFullYear();
-  const m2 = String(dt.getMonth() + 1).padStart(2, '0');
-  const d2 = String(dt.getDate()).padStart(2, '0');
-  return `${y2}-${m2}-${d2}`;
+  return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 }
 
 function isoToTime(iso?: string) {
@@ -41,19 +43,39 @@ function isoToTime(iso?: string) {
   return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
 }
 
+type KpiKey = 'revenue' | 'bills' | 'pending' | 'appointments';
+
 export function DashboardScreen() {
   const { ctx, setScreen, selectedDate } = useApp();
+  const { has } = usePerm();
+  // Per-tile visibility. Mapping per role:
+  //   Super Admin → all four (has every permission)
+  //   Manager     → Revenue + Bills + Pending (ReportsRead + BillingRead, no ClinicWrite)
+  //   Front Desk  → Bills + Pending (BillingRead only)
+  //   Pharmacist  → Bills + Pending (BillingRead only)
+  //   Doctor      → does not have DashboardRead at all; the screen-level
+  //                 gate in SCREEN_REQUIRED blocks them, so they never
+  //                 reach this code path.
+  const canSeeRevenue      = has(Perm.ReportsRead);
+  const canSeeBills        = has(Perm.BillingRead);
+  const canSeePending      = has(Perm.BillingRead);
+  const canSeeAppointments = has(Perm.ClinicWrite);
   const [revenue, setRevenue] = useState<RevenueResp | null>(null);
   const [schedule, setSchedule] = useState<ScheduleResp | null>(null);
   const [pending, setPending] = useState<PendingResp | null>(null);
   const [activity, setActivity] = useState<AuditLog[] | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [openKpi, setOpenKpi] = useState<KpiKey | null>(null);
 
   async function load() {
     setError(null);
     try {
+      // Revenue + bills-issued tiles show the metric for *this one day* —
+      // the popup is where a longer window is explored. Keeping a single
+      // day at the tile layer makes the header date the obvious driver:
+      // change the header, the tile changes.
       const to = selectedDate;
-      const from = daysAgoIso(selectedDate, 13);
+      const from = selectedDate;
       const branchQs = ctx.branchId ? `&branchId=${ctx.branchId}` : '';
       setSchedule(null);
       const tasks: Promise<unknown>[] = [
@@ -107,19 +129,44 @@ export function DashboardScreen() {
       {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
 
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
-        <KPITile label="Revenue (14d)"
-          value={revenue ? <Counter value={revenue.payments.totalPaid} format={(n) => formatINR(n)} /> : '—'}
-          sub={revenue ? `${revenue.payments.count} payments` : 'No data'} data={fauxSpark} color="var(--brand-500)" icon="trendingUp" />
-        <KPITile label="Bills issued (14d)"
-          value={revenue ? <Counter value={revenue.issuedBills.count} /> : '—'}
-          sub={revenue ? `${formatINR(revenue.issuedBills.totalBilled)} billed` : 'No data'} data={fauxSpark.map((v) => v / 1000)} color="var(--accent-500)" icon="receipt" />
-        <KPITile label="Pending payments"
-          value={<Counter value={pending?.count ?? 0} />}
-          sub={`${formatINR(totalOutstanding)} outstanding`} data={fauxSpark.map((v) => v / 2)} color="var(--warning-500)" icon="clock" />
-        <KPITile label="Today's appointments"
-          value={schedule ? <Counter value={schedule.total} /> : '—'}
-          sub={ctx.branchId ? '' : 'Set branch ID to see schedule'} data={fauxSpark.map((v) => v / 4)} color="var(--info-500)" icon="calendar" />
+        {canSeeRevenue && (
+          <KPITile label={isToday ? "Today's revenue" : 'Revenue'}
+            value={revenue ? <Counter value={revenue.payments.totalPaid} format={(n) => formatINR(n)} /> : '—'}
+            sub={revenue ? `${revenue.payments.count} payments · ${shortDayLabel(selectedDate)}` : 'No data'} data={fauxSpark} color="var(--brand-500)" icon="trendingUp"
+            onClick={() => setOpenKpi('revenue')} />
+        )}
+        {canSeeBills && (
+          <KPITile label={isToday ? "Today's bills" : 'Bills issued'}
+            value={revenue ? <Counter value={revenue.issuedBills.count} /> : '—'}
+            sub={revenue ? `${formatINR(revenue.issuedBills.totalBilled)} billed · ${shortDayLabel(selectedDate)}` : 'No data'} data={fauxSpark.map((v) => v / 1000)} color="var(--accent-500)" icon="receipt"
+            onClick={() => setOpenKpi('bills')} />
+        )}
+        {canSeePending && (
+          <KPITile label="Pending payments"
+            value={<Counter value={pending?.count ?? 0} />}
+            sub={`${formatINR(totalOutstanding)} outstanding`} data={fauxSpark.map((v) => v / 2)} color="var(--warning-500)" icon="clock"
+            onClick={() => setOpenKpi('pending')} />
+        )}
+        {canSeeAppointments && (
+          <KPITile label="Today's appointments"
+            value={schedule ? <Counter value={schedule.total} /> : '—'}
+            sub={ctx.branchId ? '' : 'Set branch ID to see schedule'} data={fauxSpark.map((v) => v / 4)} color="var(--info-500)" icon="calendar"
+            onClick={() => setOpenKpi('appointments')} />
+        )}
       </div>
+
+      {openKpi === 'revenue' && (
+        <RevenueDetail onClose={() => setOpenKpi(null)} selectedDate={selectedDate} />
+      )}
+      {openKpi === 'bills' && (
+        <BillsIssuedDetail onClose={() => setOpenKpi(null)} selectedDate={selectedDate} />
+      )}
+      {openKpi === 'pending' && (
+        <PendingPaymentsDetail onClose={() => setOpenKpi(null)} />
+      )}
+      {openKpi === 'appointments' && (
+        <AppointmentsDetail onClose={() => setOpenKpi(null)} selectedDate={selectedDate} />
+      )}
 
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         <div style={{ flex: '1 1 60%', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
@@ -253,6 +300,354 @@ export function DashboardScreen() {
   );
 }
 
+/* ── KPI detail panels ────────────────────────────────────────
+   Each panel manages its own data + polling so opening one
+   doesn't refetch siblings. They live inside KpiDetailModal
+   which provides the chrome (header, close, scroll, theme). */
+
+type RevenueBucket = { bucket: string; totalPaid: number; paidCount: number; totalRefunded: number; refundCount: number; netRevenue: number };
+type RevenueTimeseriesResp = { from?: string; to?: string; bucket: string; buckets: RevenueBucket[] };
+type BillsBucket = { bucket: string; count: number; totalBilled: number };
+type BillsTimeseriesResp = { from?: string; to?: string; bucket: string; buckets: BillsBucket[] };
+
+const POLL_MS = 15_000;
+
+function rangeQs(selectedDate: string) {
+  // 14-day window ending on the dashboard's selected date.
+  const [y, m, d] = selectedDate.split('-').map(Number);
+  const end = new Date(y, (m ?? 1) - 1, d ?? 1);
+  const start = new Date(end);
+  start.setDate(start.getDate() - 13);
+  const fmt = (dt: Date) => `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+  return { from: fmt(start), to: fmt(end) };
+}
+
+function shortDate(iso: string) {
+  // 'YYYY-MM-DD' → 'DD MMM'
+  const [y, m, d] = iso.split('-').map(Number);
+  const dt = new Date(y, (m ?? 1) - 1, d ?? 1);
+  return dt.toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+}
+
+/**
+ * Local from/to date range used inside the KPI popups. Initialised from
+ * the dashboard's selected date (14d window ending on it) so the popup
+ * matches the tile context on first open, but the user can adjust either
+ * end with the DatePickerChips below and the chart refetches.
+ */
+function useDateRange(selectedDate: string) {
+  const initial = useMemo(() => rangeQs(selectedDate), [selectedDate]);
+  const [from, setFrom] = useState(initial.from);
+  const [to, setTo] = useState(initial.to);
+
+  // When the dashboard's header date changes while the modal is open,
+  // slide the range with it. Without this effect the modal keeps the
+  // stale range the user originally opened it on.
+  useEffect(() => {
+    setFrom(initial.from);
+    setTo(initial.to);
+  }, [initial.from, initial.to]);
+
+  // Guard against `from > to`: nudge whichever side wasn't just touched.
+  const setFromGuarded = (next: string) => {
+    setFrom(next);
+    if (next > to) setTo(next);
+  };
+  const setToGuarded = (next: string) => {
+    setTo(next);
+    if (next < from) setFrom(next);
+  };
+
+  return { from, to, setFrom: setFromGuarded, setTo: setToGuarded };
+}
+
+function RangePicker({
+  from, to, onChangeFrom, onChangeTo,
+}: {
+  from: string; to: string;
+  onChangeFrom: (iso: string) => void;
+  onChangeTo: (iso: string) => void;
+}) {
+  return (
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+      padding: '12px 14px', marginBottom: 16,
+      background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12,
+    }}>
+      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>From</span>
+      <DatePickerChip value={from} onChange={onChangeFrom} size="sm" />
+      <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>To</span>
+      <DatePickerChip value={to} onChange={onChangeTo} size="sm" />
+    </div>
+  );
+}
+
+function RevenueDetail({ onClose, selectedDate }: { onClose: () => void; selectedDate: string }) {
+  const { ctx } = useApp();
+  const { from, to, setFrom, setTo } = useDateRange(selectedDate);
+  const branchQs = ctx.branchId ? `&branchId=${ctx.branchId}` : '';
+
+  const { data, error, refreshing } = usePolling<RevenueTimeseriesResp>(
+    () => apiGet<RevenueTimeseriesResp>(ctx, `/reports/revenue/timeseries?from=${from}&to=${to}&bucket=day${branchQs}`),
+    POLL_MS,
+    [ctx.clinicId, ctx.branchId, from, to],
+  );
+
+  const buckets = data?.buckets ?? [];
+  const totalPaid = buckets.reduce((s, b) => s + b.totalPaid, 0);
+  const totalPayments = buckets.reduce((s, b) => s + b.paidCount, 0);
+  const totalRefunded = buckets.reduce((s, b) => s + b.totalRefunded, 0);
+  const netRevenue = totalPaid - totalRefunded;
+  const avgDaily = buckets.length ? totalPaid / buckets.length : 0;
+
+  return (
+    <KpiDetailModal title="Revenue" subtitle={`${from} → ${to}${ctx.branchName ? ` · ${ctx.branchName}` : ''}`}
+      icon="trendingUp" accentColor="var(--brand-500)" live={refreshing} onClose={onClose}
+      footer={<span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Auto-refresh every {POLL_MS / 1000}s · paid amount net of refunds</span>}>
+      <RangePicker from={from} to={to} onChangeFrom={setFrom} onChangeTo={setTo} />
+      {error && <KpiError msg={error} />}
+      <StatGrid>
+        <StatCard label="Total paid" value={formatINR(totalPaid)} sub={`${totalPayments} payments`} accent="var(--brand-500)" />
+        <StatCard label="Refunded" value={formatINR(totalRefunded)} sub="Via credit notes" accent="var(--danger-500)" />
+        <StatCard label="Net revenue" value={formatINR(netRevenue)} sub="Paid − refunded" accent="var(--success-500)" />
+        <StatCard label="Avg / day" value={formatINR(Math.round(avgDaily))} sub={`${buckets.length} day window`} />
+      </StatGrid>
+
+      <SectionHeader>Daily payments</SectionHeader>
+      {data == null ? (
+        <Skeleton height={220} radius={12} />
+      ) : buckets.length === 0 ? (
+        <KpiEmpty />
+      ) : (
+        <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: '8px 4px 0' }}>
+          <AreaChart
+            data={buckets.map((b) => b.totalPaid)}
+            labels={buckets.map((b) => shortDate(b.bucket))}
+            color="var(--brand-500)"
+            height={240}
+            yFormat={(v) => (v >= 1000 ? `₹${(v / 1000).toFixed(0)}k` : `₹${v}`)}
+          />
+        </div>
+      )}
+    </KpiDetailModal>
+  );
+}
+
+function BillsIssuedDetail({ onClose, selectedDate }: { onClose: () => void; selectedDate: string }) {
+  const { ctx } = useApp();
+  const { from, to, setFrom, setTo } = useDateRange(selectedDate);
+  const branchQs = ctx.branchId ? `&branchId=${ctx.branchId}` : '';
+
+  const { data, error, refreshing } = usePolling<BillsTimeseriesResp>(
+    () => apiGet<BillsTimeseriesResp>(ctx, `/reports/bills-issued/timeseries?from=${from}&to=${to}&bucket=day${branchQs}`),
+    POLL_MS,
+    [ctx.clinicId, ctx.branchId, from, to],
+  );
+
+  const buckets = data?.buckets ?? [];
+  const totalCount = buckets.reduce((s, b) => s + b.count, 0);
+  const totalBilled = buckets.reduce((s, b) => s + b.totalBilled, 0);
+  const avgValue = totalCount ? totalBilled / totalCount : 0;
+  const avgPerDay = buckets.length ? totalCount / buckets.length : 0;
+
+  return (
+    <KpiDetailModal title="Bills issued" subtitle={`${from} → ${to}${ctx.branchName ? ` · ${ctx.branchName}` : ''}`}
+      icon="receipt" accentColor="var(--accent-500)" live={refreshing} onClose={onClose}
+      footer={<span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Auto-refresh every {POLL_MS / 1000}s · includes paid bills</span>}>
+      <RangePicker from={from} to={to} onChangeFrom={setFrom} onChangeTo={setTo} />
+      {error && <KpiError msg={error} />}
+      <StatGrid>
+        <StatCard label="Bills issued" value={totalCount} sub={`${buckets.length} day window`} accent="var(--accent-500)" />
+        <StatCard label="Total billed" value={formatINR(totalBilled)} sub="Across all bills" />
+        <StatCard label="Avg bill" value={formatINR(Math.round(avgValue))} sub="Per issued bill" />
+        <StatCard label="Avg / day" value={avgPerDay.toFixed(1)} sub="Bills per day" />
+      </StatGrid>
+
+      <SectionHeader>Daily issuance</SectionHeader>
+      {data == null ? (
+        <Skeleton height={220} radius={12} />
+      ) : buckets.length === 0 ? (
+        <KpiEmpty />
+      ) : (
+        <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: '8px 4px 0' }}>
+          <AreaChart
+            data={buckets.map((b) => b.count)}
+            labels={buckets.map((b) => shortDate(b.bucket))}
+            color="var(--accent-500)"
+            height={240}
+            yFormat={(v) => String(Math.round(v))}
+          />
+        </div>
+      )}
+    </KpiDetailModal>
+  );
+}
+
+function PendingPaymentsDetail({ onClose }: { onClose: () => void }) {
+  const { ctx } = useApp();
+  const branchQs = ctx.branchId ? `&branchId=${ctx.branchId}` : '';
+
+  const { data, error, refreshing } = usePolling<PendingResp>(
+    () => apiGet<PendingResp>(ctx, `/reports/pending-payments?limit=20${branchQs}`),
+    POLL_MS,
+    [ctx.clinicId, ctx.branchId],
+  );
+
+  const rows = data?.rows ?? [];
+  const totalOutstanding = rows.reduce((s, r) => s + r.outstanding, 0);
+  const totalBilled = rows.reduce((s, r) => s + r.total, 0);
+  const top = rows.slice(0, 10).map((r) => ({
+    label: r.patient?.fullName ?? `#${r.patientId.slice(-6)}`,
+    value: r.outstanding,
+    sub: r.billNo ? `#${r.billNo}` : `#${r._id.slice(-6)}`,
+  }));
+
+  // Status breakdown across the returned rows (not the whole clinic — the
+  // endpoint already trimmed to outstanding>0, so all rows are by definition
+  // unpaid; group on `status` to surface DRAFT/ISSUED/etc. if any leak through).
+  const byStatus = rows.reduce<Record<string, number>>((acc, r) => {
+    const k = (r.status || 'UNKNOWN').toUpperCase();
+    acc[k] = (acc[k] ?? 0) + r.outstanding;
+    return acc;
+  }, {});
+  const statusRows = Object.entries(byStatus)
+    .map(([k, v]) => ({ label: k.replace(/_/g, ' '), value: v }))
+    .sort((a, b) => b.value - a.value);
+
+  return (
+    <KpiDetailModal title="Pending payments" subtitle={ctx.branchName ?? 'All branches'}
+      icon="clock" accentColor="var(--warning-500)" live={refreshing} onClose={onClose}
+      footer={<span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Auto-refresh every {POLL_MS / 1000}s · top 20 outstanding bills</span>}>
+      {error && <KpiError msg={error} />}
+      <StatGrid>
+        <StatCard label="Open bills" value={data?.count ?? 0} accent="var(--warning-500)" />
+        <StatCard label="Total outstanding" value={formatINR(totalOutstanding)} accent="var(--danger-500)" />
+        <StatCard label="Total billed" value={formatINR(totalBilled)} />
+        <StatCard label="Collected" value={formatINR(Math.max(0, totalBilled - totalOutstanding))} accent="var(--success-500)" />
+      </StatGrid>
+
+      <SectionHeader>Top patients by outstanding</SectionHeader>
+      {data == null ? (
+        <Skeleton height={200} radius={12} />
+      ) : top.length === 0 ? (
+        <KpiEmpty msg="No open bills. Nice work." />
+      ) : (
+        <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: 14, marginBottom: 20 }}>
+          <HBarChart rows={top} color="var(--warning-500)" formatValue={(v) => formatINR(v)} />
+        </div>
+      )}
+
+      {statusRows.length > 1 && (
+        <>
+          <SectionHeader>By status</SectionHeader>
+          <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: 14 }}>
+            <HBarChart rows={statusRows} color="var(--warning-500)" formatValue={(v) => formatINR(v)} />
+          </div>
+        </>
+      )}
+    </KpiDetailModal>
+  );
+}
+
+function AppointmentsDetail({ onClose, selectedDate }: { onClose: () => void; selectedDate: string }) {
+  const { ctx } = useApp();
+  const branchQs = ctx.branchId ? `&branchId=${ctx.branchId}` : '';
+
+  const { data, error, refreshing } = usePolling<ScheduleResp>(
+    () => apiGet<ScheduleResp>(ctx, `/reports/schedule/daily?date=${selectedDate}${branchQs}`),
+    POLL_MS,
+    [ctx.clinicId, ctx.branchId, selectedDate],
+  );
+
+  if (!ctx.branchId) {
+    return (
+      <KpiDetailModal title="Appointments" subtitle={selectedDate}
+        icon="calendar" accentColor="var(--info-500)" onClose={onClose}>
+        <KpiEmpty msg="Set a branch ID in your context to see today's schedule." />
+      </KpiDetailModal>
+    );
+  }
+
+  const items = data?.items ?? [];
+  const total = data?.total ?? 0;
+
+  // Status breakdown — bars share the modal's accent theme token below.
+  const byStatus: Record<string, number> = {};
+  for (const a of items) {
+    const k = (a.status || 'UNKNOWN').toUpperCase();
+    byStatus[k] = (byStatus[k] ?? 0) + 1;
+  }
+  const statusRows = Object.entries(byStatus)
+    .map(([k, v]) => ({ label: k.replace(/_/g, ' '), value: v }))
+    .sort((a, b) => b.value - a.value);
+
+  // Hourly distribution (TIME appointments only; QUEUE has no start time).
+  const hourCounts = Array.from({ length: 14 }, () => 0); // 8h..21h
+  for (const a of items) {
+    if (a.type !== 'TIME' || !a.startAt) continue;
+    const hr = new Date(a.startAt).getHours();
+    const idx = hr - 8;
+    if (idx >= 0 && idx < hourCounts.length) hourCounts[idx] += 1;
+  }
+  const hourBars = hourCounts.map((c, i) => ({ label: `${String(i + 8).padStart(2, '0')}h`, value: c }));
+
+  const timeCount = items.filter((a) => a.type === 'TIME').length;
+  const queueCount = items.filter((a) => a.type === 'QUEUE').length;
+  const doneCount = byStatus['DONE'] ?? 0;
+  const cancelledCount = (byStatus['CANCELLED'] ?? 0) + (byStatus['NO_SHOW'] ?? 0);
+
+  return (
+    <KpiDetailModal title="Appointments" subtitle={`${selectedDate}${ctx.branchName ? ` · ${ctx.branchName}` : ''}`}
+      icon="calendar" accentColor="var(--info-500)" live={refreshing} onClose={onClose}
+      footer={<span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Auto-refresh every {POLL_MS / 1000}s · time + walk-in tokens</span>}>
+      {error && <KpiError msg={error} />}
+      <StatGrid>
+        <StatCard label="Total" value={total} accent="var(--info-500)" />
+        <StatCard label="Time-slot" value={timeCount} sub={`${queueCount} queue tokens`} />
+        <StatCard label="Completed" value={doneCount} sub={total ? `${Math.round((doneCount / total) * 100)}%` : ''} accent="var(--success-500)" />
+        <StatCard label="Cancelled / no-show" value={cancelledCount} accent="var(--danger-500)" />
+      </StatGrid>
+
+      {timeCount > 0 && (
+        <>
+          <SectionHeader>By hour (time-slot appointments)</SectionHeader>
+          <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 14px 24px', marginBottom: 20 }}>
+            <VBarChart bars={hourBars} color="var(--info-500)" height={180} />
+          </div>
+        </>
+      )}
+
+      <SectionHeader>By status</SectionHeader>
+      {data == null ? (
+        <Skeleton height={140} radius={12} />
+      ) : statusRows.length === 0 ? (
+        <KpiEmpty msg="No appointments on this date." />
+      ) : (
+        <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: 14 }}>
+          <HBarChart rows={statusRows} color="var(--info-500)" />
+        </div>
+      )}
+    </KpiDetailModal>
+  );
+}
+
+function KpiError({ msg }: { msg: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 14px', borderRadius: 10, marginBottom: 16, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', color: 'var(--danger-500)', fontSize: 12 }}>
+      <Icon name="alertTriangle" size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+      <span>{msg}</span>
+    </div>
+  );
+}
+
+function KpiEmpty({ msg = 'No data for this range.' }: { msg?: string }) {
+  return (
+    <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13, background: 'var(--surface-muted)', border: '1px dashed var(--border)', borderRadius: 12 }}>
+      {msg}
+    </div>
+  );
+}
+
 function describeActivity(log: AuditLog): { label: string; icon: IconName } {
   const p = log.meta?.path ?? '';
   if (log.action === 'CREATE') {
@@ -293,9 +688,33 @@ function relativeTime(iso: string): string {
   return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
 }
 
-function KPITile({ label, value, sub, data, color, icon }: { label: string; value: ReactNode; sub: string; data: number[]; color: string; icon: IconName }) {
+function KPITile({ label, value, sub, data, color, icon, onClick }: {
+  label: string; value: ReactNode; sub: string; data: number[]; color: string; icon: IconName;
+  onClick?: () => void;
+}) {
+  const clickable = !!onClick;
   return (
-    <div style={{ flex: '1 1 220px', minWidth: 180, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <button type="button" onClick={onClick} disabled={!clickable}
+      aria-label={`${label} — view details`}
+      style={{
+        flex: '1 1 220px', minWidth: 180,
+        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14,
+        padding: '16px 20px',
+        display: 'flex', flexDirection: 'column', gap: 8,
+        textAlign: 'left', color: 'inherit', font: 'inherit',
+        cursor: clickable ? 'pointer' : 'default',
+        transition: 'transform var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast) var(--ease-out)',
+      }}
+      onMouseEnter={(e) => {
+        if (!clickable) return;
+        e.currentTarget.style.borderColor = color;
+        e.currentTarget.style.boxShadow = `0 4px 18px ${color}1F`;
+      }}
+      onMouseLeave={(e) => {
+        if (!clickable) return;
+        e.currentTarget.style.borderColor = 'var(--border)';
+        e.currentTarget.style.boxShadow = 'none';
+      }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
         <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
           <Icon name={icon} size={13} style={{ color }} />
@@ -307,6 +726,11 @@ function KPITile({ label, value, sub, data, color, icon }: { label: string; valu
         <div style={{ fontSize: 22, fontWeight: 700, color: 'var(--text)', fontFamily: "'Manrope',sans-serif", letterSpacing: '-0.5px', fontVariantNumeric: 'tabular-nums' }}>{value}</div>
         {sub && <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 2 }}>{sub}</div>}
       </div>
-    </div>
+      {clickable && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4, fontSize: 11, fontWeight: 500, color, marginTop: 2 }}>
+          View details <Icon name="chevronRight" size={11} />
+        </div>
+      )}
+    </button>
   );
 }

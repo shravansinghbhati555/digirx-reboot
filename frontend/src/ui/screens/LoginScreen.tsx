@@ -207,6 +207,7 @@ function SignInStep({
   const [showPw, setShowPw] = useState(false);
   const [errors, setErrors] = useState<{ clinic?: string; email?: string; password?: string; general?: string }>({});
   const [btnState, setBtnState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [forgotOpen, setForgotOpen] = useState(false);
   const [shakeKey, setShakeKey] = useState(0);
 
   function validate() {
@@ -285,7 +286,11 @@ function SignInStep({
         </FormGroup>
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -10, marginBottom: 20 }}>
-          <button type="button" style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500, color: 'var(--brand-500)', padding: 0 }}>
+          <button type="button" onClick={() => {
+            if (!clinic) { toast('Pick your clinic first', 'info'); return; }
+            setForgotOpen(true);
+          }}
+            style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500, color: 'var(--brand-500)', padding: 0 }}>
             Forgot password?
           </button>
         </div>
@@ -318,6 +323,184 @@ function SignInStep({
           style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 600, color: 'var(--brand-500)', padding: 0 }}>
           Create one
         </button>
+      </div>
+
+      {forgotOpen && clinic && (
+        <ForgotPasswordModal
+          apiBaseUrl={apiBaseUrl}
+          clinic={clinic}
+          initialEmail={email}
+          onClose={() => setForgotOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── Forgot Password Modal (admin-only) ────────────────────── */
+
+function ForgotPasswordModal({
+  apiBaseUrl, clinic, initialEmail, onClose,
+}: {
+  apiBaseUrl: string;
+  clinic: ClinicResult;
+  initialEmail: string;
+  onClose: () => void;
+}) {
+  const { ctx } = useApp();
+  const toast = useToast();
+  // Stage 1: request a reset token; stage 2: enter the token + new password.
+  // The BE returns 200 regardless of whether the email is registered (no
+  // enumeration), so we always move to stage 2 after the request goes
+  // through and let the user paste whatever token they received.
+  const [stage, setStage] = useState<'request' | 'confirm' | 'done'>('request');
+  const [email, setEmail] = useState(initialEmail);
+  const [token, setToken] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [showPw, setShowPw] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  async function handleRequest(ev: React.FormEvent) {
+    ev.preventDefault();
+    setErr(null);
+    if (!/\S+@\S+\.\S+/.test(email)) { setErr('Enter a valid email address.'); return; }
+    setSubmitting(true);
+    try {
+      await apiPost<{ ok: boolean }>({ ...ctx, apiBaseUrl } as DevContext, '/auth/forgot-password', {
+        clinicId: clinic.id,
+        email,
+      });
+      setStage('confirm');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleConfirm(ev: React.FormEvent) {
+    ev.preventDefault();
+    setErr(null);
+    if (token.trim().length < 20) { setErr('Paste the full reset token.'); return; }
+    if (newPassword.length < 8) { setErr('Password must be at least 8 characters.'); return; }
+    setSubmitting(true);
+    try {
+      await apiPost<{ ok: boolean }>({ ...ctx, apiBaseUrl } as DevContext, '/auth/reset-password', {
+        clinicId: clinic.id,
+        email,
+        token: token.trim(),
+        newPassword,
+      });
+      setStage('done');
+      toast('Password updated', 'success');
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : String(e));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div onClick={onClose}
+      style={{ position: 'fixed', inset: 0, zIndex: 300, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)', animation: 'fadeIn 150ms ease-out' }}>
+      <div onClick={(e) => e.stopPropagation()}
+        style={{ width: '100%', maxWidth: 440, background: 'var(--surface)', borderRadius: 16, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', overflow: 'hidden', animation: 'slideUp 200ms ease-out' }}>
+        <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+          <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>
+            {stage === 'done' ? 'Password updated' : 'Reset admin password'}
+          </div>
+          <button onClick={onClose} className="press-scale"
+            style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}
+            aria-label="Close">
+            <Icon name="x" size={18} />
+          </button>
+        </div>
+
+        <div style={{ padding: '18px 22px 22px' }}>
+          {err && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: 8, marginBottom: 14, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--danger-500)', fontSize: 13 }}>
+              <Icon name="alertTriangle" size={16} style={{ flexShrink: 0 }} />
+              <span>{err}</span>
+            </div>
+          )}
+
+          {stage === 'request' && (
+            <form onSubmit={handleRequest}>
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 16 }}>
+                Only admin accounts can reset their password this way. We'll generate a one-time reset token for <b>{clinic.name}</b>.
+              </p>
+              <FormGroup label="Admin email">
+                <InputWrap icon="mail">
+                  <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email" autoFocus
+                    style={inputStyle(false)} />
+                </InputWrap>
+              </FormGroup>
+              <button type="submit" disabled={submitting}
+                style={{
+                  width: '100%', height: 44, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10,
+                  fontSize: 14, fontWeight: 600, cursor: submitting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                }}>
+                {submitting && <Spinner size={16} />}
+                {submitting ? 'Requesting…' : 'Send reset token'}
+              </button>
+            </form>
+          )}
+
+          {stage === 'confirm' && (
+            <form onSubmit={handleConfirm}>
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 14 }}>
+                If <b>{email}</b> is an admin on this clinic, a reset token was issued (check your email, or the dev console while email delivery is being set up). The token expires in 30 minutes.
+              </p>
+              <FormGroup label="Reset token">
+                <input type="text" value={token} onChange={(e) => setToken(e.target.value)} autoFocus
+                  placeholder="Paste the token here"
+                  style={{ ...inputStyle(false), paddingLeft: 14, fontFamily: 'monospace', fontSize: 12 }} />
+              </FormGroup>
+              <FormGroup label="New password">
+                <InputWrap icon="lock">
+                  <input type={showPw ? 'text' : 'password'} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoComplete="new-password"
+                    placeholder="At least 8 characters"
+                    style={{ ...inputStyle(false), paddingRight: 44 }} />
+                  <button type="button" onClick={() => setShowPw((v) => !v)}
+                    style={{ position: 'absolute', right: 8, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', padding: 6, borderRadius: 6, display: 'flex' }}
+                    aria-label={showPw ? 'Hide password' : 'Show password'}>
+                    <Icon name="eye" size={16} />
+                  </button>
+                </InputWrap>
+              </FormGroup>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button type="button" onClick={() => setStage('request')}
+                  style={{ flex: '0 0 auto', height: 44, padding: '0 16px', background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                  Back
+                </button>
+                <button type="submit" disabled={submitting}
+                  style={{
+                    flex: 1, height: 44, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10,
+                    fontSize: 14, fontWeight: 600, cursor: submitting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                  }}>
+                  {submitting && <Spinner size={16} />}
+                  {submitting ? 'Updating…' : 'Set new password'}
+                </button>
+              </div>
+            </form>
+          )}
+
+          {stage === 'done' && (
+            <div style={{ textAlign: 'center', padding: '8px 0 4px' }}>
+              <div style={{ width: 56, height: 56, borderRadius: '50%', background: 'rgba(16,185,129,0.1)', border: '2px solid var(--success-500)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+                <Icon name="check" size={26} style={{ color: 'var(--success-500)' }} strokeWidth={2.5} />
+              </div>
+              <p style={{ fontSize: 14, color: 'var(--text)', lineHeight: 1.5, marginBottom: 20 }}>
+                Password updated. Sign in with your new password.
+              </p>
+              <button onClick={onClose}
+                style={{ width: '100%', height: 44, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: 'pointer' }}>
+                Back to sign in
+              </button>
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -656,22 +839,26 @@ function ClinicCombobox({
   const [loading, setLoading] = useState(false);
   const wrapRef = useRef<HTMLDivElement>(null);
 
-  // Debounced search
+  // Debounced search. `cancelled` keeps a slower previous-query response
+  // from overwriting the newer one's results — without it the dropdown
+  // can momentarily flash older matches mid-typing.
   useEffect(() => {
     if (!open) return;
+    let cancelled = false;
     const handle = setTimeout(async () => {
       setLoading(true);
       try {
         const data = await apiGet<ClinicResult[]>({ ...ctx, apiBaseUrl } as DevContext, `/clinic/search?q=${encodeURIComponent(query.trim())}`);
+        if (cancelled) return;
         setResults(data);
         setHighlighted(data.length ? 0 : -1);
       } catch {
-        setResults([]);
+        if (!cancelled) setResults([]);
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }, 250);
-    return () => clearTimeout(handle);
+    return () => { cancelled = true; clearTimeout(handle); };
   }, [query, apiBaseUrl, open, ctx]);
 
   // Close on outside click

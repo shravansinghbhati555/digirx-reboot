@@ -20,6 +20,12 @@ type PermGroup = { title: string; rows: PermRow[] };
 
 const PERMISSION_GROUPS: PermGroup[] = [
   {
+    title: 'Dashboard',
+    rows: [
+      { perm: Perm.DashboardRead, label: 'View the Dashboard tab' },
+    ],
+  },
+  {
     title: 'Patients',
     rows: [
       { perm: Perm.PatientRead, label: 'View patients' },
@@ -62,6 +68,13 @@ const PERMISSION_GROUPS: PermGroup[] = [
     ],
   },
   {
+    title: 'Reports',
+    rows: [
+      { perm: Perm.ReportsRead, label: 'View reports' },
+      { perm: Perm.ReportsWrite, label: 'Export reports' },
+    ],
+  },
+  {
     title: 'Clinic admin',
     rows: [
       { perm: Perm.ClinicRead, label: 'View clinic settings' },
@@ -91,6 +104,7 @@ const WRITE_TO_READ: Partial<Record<PermName, PermName>> = {
   [Perm.ClinicWrite]: Perm.ClinicRead,
   [Perm.BranchWrite]: Perm.BranchRead,
   [Perm.UserWrite]: Perm.UserRead,
+  [Perm.ReportsWrite]: Perm.ReportsRead,
 };
 const READ_TO_WRITE: Partial<Record<PermName, PermName>> = Object.fromEntries(
   Object.entries(WRITE_TO_READ).map(([w, r]) => [r as PermName, w as PermName]),
@@ -228,7 +242,7 @@ export function RolesScreen() {
               Roles &amp; Permissions
             </h1>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
-              Click a column header to toggle all. Admin role is immutable.
+              Click a column header to toggle all. Super Admin role is immutable.
             </p>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
@@ -295,7 +309,7 @@ export function RolesScreen() {
                       minWidth: 100 
                     }}
                       onClick={() => toggleAllForRole(r)}
-                      title={r.immutable ? 'Admin role is immutable' : 'Click to toggle all'}>
+                      title={r.immutable ? 'Super Admin role is immutable' : 'Click to toggle all'}>
                       <div style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                         <span style={{ fontSize: 13, fontWeight: 700 }}>{r.name}</span>
                         {r.immutable && <Icon name="lock" size={11} style={{ color: 'var(--text-subtle)' }} />}
@@ -424,8 +438,12 @@ function buildCreateRoleSchema(existingNames: Set<string>) {
         'A role with this name already exists',
       )
       .refine(
-        (n) => n.toLowerCase() !== 'admin',
-        'Admin is reserved',
+        (n) => {
+          const lower = n.toLowerCase();
+          // 'admin' covered for clinics seeded before the rename.
+          return lower !== 'super admin' && lower !== 'admin';
+        },
+        'Super Admin is reserved',
       ),
   });
 }

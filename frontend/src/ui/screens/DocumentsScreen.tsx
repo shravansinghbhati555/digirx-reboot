@@ -55,6 +55,7 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
   const [error, setError] = useState<string | null>(null);
   const [sharing, setSharing] = useState<ServerDoc | null>(null);
   const [previewing, setPreviewing] = useState<ServerDoc | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   const isEmbedded = !!fixedOwnerId;
 
@@ -78,11 +79,30 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
     }
   }
 
+  // Debounced refetch. `cancelled` guards against an older request
+  // resolving after a newer one (user typing fast) and overwriting
+  // the latest results.
   useEffect(() => {
-    const t = setTimeout(() => {
-      void fetchDocuments();
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      setLoadingDocs(true);
+      try {
+        const qs = new URLSearchParams();
+        if (fixedOwnerId) {
+          qs.set('ownerType', fixedOwnerType || 'PATIENT');
+          qs.set('ownerId', fixedOwnerId);
+        }
+        if (searchQuery.trim()) qs.set('query', searchQuery.trim());
+        const docs = await apiGet<ServerDoc[]>(ctx, `/documents?${qs.toString()}`);
+        if (!cancelled) setDocuments(docs || []);
+      } catch {
+        if (!cancelled) toast('Failed to load documents', 'error');
+      } finally {
+        if (!cancelled) setLoadingDocs(false);
+      }
     }, searchQuery ? 500 : 0);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [ctx, fixedOwnerId, fixedOwnerType, searchQuery]);
 
   async function handleFile(file: File) {
@@ -124,11 +144,14 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
   }
 
   async function downloadDoc(doc: ServerDoc) {
+    setDownloadingId(doc._id);
     try {
       const res = await apiGet<DownloadResp>(ctx, `/documents/${doc._id}/download`);
       window.open(res.url, '_blank', 'noopener,noreferrer');
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Download failed', 'error');
+    } finally {
+      setDownloadingId(null);
     }
   }
 
@@ -268,7 +291,7 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
             {documents.map((doc) => (
-              <DocCard key={doc._id} doc={doc} onPreview={() => setPreviewing(doc)} onDownload={() => downloadDoc(doc)} onShare={() => setSharing(doc)} onDelete={() => deleteDoc(doc)} showOwner={!isEmbedded} />
+              <DocCard key={doc._id} doc={doc} onPreview={() => setPreviewing(doc)} onDownload={() => downloadDoc(doc)} onShare={() => setSharing(doc)} onDelete={() => deleteDoc(doc)} showOwner={!isEmbedded} downloading={downloadingId === doc._id} />
             ))}
           </div>
         )}
@@ -280,7 +303,7 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
   );
 }
 
-function DocCard({ doc, onPreview, onDownload, onShare, onDelete, showOwner }: { doc: ServerDoc; onPreview: () => void; onDownload: () => void; onShare: () => void; onDelete: () => void; showOwner?: boolean }) {
+function DocCard({ doc, onPreview, onDownload, onShare, onDelete, showOwner, downloading }: { doc: ServerDoc; onPreview: () => void; onDownload: () => void; onShare: () => void; onDelete: () => void; showOwner?: boolean; downloading?: boolean }) {
   const cat = DOCUMENT_CATEGORIES.find(c => c.value === doc.category) || DOCUMENT_CATEGORIES[5];
 
   return (
@@ -309,7 +332,9 @@ function DocCard({ doc, onPreview, onDownload, onShare, onDelete, showOwner }: {
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }} onClick={e => e.stopPropagation()}>
-        <button onClick={onDownload} style={actionButtonStyle} title="Download"><Icon name="download" size={14} /></button>
+        <button onClick={onDownload} disabled={downloading} style={{ ...actionButtonStyle, cursor: downloading ? 'wait' : 'pointer', opacity: downloading ? 0.6 : 1 }} title="Download">
+          {downloading ? <Spinner size={12} /> : <Icon name="download" size={14} />}
+        </button>
         {doc.access !== 'INTERNAL_ONLY' && <button onClick={onShare} style={actionButtonStyle} title="Share"><Icon name="send" size={14} /></button>}
         <button onClick={onDelete} style={{ ...actionButtonStyle, color: 'var(--danger-500)' }} title="Delete"><Icon name="trash" size={14} /></button>
       </div>
@@ -391,13 +416,14 @@ function PatientSearch({ onSelect, selectedName, onClear }: { onSelect: (p: Pati
   useEffect(() => {
     if (!query.trim()) { setResults([]); return; }
     setSearching(true);
+    let cancelled = false;
     const t = setTimeout(() => {
       apiGet<Patient[]>(ctx, `/patients?query=${encodeURIComponent(query.trim())}&limit=5`)
-        .then(setResults)
-        .catch(() => setResults([]))
-        .finally(() => setSearching(false));
+        .then((r) => { if (!cancelled) setResults(r); })
+        .catch(() => { if (!cancelled) setResults([]); })
+        .finally(() => { if (!cancelled) setSearching(false); });
     }, 400);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [query, ctx]);
 
   if (selectedName) {
@@ -452,13 +478,17 @@ function UserSearch({ onSelect, selectedName, onClear }: { onSelect: (u: User) =
   useEffect(() => {
     if (!query.trim()) { setResults([]); return; }
     setSearching(true);
+    let cancelled = false;
     const t = setTimeout(() => {
       apiGet<User[]>(ctx, `/users?query=${encodeURIComponent(query.trim())}`)
-        .then(res => setResults(res.filter(u => u.name.toLowerCase().includes(query.toLowerCase()))))
-        .catch(() => setResults([]))
-        .finally(() => setSearching(false));
+        .then((res) => {
+          if (cancelled) return;
+          setResults(res.filter((u) => u.name.toLowerCase().includes(query.toLowerCase())));
+        })
+        .catch(() => { if (!cancelled) setResults([]); })
+        .finally(() => { if (!cancelled) setSearching(false); });
     }, 400);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [query, ctx]);
 
   if (selectedName) {

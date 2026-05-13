@@ -9,7 +9,7 @@ export type IconName =
   | 'xCircle' | 'trendingUp' | 'trendingDown' | 'moon' | 'sun' | 'help' | 'command'
   | 'stethoscope' | 'pill' | 'fileText' | 'cross' | 'arrowUp' | 'user' | 'gitBranch'
   | 'activity' | 'eye' | 'lock' | 'send' | 'tag' | 'creditCard' | 'banknote' | 'smartphone'
-  | 'printer' | 'share' | 'externalLink' | 'eyeOff';
+  | 'printer' | 'share' | 'externalLink' | 'eyeOff' | 'refresh';
 
 export function Icon({
   name,
@@ -97,6 +97,7 @@ export function Icon({
     case 'share': return <svg {...p}><path d="M4 12v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8" /><polyline points="16 6 12 2 8 6" /><line x1="12" y1="2" x2="12" y2="15" /></svg>;
     case 'externalLink': return <svg {...p}><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" /><polyline points="15 3 21 3 21 9" /><line x1="10" y1="14" x2="21" y2="3" /></svg>;
     case 'eyeOff': return <svg {...p}><path d="M9.88 9.88a3 3 0 1 0 4.24 4.24" /><path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68" /><path d="M6.61 6.61A13.52 13.52 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61" /><line x1="2" y1="2" x2="22" y2="22" /></svg>;
+    case 'refresh': return <svg {...p}><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>;
     default: return <svg {...p}><circle cx="12" cy="12" r="5" /></svg>;
   }
 }

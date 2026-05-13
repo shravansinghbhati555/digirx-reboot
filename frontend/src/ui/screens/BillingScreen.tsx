@@ -76,11 +76,12 @@ type BillRow = Bill & { totalPaid: number; outstanding: number; patientName?: st
 type BillList = { branchId: string | null; count: number; rows: BillRow[] };
 
 /**
- * Kind chip rendered on each bill row. SERVICE bills use the brand
- * palette (default), MEDICINE bills use a green/pill palette so the
- * pharmacy line of business is instantly recognizable in a mixed list.
- * Bills without a kind (legacy rows pre-Slice-1) render as SERVICE,
- * matching the BE default.
+ * Service chip rendered on each bill row. The billing screen filters
+ * out MEDICINE bills (those live in /pharmacy) so every row here is a
+ * SERVICE bill — rendered with the brand palette and the label
+ * "Consultation" which matches how front-desk staff describe these
+ * charges to patients. The MEDICINE branch stays in place as a safety
+ * net for any legacy/edge row that slips past the filter.
  */
 function KindChip({ kind }: { kind?: 'SERVICE' | 'MEDICINE' }) {
   const isMedicine = kind === 'MEDICINE';
@@ -94,7 +95,7 @@ function KindChip({ kind }: { kind?: 'SERVICE' | 'MEDICINE' }) {
       background: bg, color: fg, border: `1px solid ${border}`,
       whiteSpace: 'nowrap', textTransform: 'uppercase', letterSpacing: '0.05em',
     }}>
-      {isMedicine ? 'Medicine' : 'Service'}
+      {isMedicine ? 'Medicine' : 'Consultation'}
     </span>
   );
 }
@@ -115,10 +116,6 @@ export function BillingScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'draft' | 'issued' | 'paid' | 'void'>('all');
-  // Slice 6 — second filter dimension. SERVICE is the historical default
-  // so an admin who never opens this control sees what they always have;
-  // pharmacy users will switch to MEDICINE for a focused list.
-  const [kindFilter, setKindFilter] = useState<'all' | 'service' | 'medicine'>('all');
   const [selected, setSelected] = useState<BillRow | null>(null);
   const [editingBill, setEditingBill] = useState<Bill | null>(null);
   const [showCreate, setShowCreate] = useState(false);
@@ -138,7 +135,11 @@ export function BillingScreen() {
       const qs = new URLSearchParams({ limit: String(limit) });
       if (ctx.branchId) qs.set('branchId', ctx.branchId);
       if (filter !== 'all') qs.set('status', filter);
-      if (kindFilter !== 'all') qs.set('kind', kindFilter.toUpperCase());
+      // This screen only lists service (consultation) bills; pharmacy /
+      // medicine bills have their own screen at /pharmacy. Hard-coding
+      // the BE filter keeps medicine bills out of every list response,
+      // so there's no flicker on filter changes.
+      qs.set('kind', 'SERVICE');
       if (selectedDate) qs.set('date', selectedDate);
       const data = await apiGet<BillList>(ctx, `/bills?${qs.toString()}`);
       setBills(data.rows);
@@ -155,7 +156,7 @@ export function BillingScreen() {
     setPageSize(PAGE_INITIAL);
     void loadBills(PAGE_INITIAL);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ctx.clinicId, ctx.branchId, filter, kindFilter, selectedDate]);
+  }, [ctx.clinicId, ctx.branchId, filter, selectedDate]);
 
   useEffect(() => {
     if (selectedBillId) {
@@ -170,16 +171,65 @@ export function BillingScreen() {
     }
   }, [selectedAppointmentId, selectedEncounterId, selectedBillId]);
 
-  async function loadBill(id: string) {
-    if (!id.trim()) return;
+  // Accepts either a 24-char Mongo ObjectId (the legacy lookup) or a
+  // human-readable bill no (e.g. "MAIN/2026-27/000005"). The latter is
+  // what staff actually see on the row and on the printed receipt, so
+  // typing that should Just Work. We route to the appropriate endpoint
+  // by shape; bill no values typically contain slashes which can't sit
+  // in a path segment, hence the dedicated /bills/by-no?billNo=…
+  // endpoint on the BE.
+  async function loadBill(idOrBillNo: string) {
+    const value = idOrBillNo.trim();
+    if (!value) return;
     setError(null);
+    const isObjectId = /^[a-f0-9]{24}$/i.test(value);
     try {
-      const bill = await apiGet<BillRow>(ctx, `/bills/${id.trim()}`);
+      const bill = isObjectId
+        ? await apiGet<BillRow>(ctx, `/bills/${value}`)
+        : await apiGet<BillRow>(ctx, `/bills/by-no?billNo=${encodeURIComponent(value)}`);
       setSelected(bill);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }
+
+  // Live lookup. As the operator types in the lookup box we fire a
+  // /bills/by-no (or /bills/:id) request once the value "looks
+  // complete" — a 24-char ObjectId or a billNo containing a slash
+  // (e.g. MAIN/2026-27/000005). The debounce + cancelled flag pattern
+  // matches the other search inputs across the app and prevents a
+  // slow response for an earlier keystroke from overwriting a later
+  // one's result. 404s are silently swallowed mid-type so the operator
+  // doesn't see a "Bill not found" banner flicker on every character;
+  // other errors still surface to the banner.
+  useEffect(() => {
+    const value = lookupId.trim();
+    if (!value) { setError(null); return; }
+    const isObjectId = /^[a-f0-9]{24}$/i.test(value);
+    const looksLikeBillNo = value.includes('/') && value.length >= 6;
+    if (!isObjectId && !looksLikeBillNo) return;
+
+    let cancelled = false;
+    const t = setTimeout(async () => {
+      try {
+        const bill = isObjectId
+          ? await apiGet<BillRow>(ctx, `/bills/${value}`)
+          : await apiGet<BillRow>(ctx, `/bills/by-no?billNo=${encodeURIComponent(value)}`);
+        if (!cancelled) {
+          setSelected(bill);
+          setError(null);
+        }
+      } catch (e) {
+        if (cancelled) return;
+        const msg = e instanceof Error ? e.message : String(e);
+        // Hide the inevitable "not found" while the operator is still
+        // typing; surface anything else (network, 401, etc.).
+        if (/not found/i.test(msg)) return;
+        setError(msg);
+      }
+    }, 350);
+    return () => { cancelled = true; clearTimeout(t); };
+  }, [lookupId, ctx]);
 
   const filtered = useMemo(() => bills ?? [], [bills]);
 
@@ -195,27 +245,10 @@ export function BillingScreen() {
               </button>
             ))}
           </div>
-          <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 100, padding: 4, border: '1px solid var(--border)' }}>
-            {([
-              { id: 'all', label: 'All kinds' },
-              { id: 'service', label: 'Service' },
-              { id: 'medicine', label: 'Medicine' },
-            ] as const).map((k) => (
-              <button key={k.id} onClick={() => setKindFilter(k.id)}
-                style={{ padding: '6px 14px', borderRadius: 100, border: 'none', background: kindFilter === k.id ? 'var(--brand-100)' : 'transparent', color: kindFilter === k.id ? 'var(--text)' : 'var(--text-muted)', fontSize: 11, fontWeight: 700, cursor: 'pointer', transition: 'all 0.2s' }}>
-                {k.label}
-              </button>
-            ))}
-          </div>
           <div style={{ flex: 1 }} />
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <input value={lookupId} onChange={(e) => setLookupId(e.target.value)} placeholder="Bill ID lookup…"
-              onKeyDown={(e) => e.key === 'Enter' && loadBill(lookupId)}
-              style={{ height: 36, padding: '0 16px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 12, color: 'var(--text)', outline: 'none', minWidth: 220, fontFamily: 'monospace' }} />
-            <button onClick={() => loadBill(lookupId)}
-              style={{ height: 36, padding: '0 16px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 12, fontWeight: 700, color: 'var(--text)', cursor: 'pointer', transition: 'all 0.2s' }}>
-              Load
-            </button>
+            <input value={lookupId} onChange={(e) => setLookupId(e.target.value)} placeholder="Bill no lookup (e.g. MAIN/2026-27/000005)"
+              style={{ height: 36, padding: '0 16px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 12, color: 'var(--text)', outline: 'none', minWidth: 280, fontFamily: 'monospace' }} />
           </div>
           <button onClick={() => canCreateBill && setShowCreate(true)}
             disabled={!canCreateBill}
@@ -248,7 +281,7 @@ export function BillingScreen() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ position: 'sticky', top: 0, zIndex: 1 }}>
                 <tr style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
-                  {['Bill no', 'Kind', 'Patient', 'Total', 'Outstanding', 'Status'].map((h, i) => (
+                  {['Bill no', 'Service', 'Patient', 'Total', 'Outstanding', 'Status'].map((h, i) => (
                     <th key={h} style={{ padding: '12px 20px', textAlign: i >= 3 && i <= 4 ? 'right' : 'left', fontSize: 10, fontWeight: 800, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{h}</th>
                   ))}
                 </tr>
@@ -304,7 +337,7 @@ export function BillingScreen() {
           )}
           {!loading && !error && filtered.length >= 2000 && (
             <div style={{ padding: '12px 16px', textAlign: 'center', fontSize: 11, color: 'var(--text-subtle)' }}>
-              Showing the most recent 2000 bills. Use the status / kind filters above to narrow further.
+              Showing the most recent 2000 bills. Use the status filter above to narrow further.
             </div>
           )}
         </div>
@@ -372,6 +405,7 @@ function BillDetail({
   const [refundingCn, setRefundingCn] = useState<CreditNote | null>(null);
   const [cancellingCn, setCancellingCn] = useState<CreditNote | null>(null);
   const [busy, setBusy] = useState(false);
+  const [downloadingPdf, setDownloadingPdf] = useState(false);
   const [billNoFreshKey, setBillNoFreshKey] = useState(0);
   const [latestPaymentId, setLatestPaymentId] = useState<string | null>(null);
   const prevBillNoRef = useRef<string | undefined>(bill.billNo);
@@ -450,11 +484,14 @@ function BillDetail({
   }
 
   async function downloadPdf() {
+    setDownloadingPdf(true);
     try {
       const res = await apiGet<{ url: string }>(ctx, `/bills/${bill._id}/pdf`);
       window.open(res.url, '_blank', 'noopener,noreferrer');
     } catch (e) {
       toast(e instanceof Error ? e.message : 'PDF unavailable', 'error');
+    } finally {
+      setDownloadingPdf(false);
     }
   }
 
@@ -513,8 +550,8 @@ function BillDetail({
               <Icon name="xCircle" size={13} /> Void
             </button>
           )}
-          <button onClick={downloadPdf} title="PDF" style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 9, cursor: 'pointer', color: 'var(--text-muted)' }}>
-            <Icon name="download" size={14} />
+          <button onClick={downloadPdf} disabled={downloadingPdf} title="PDF" style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 9, cursor: downloadingPdf ? 'wait' : 'pointer', color: 'var(--text-muted)', opacity: downloadingPdf ? 0.6 : 1 }}>
+            {downloadingPdf ? <Spinner size={14} /> : <Icon name="download" size={14} />}
           </button>
         </div>
       </div>
@@ -870,17 +907,19 @@ function CreateBillSheet({
     }
   }, [initialEncounterId, initialAppointmentId, ctx]);
 
-  // Patient search
+  // Patient search. `cancelled` prevents a stale response from a
+  // previous query from clobbering the current one's results.
   useEffect(() => {
     if (patient) { setPatientHits([]); return; }
     if (!patientQuery.trim()) { setPatientHits([]); return; }
+    let cancelled = false;
     const t = setTimeout(() => {
       const qs = new URLSearchParams({ query: patientQuery.trim(), limit: '10' });
       apiGet<PatientHit[]>(ctx, `/patients?${qs.toString()}`)
-        .then(setPatientHits)
-        .catch(() => setPatientHits([]));
+        .then((r) => { if (!cancelled) setPatientHits(r); })
+        .catch(() => { if (!cancelled) setPatientHits([]); });
     }, 200);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [patientQuery, patient, ctx]);
 
   const subtotal = items.reduce((s, i) => s + i.qty * i.price, 0);

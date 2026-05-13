@@ -12,10 +12,10 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
     // Determine the best API URL. 
     // If we are on localhost (like Puppeteer), and the context URL is a remote tunnel,
     // we might want to try localhost:4000 directly to avoid loopback issues.
-    let baseUrl = ctx.apiBaseUrl || 'http://localhost:4000';
+    let baseUrl = ctx.apiBaseUrl || 'https://api.digirx.stageprojects.xyz/';
     if (window.location.hostname === 'localhost' && !baseUrl.includes('localhost')) {
       console.log('Detected local environment, trying local API fallback');
-      baseUrl = 'http://localhost:4000';
+      baseUrl = 'https://api.digirx.stageprojects.xyz/';
     }
 
     const url = `${baseUrl}/share/prescriptions/${token}`;

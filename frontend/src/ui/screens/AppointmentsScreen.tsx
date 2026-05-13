@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { AVAILABILITY_CHANGED_EVENT } from '../../app/events';
 import { Perm, usePerm } from '../../app/permissions';
 import { Avatar, EmptyState, Spinner, StatusPill, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
@@ -363,6 +364,23 @@ export function AppointmentsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [date, ctx.branchId, ctx.clinicId]);
 
+  // Two refresh sources beyond the date/branch deps above:
+  //   1) availability-changed events — admin saved/removed an override
+  //      on another tab, the cascade likely moved this day's bookings.
+  //   2) visibilitychange — the tab was backgrounded; on return the
+  //      data might be stale (e.g. someone else booked or rescheduled).
+  useEffect(() => {
+    function onChange() { void load(); }
+    function onVis() { if (document.visibilityState === 'visible') void load(); }
+    window.addEventListener(AVAILABILITY_CHANGED_EVENT, onChange);
+    document.addEventListener('visibilitychange', onVis);
+    return () => {
+      window.removeEventListener(AVAILABILITY_CHANGED_EVENT, onChange);
+      document.removeEventListener('visibilitychange', onVis);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, ctx.branchId, ctx.clinicId]);
+
   useEffect(() => {
     apiGet<Array<{ _id: string; name: string }>>(ctx, '/users')
       .then((list) => {
@@ -474,6 +492,14 @@ export function AppointmentsScreen() {
               </button>
             ))}
           </div>
+
+          <button onClick={() => void load()}
+            disabled={loading}
+            title="Refresh"
+            aria-label="Refresh appointments"
+            style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: loading ? 'wait' : 'pointer', color: 'var(--text-muted)' }}>
+            <Icon name="refresh" size={14} style={{ animation: loading ? 'spin 800ms linear infinite' : undefined }} />
+          </button>
         </div>
 
         <button onClick={() => canBook && setShowBook(true)}
@@ -878,6 +904,11 @@ function BookSheet({
   const [slotMinutes, setSlotMinutes] = useState<number>(15);
   const [apptType, setApptType] = useState<typeof APPT_TYPES[number]>('Consultation');
   const [duration, setDuration] = useState<number>(30);
+  // Bumped by the manual refresh button AND by the availability-changed
+  // event so the slot useEffect re-runs and pulls a fresh view. Without
+  // this, an admin updating doctor rules / overrides while the sheet is
+  // open leaves the picker showing stale availability.
+  const [slotsRefreshKey, setSlotsRefreshKey] = useState(0);
   // Doctor identity is what the slot endpoint queries availability for.
   // It defaults to the signed-in user (the common single-doctor case) but
   // is editable so a receptionist booking on someone else's behalf doesn't
@@ -891,20 +922,23 @@ function BookSheet({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Load patient list (step 1) — refetch on query change
+  // Load patient list (step 1) — refetch on query change. `cancelled`
+  // guards against an older query's response overwriting a newer one's
+  // when the user keeps typing while a request is in flight.
   useEffect(() => {
     if (step !== 1) return;
     setPatientsLoading(true);
+    let cancelled = false;
     const qs = new URLSearchParams();
     if (patientQuery.trim()) qs.set('query', patientQuery.trim());
     qs.set('limit', '50');
     const t = setTimeout(() => {
       apiGet<PatientLite[]>(ctx, `/patients?${qs.toString()}`)
-        .then(setPatients)
-        .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-        .finally(() => setPatientsLoading(false));
+        .then((r) => { if (!cancelled) setPatients(r); })
+        .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
+        .finally(() => { if (!cancelled) setPatientsLoading(false); });
     }, 200);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [step, patientQuery, ctx]);
 
   // Pre-load patient when referred from another screen
@@ -988,7 +1022,16 @@ function BookSheet({
       .catch(() => setSlots([]))
       .finally(() => setSlotsLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step, apptKind, doctorId, date, ctx.branchId, duration]);
+  }, [step, apptKind, doctorId, date, ctx.branchId, duration, slotsRefreshKey]);
+
+  // Listen for cross-screen availability changes (override saved /
+  // removed in Settings) and bump the refresh key so the slot picker
+  // pulls fresh data without the receptionist having to close the sheet.
+  useEffect(() => {
+    function onChange() { setSlotsRefreshKey((k) => k + 1); }
+    window.addEventListener(AVAILABILITY_CHANGED_EVENT, onChange);
+    return () => window.removeEventListener(AVAILABILITY_CHANGED_EVENT, onChange);
+  }, []);
 
   function continueFromStep1() {
     if (!selectedPatient) return;
@@ -1100,6 +1143,7 @@ function BookSheet({
               doctorName={doctorName}
               room={room} setRoom={setRoom}
               notes={notes} setNotes={setNotes}
+              onRefreshSlots={() => setSlotsRefreshKey((k) => k + 1)}
             />
           )}
 
@@ -1228,6 +1272,7 @@ function DetailsStep({
   apptType, setApptType, duration, setDuration,
   doctorId, setDoctorId, doctors, doctorName,
   room, setRoom, notes, setNotes,
+  onRefreshSlots,
 }: {
   patient: PatientLite | null;
   onChangePatient: () => void;
@@ -1242,6 +1287,7 @@ function DetailsStep({
   doctorName: string;
   room: typeof ROOMS[number]; setRoom: (v: typeof ROOMS[number]) => void;
   notes: string; setNotes: (v: string) => void;
+  onRefreshSlots: () => void;
 }) {
   const meta = patient ? [genderInitial(patient.gender) === 'M' ? 'Male' : genderInitial(patient.gender) === 'F' ? 'Female' : 'Other', getAge(patient.dob) != null ? `${getAge(patient.dob)}y` : null].filter(Boolean).join(' · ') : '';
 
@@ -1298,9 +1344,17 @@ function DetailsStep({
           <div>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 5 }}>
               <label style={{ ...labelStyle, marginBottom: 0 }}>Time slot</label>
-              <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
-                {slotsLoading ? 'Loading…' : `${slots.length} available`}
-              </span>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
+                  {slotsLoading ? 'Loading…' : `${slots.length} available`}
+                </span>
+                <button type="button" onClick={onRefreshSlots} disabled={slotsLoading}
+                  title="Refresh slots"
+                  aria-label="Refresh slots"
+                  style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 6, cursor: slotsLoading ? 'wait' : 'pointer', color: 'var(--text-muted)' }}>
+                  <Icon name="refresh" size={11} style={{ animation: slotsLoading ? 'spin 800ms linear infinite' : undefined }} />
+                </button>
+              </div>
             </div>
             <TimeSlotGrid
               slotMinutes={slotMinutes}

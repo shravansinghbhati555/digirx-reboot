@@ -22,6 +22,20 @@ export const Perm = {
   AccessLogRead: 'accesslog:read',
   InventoryRead: 'inventory:read',
   InventoryWrite: 'inventory:write',
+  // Reports permissions are additive: the Reports tab is granted by
+  // ReportsRead/Write OR by BillingRead (unchanged) so today's roles
+  // that see Reports keep seeing them. BE /reports/* routes remain
+  // gated to BillingRead / AppointmentRead, so granting only Reports
+  // without underlying read perms opens the screen but the widgets
+  // won't fetch.
+  ReportsRead: 'reports:read',
+  ReportsWrite: 'reports:write',
+  // Dashboard tab — gates the home screen. Individual tiles on that
+  // screen are gated by their data permissions (ReportsRead for
+  // revenue, BillingRead for bills/pending, ClinicWrite for today's
+  // appointments), so granting only DashboardRead opens the page but
+  // shows just the tiles whose data the role can actually fetch.
+  DashboardRead: 'dashboard:read',
 } as const;
 
 export type PermName = typeof Perm[keyof typeof Perm];
@@ -29,13 +43,13 @@ export type PermName = typeof Perm[keyof typeof Perm];
 // Permissions required to access each screen. `null` = open to any signed-in user.
 // "Any one suffices" semantics.
 export const SCREEN_REQUIRED: Record<ScreenKey, PermName[] | null> = {
-  dashboard:     [Perm.ClinicWrite],
+  dashboard:     [Perm.ClinicWrite, Perm.DashboardRead],
   patients:      [Perm.PatientRead],
   appointments:  [Perm.AppointmentRead],
   encounters:    [Perm.PatientRead],
   billing:       [Perm.BillingRead],
   documents:     [Perm.DocumentRead],
-  reports:       [Perm.BillingRead],
+  reports:       [Perm.BillingRead, Perm.ReportsRead, Perm.ReportsWrite],
   notifications: [Perm.NotificationRead],
   inventory:     [Perm.InventoryRead],
   pharmacy:      [Perm.BillingRead],

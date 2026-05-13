@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
+import { isValidEmail, normalizeIndianMobile } from '../../app/validators';
 import { Avatar, EmptyState, Field, Spinner, StatusPill, formatDate, formatMoney, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
 import { AnimatedTabs } from '../shared/AnimatedTabs';
@@ -149,6 +150,11 @@ export function PatientsScreen() {
         const qs = new URLSearchParams();
         if (query.trim()) qs.set('query', query.trim());
         qs.set('limit', '50');
+        // Scope to the active branch so switching branches in the
+        // sidebar narrows the list. The BE includes patients with no
+        // primaryBranchId (legacy patients) so nothing disappears
+        // unexpectedly when the field isn't set.
+        if (ctx.branchId) qs.set('branchId', ctx.branchId);
         const data = await apiGet<Patient[]>(ctx, `/patients?${qs.toString()}`);
         if (cancelled) return;
         setItems(data);
@@ -165,7 +171,7 @@ export function PatientsScreen() {
       clearTimeout(handle);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [query, refreshKey]);
+  }, [query, refreshKey, ctx.branchId]);
 
   const tagOptions = useMemo(() => {
     const set = new Set<string>();
@@ -476,33 +482,48 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const steps = ['Identity', 'Contact', 'Tags & Notes'];
 
-  // Debounced duplicate-phone check on contact step
+  // Debounced duplicate-phone check on contact step. The `cancelled`
+  // flag guards against the user typing "9876" → "98765" → "987654"
+  // where the response for "98765" can arrive after "987654" and
+  // overwrite the latest result. Without it, the duplicate banner
+  // flickers in/out as old requests resolve.
   useEffect(() => {
     setDuplicate(null);
     if (step !== 1) return;
     const phone = form.phone.trim();
     if (!phone || phone.length < 6) return;
+    let cancelled = false;
     const handle = setTimeout(async () => {
       try {
         const hits = await apiGet<Patient[]>(ctx, `/patients?query=${encodeURIComponent(phone)}&limit=5`);
+        if (cancelled) return;
         const match = hits.find((h) => (h.phones ?? []).some((p) => p.replace(/\s/g, '').includes(phone.replace(/\s/g, ''))));
         if (match) setDuplicate(match);
       } catch {
         // ignore
       }
     }, 300);
-    return () => clearTimeout(handle);
+    return () => { cancelled = true; clearTimeout(handle); };
   }, [form.phone, step, ctx]);
 
   async function submit() {
     if (!form.fullName.trim()) { shake(); setError('Full name is required.'); return; }
+    if (!form.phone.trim()) { shake(); setError('Phone number is required.'); return; }
+    const phoneNormalized = normalizeIndianMobile(form.phone);
+    if (!phoneNormalized) { shake(); setError('Enter a valid 10-digit Indian mobile number.'); return; }
+    if (form.email.trim() && !isValidEmail(form.email)) { shake(); setError('Enter a valid email address.'); return; }
     setSaving(true);
     setError(null);
     try {
-      const body: Record<string, unknown> = { fullName: form.fullName.trim() };
+      const body: Record<string, unknown> = {
+        fullName: form.fullName.trim(),
+        // Always persist the canonical 10-digit form so duplicate
+        // detection and normalisation on the BE see the same shape
+        // regardless of how the operator typed it.
+        phones: [phoneNormalized],
+      };
       if (form.dob) body.dob = form.dob;
       if (form.gender) body.gender = form.gender.toUpperCase();
-      if (form.phone.trim()) body.phones = [form.phone.trim()];
       if (form.email.trim()) body.emails = [form.email.trim()];
       const tagList = form.tags.split(',').map((t) => t.trim()).filter(Boolean);
       if (tagList.length) body.tags = tagList;
@@ -543,9 +564,12 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
           {step === 0 && (
             <>
               <Field label="Full name" value={form.fullName} onChange={(v) => set('fullName', v)} placeholder="e.g. Anjali Mehta" />
-              <Field label="Date of birth" value={form.dob} onChange={(v) => set('dob', v)} placeholder="Enter date of birth" type="date" />
+              <Field label="Date of birth" value={form.dob} onChange={(v) => set('dob', v)} placeholder="Enter date of birth" type="date" optional />
               <div>
-                <label style={labelStyle}>Gender</label>
+                <label style={labelStyle}>
+                  Gender
+                  <span style={{ color: 'var(--text-subtle)', fontWeight: 400, marginLeft: 4 }}>(optional)</span>
+                </label>
                 <div style={{ display: 'flex', gap: 8 }}>
                   {['MALE', 'FEMALE', 'OTHER'].map((g) => (
                     <button key={g} onClick={() => set('gender', g)}
@@ -573,12 +597,12 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
                   </button>
                 </div>
               )}
-              <Field label="Email address" value={form.email} onChange={(v) => set('email', v)} placeholder="patient@email.com" />
+              <Field label="Email address" value={form.email} onChange={(v) => set('email', v)} placeholder="patient@email.com" optional />
             </>
           )}
           {step === 2 && (
             <>
-              <Field label="Tags" value={form.tags} onChange={(v) => set('tags', v)} placeholder="Diabetic, Hypertensive (comma-separated)" />
+              <Field label="Tags" value={form.tags} onChange={(v) => set('tags', v)} placeholder="Diabetic, Hypertensive (comma-separated)" optional />
               <div>
                 <label style={labelStyle}>Notes <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>(optional)</span></label>
                 <textarea value={form.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Any relevant background or chief complaint…"
@@ -626,13 +650,17 @@ function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; o
 
   async function submit() {
     if (!form.fullName.trim()) { shake(); setError('Full name is required.'); return; }
+    if (!form.phone.trim()) { shake(); setError('Phone number is required.'); return; }
+    const phoneNormalized = normalizeIndianMobile(form.phone);
+    if (!phoneNormalized) { shake(); setError('Enter a valid 10-digit Indian mobile number.'); return; }
+    if (form.email.trim() && !isValidEmail(form.email)) { shake(); setError('Enter a valid email address.'); return; }
     setSaving(true);
     setError(null);
     try {
       const body: Record<string, unknown> = { fullName: form.fullName.trim() };
       body.dob = form.dob || null;
       body.gender = form.gender ? form.gender.toUpperCase() : null;
-      body.phones = form.phone.trim() ? [form.phone.trim()] : [];
+      body.phones = [phoneNormalized];
       body.emails = form.email.trim() ? [form.email.trim()] : [];
       body.tags = form.tags.split(',').map((t) => t.trim()).filter(Boolean);
       body.notes = form.notes.trim() || null;
@@ -666,9 +694,12 @@ function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; o
             <div style={{ gridColumn: 'span 2' }}>
               <Field label="Full name" value={form.fullName} onChange={(v) => set('fullName', v)} />
             </div>
-            <Field label="Date of birth" value={form.dob} onChange={(v) => set('dob', v)} placeholder="Enter date of birth" type="date" />
+            <Field label="Date of birth" value={form.dob} onChange={(v) => set('dob', v)} placeholder="Enter date of birth" type="date" optional />
             <div>
-              <label style={labelStyle}>Gender</label>
+              <label style={labelStyle}>
+                Gender
+                <span style={{ color: 'var(--text-subtle)', fontWeight: 400, marginLeft: 4 }}>(optional)</span>
+              </label>
               <div style={{ display: 'flex', gap: 6 }}>
                 {['MALE', 'FEMALE', 'OTHER'].map((g) => (
                   <button key={g} onClick={() => set('gender', g)}
@@ -679,12 +710,15 @@ function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; o
               </div>
             </div>
             <Field label="Phone number" value={form.phone} onChange={(v) => set('phone', v)} prefix="+91" />
-            <Field label="Email address" value={form.email} onChange={(v) => set('email', v)} />
+            <Field label="Email address" value={form.email} onChange={(v) => set('email', v)} optional />
             <div style={{ gridColumn: 'span 2' }}>
-              <Field label="Tags" value={form.tags} onChange={(v) => set('tags', v)} placeholder="comma-separated" />
+              <Field label="Tags" value={form.tags} onChange={(v) => set('tags', v)} placeholder="comma-separated" optional />
             </div>
             <div style={{ gridColumn: 'span 2' }}>
-              <label style={labelStyle}>Notes</label>
+              <label style={labelStyle}>
+                Notes
+                <span style={{ color: 'var(--text-subtle)', fontWeight: 400, marginLeft: 4 }}>(optional)</span>
+              </label>
               <textarea value={form.notes} onChange={(e) => set('notes', e.target.value)}
                 style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box' }}
               />

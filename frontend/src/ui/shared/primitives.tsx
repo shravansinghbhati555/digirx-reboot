@@ -197,14 +197,21 @@ export const formatDateTime = (str: string | Date | null | undefined) => {
 export const labelStyle: CSSProperties = { display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text)', marginBottom: 4 };
 
 export function Field({
-  label, value, onChange, placeholder, prefix, type = 'text',
+  label, value, onChange, placeholder, prefix, type = 'text', optional = false,
 }: {
   label: string; value: string; onChange: (v: string) => void;
   placeholder?: string; prefix?: string; type?: string;
+  /** Appends a muted "(optional)" suffix to the label so the UI matches
+   *  the DTO contract — fields the API treats as optional should advertise
+   *  it visually, not silently accept empty input. */
+  optional?: boolean;
 }) {
   return (
     <div>
-      <label style={labelStyle}>{label}</label>
+      <label style={labelStyle}>
+        {label}
+        {optional && <span style={{ color: 'var(--text-subtle)', fontWeight: 400, marginLeft: 4 }}>(optional)</span>}
+      </label>
       {/* For date fields we render the themed DatePickerChip so the
           calendar popup matches the header's calendar everywhere it
           appears (availability overrides, preview tools, etc.). */}
@@ -324,11 +331,11 @@ export function GhostButton({
   );
 }
 
-export function Spinner({ size = 16 }: { size?: number }) {
+export function Spinner({ size = 16, color }: { size?: number; color?: string }) {
   return (
     <div style={{
       width: size, height: size,
-      border: '2px solid var(--on-brand-spinner-track)', borderTopColor: 'var(--brand-text)',
+      border: '2px solid var(--border)', borderTopColor: color ?? 'currentColor',
       borderRadius: '50%', animation: 'spin 600ms linear infinite',
     }} />
   );

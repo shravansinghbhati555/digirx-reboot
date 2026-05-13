@@ -33,6 +33,17 @@ export function AreaChart({
     len += Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
   }
 
+  // CSS draw-in animations on these elements use `forwards`, which means
+  // they only run on mount and then freeze. When `data` changes (range
+  // change or polling refresh) React updates the `d` attribute in place
+  // but the animation doesn't replay — leaving the path stuck in its
+  // previous final-keyframe state, sometimes with a stale dasharray that
+  // hides the new geometry. Keying each animated node by a data signature
+  // forces React to unmount and remount them, restarting the animation
+  // with the new path. Cheap (paths are leaves) and removes the
+  // stale-render bug without giving up the entry effect.
+  const dataKey = `${data.length}|${safeData[0]}|${safeData[safeData.length - 1]}|${max.toFixed(2)}|${color}`;
+
   return (
     <svg viewBox={`0 0 ${w} ${h}`} style={{ width: '100%', height, display: 'block' }}>
       <defs>
@@ -61,16 +72,16 @@ export function AreaChart({
           </text>
         );
       })}
-      <path d={areaPath} fill="url(#areaGrad)"
+      <path key={`area-${dataKey}`} d={areaPath} fill="url(#areaGrad)"
         style={{ opacity: 0, animation: 'pathFadeIn 800ms var(--ease-out) 200ms forwards' }} />
-      <path d={linePath} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+      <path key={`line-${dataKey}`} d={linePath} fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
         style={{
           strokeDasharray: len.toFixed(1),
           strokeDashoffset: len.toFixed(1),
           animation: 'pathDraw 800ms var(--ease-out) forwards',
           ['--draw-len' as never]: len.toFixed(1),
         }} />
-      <circle cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r="4" fill={color} stroke="var(--surface)" strokeWidth="2"
+      <circle key={`dot-${dataKey}`} cx={pts[pts.length - 1][0]} cy={pts[pts.length - 1][1]} r="4" fill={color} stroke="var(--surface)" strokeWidth="2"
         style={{ opacity: 0, animation: 'pathFadeIn 200ms var(--ease-out) 780ms forwards' }} />
     </svg>
   );

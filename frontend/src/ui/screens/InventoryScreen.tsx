@@ -100,24 +100,27 @@ export function InventoryScreen() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'in-stock' | 'low-stock' | 'out-of-stock'>('all');
 
   // Item list reload — debounced so typing doesn't fire a request per keystroke.
+  // `cancelled` guards against a stale response overwriting newer results when
+  // the user keeps typing.
   useEffect(() => {
     if (!canRead) return;
     setLoading(true);
     setError(null);
+    let cancelled = false;
     const t = setTimeout(() => {
       const qs = new URLSearchParams();
       if (branchFilter) qs.set('branchId', branchFilter);
       if (query.trim()) qs.set('query', query.trim());
       // The BE doesn't have a direct 'status' query param for stock level yet,
-      // so we filter the resulting list on the FE for now. 
+      // so we filter the resulting list on the FE for now.
       // (Optimized for typically < 1000 items).
       qs.set('limit', '500');
       apiGet<InventoryItem[]>(ctx, `/inventory/items?${qs.toString()}`)
-        .then(setItems)
-        .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-        .finally(() => setLoading(false));
+        .then((r) => { if (!cancelled) setItems(r); })
+        .catch((e) => { if (!cancelled) setError(e instanceof Error ? e.message : String(e)); })
+        .finally(() => { if (!cancelled) setLoading(false); });
     }, 200);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [ctx, branchFilter, query, canRead]);
 
   const filteredItems = useMemo(() => {

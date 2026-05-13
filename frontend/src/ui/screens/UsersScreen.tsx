@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
+import { isValidEmail, isValidIndianMobile, normalizeIndianMobile } from '../../app/validators';
 import { Avatar, Spinner, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
 
@@ -33,6 +34,10 @@ export function UsersScreen() {
   const [selectedId, setSelectedId] = useState<string | undefined>(undefined);
   const [error, setError] = useState<string | null>(null);
   const [showAddModal, setShowAddModal] = useState(false);
+  // Holds the user being edited / having their password reset. We key
+  // each modal off its own state so they're independent.
+  const [editingUser, setEditingUser] = useState<UserRow | null>(null);
+  const [resettingUser, setResettingUser] = useState<UserRow | null>(null);
 
   async function load() {
     setLoading(true);
@@ -87,6 +92,21 @@ export function UsersScreen() {
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Failed to add user', 'error');
     }
+  }
+
+  async function handleEditUser(userId: string, patch: Record<string, unknown>) {
+    const updated = await apiPatch<UserRow>(ctx, `/users/${userId}`, patch);
+    setUsers((prev) => prev.map((u) => (u._id === userId ? updated : u)));
+    toast(`Updated ${updated.name}`, 'success');
+  }
+
+  async function handleResetPassword(userId: string, newPassword: string) {
+    // BE hashes the password; it doesn't echo it back. The plaintext
+    // stays in the admin's hand (the form input they just typed/
+    // generated) so the Reset Password modal can surface it for copy-
+    // paste to share with the user.
+    await apiPost(ctx, `/users/${userId}/password-reset`, { newPassword });
+    toast('Password reset — share the new password with the user', 'success');
   }
 
   if (loading) {
@@ -191,6 +211,8 @@ export function UsersScreen() {
           canEdit={canEdit}
           onClose={() => setSelectedId(undefined)}
           onSave={(roleIds) => saveUserRoles(selected._id, roleIds)}
+          onEdit={() => setEditingUser(selected)}
+          onResetPassword={() => setResettingUser(selected)}
         />
       )}
 
@@ -202,18 +224,40 @@ export function UsersScreen() {
           onSave={handleAddUser}
         />
       )}
+
+      {editingUser && (
+        <EditUserModal
+          user={editingUser}
+          branches={branches}
+          onClose={() => setEditingUser(null)}
+          onSave={async (patch) => {
+            await handleEditUser(editingUser._id, patch);
+            setEditingUser(null);
+          }}
+        />
+      )}
+
+      {resettingUser && (
+        <ResetPasswordModal
+          user={resettingUser}
+          onClose={() => setResettingUser(null)}
+          onSubmit={(newPassword) => handleResetPassword(resettingUser._id, newPassword)}
+        />
+      )}
     </div>
   );
 }
 
 function UserRolePanel({
-  user, allRoles, canEdit, onClose, onSave,
+  user, allRoles, canEdit, onClose, onSave, onEdit, onResetPassword,
 }: {
   user: UserRow;
   allRoles: RoleOption[];
   canEdit: boolean;
   onClose: () => void;
   onSave: (roleIds: string[]) => Promise<void>;
+  onEdit: () => void;
+  onResetPassword: () => void;
 }) {
   const [selectedRoleIds, setSelectedRoleIds] = useState<Set<string>>(
     () => new Set(user.roleIds),
@@ -267,6 +311,34 @@ function UserRolePanel({
           <Icon name="x" size={18} />
         </button>
       </div>
+
+      {canEdit && (
+        <div style={{
+          padding: '10px 20px',
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--surface-muted)',
+          display: 'flex', gap: 8,
+        }}>
+          <button type="button" onClick={onEdit}
+            style={{
+              flex: 1, height: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 9,
+              fontSize: 12, fontWeight: 600, color: 'var(--text)', cursor: 'pointer',
+            }}>
+            <Icon name="edit" size={13} />
+            Edit details
+          </button>
+          <button type="button" onClick={onResetPassword}
+            style={{
+              flex: 1, height: 34, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+              background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 9,
+              fontSize: 12, fontWeight: 600, color: 'var(--warning-text)', cursor: 'pointer',
+            }}>
+            <Icon name="lock" size={13} />
+            Reset password
+          </button>
+        </div>
+      )}
 
       <div style={{ padding: '16px 20px', flex: 1, overflowY: 'auto' }}>
         <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 10 }}>
@@ -346,13 +418,30 @@ function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[
     branchIds: [] as string[]
   });
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!data.name) return;
+    setError(null);
+    if (!data.name.trim()) { setError('Full name is required.'); return; }
+    if (!data.password || data.password.length < 8) { setError('Password must be at least 8 characters.'); return; }
+    if (data.email.trim() && !isValidEmail(data.email)) { setError('Enter a valid email address.'); return; }
+    let phoneNormalized: string | undefined;
+    if (data.phone.trim()) {
+      if (!isValidIndianMobile(data.phone)) { setError('Enter a valid 10-digit Indian mobile number.'); return; }
+      phoneNormalized = normalizeIndianMobile(data.phone) ?? undefined;
+    }
     setLoading(true);
     try {
-      await onSave(data);
+      await onSave({
+        ...data,
+        // Persist the canonical 10-digit form when present so duplicate
+        // detection on (clinicId, phone) sees the same shape regardless
+        // of how the operator typed it.
+        phone: phoneNormalized ?? data.phone.trim() ?? '',
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
       setLoading(false);
     }
@@ -453,6 +542,13 @@ function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[
               </div>
             </div>
 
+            {error && (
+              <div style={{ marginTop: 20, display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--danger-500)', fontSize: 13 }}>
+                <Icon name="alertTriangle" size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+                <span>{error}</span>
+              </div>
+            )}
+
             <div style={{ marginTop: 40, display: 'flex', gap: 12 }}>
               <button type="button" onClick={onClose} style={{ flex: 1, height: 44, borderRadius: 12, border: '1.5px solid var(--border)', background: 'none', fontWeight: 600, color: 'var(--text-muted)', cursor: 'pointer' }}>Cancel</button>
               <button type="submit" disabled={loading} style={{ flex: 2, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand-500)', fontWeight: 600, color: 'var(--brand-text)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -460,6 +556,333 @@ function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[
               </button>
             </div>
           </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ── Edit user modal ─────────────────────────────────────── */
+
+function EditUserModal({
+  user, branches, onClose, onSave,
+}: {
+  user: UserRow;
+  branches: BranchOption[];
+  onClose: () => void;
+  onSave: (patch: Record<string, unknown>) => Promise<void>;
+}) {
+  const [name, setName] = useState(user.name);
+  const [email, setEmail] = useState(user.email ?? '');
+  const [phone, setPhone] = useState(user.phone ?? '');
+  const [registrationNumber, setRegistrationNumber] = useState(user.registrationNumber ?? '');
+  const [qualifications, setQualifications] = useState(user.qualifications ?? '');
+  const [status, setStatus] = useState(user.status ?? 'ACTIVE');
+  const [branchIds, setBranchIds] = useState<Set<string>>(() => new Set(user.branchIds ?? []));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  function toggleBranch(id: string) {
+    setBranchIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!name.trim()) { setError('Full name is required.'); return; }
+    if (email.trim() && !isValidEmail(email)) { setError('Enter a valid email address.'); return; }
+    let phoneNormalized: string | undefined;
+    if (phone.trim()) {
+      if (!isValidIndianMobile(phone)) {
+        setError('Enter a valid 10-digit Indian mobile number.');
+        return;
+      }
+      phoneNormalized = normalizeIndianMobile(phone) ?? undefined;
+    }
+    setSaving(true);
+    try {
+      // Build a patch with only the fields actually present so we don't
+      // wipe optional values by sending empty strings.
+      const patch: Record<string, unknown> = {
+        name: name.trim(),
+        status,
+        branchIds: Array.from(branchIds),
+      };
+      if (email.trim()) patch.email = email.trim();
+      if (phoneNormalized) patch.phone = phoneNormalized;
+      if (registrationNumber.trim()) patch.registrationNumber = registrationNumber.trim();
+      if (qualifications.trim()) patch.qualifications = qualifications.trim();
+      await onSave(patch);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+      <div style={{ background: 'var(--surface)', width: '100%', maxWidth: 500, borderRadius: 20, boxShadow: '0 20px 50px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+        <div style={{ padding: '24px 32px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Edit user</h2>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{user.name}</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)' }}><Icon name="x" size={20} /></button>
+        </div>
+
+        <form onSubmit={handleSubmit} style={{ padding: '24px 32px', display: 'grid', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Full name *</label>
+              <input value={name} onChange={(e) => setName(e.target.value)} required
+                style={{ width: '100%', height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>
+                Email <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>(optional)</span>
+              </label>
+              <input type="email" value={email} onChange={(e) => setEmail(e.target.value)}
+                style={{ width: '100%', height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>
+                Phone <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>(optional)</span>
+              </label>
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 9876543210"
+                style={{ width: '100%', height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)' }} />
+            </div>
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Status</label>
+              <div style={{ display: 'flex', gap: 6 }}>
+                {(['ACTIVE', 'DISABLED'] as const).map((s) => (
+                  <button key={s} type="button" onClick={() => setStatus(s)}
+                    style={{
+                      flex: 1, height: 40, border: `1.5px solid ${status === s ? 'var(--brand-500)' : 'var(--border)'}`,
+                      borderRadius: 10, background: status === s ? 'var(--brand-50)' : 'var(--surface-muted)',
+                      color: status === s ? 'var(--brand-600)' : 'var(--text-muted)',
+                      fontSize: 12, fontWeight: 600, cursor: 'pointer',
+                    }}>
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ background: 'var(--brand-50)', padding: 16, borderRadius: 12, border: '1px solid var(--brand-100)', display: 'grid', gap: 12 }}>
+            <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: 'var(--brand-600)', textTransform: 'uppercase' }}>Clinician details (optional)</p>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+              <div>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--brand-700)', marginBottom: 4 }}>Reg No.</label>
+                <input value={registrationNumber} onChange={(e) => setRegistrationNumber(e.target.value)}
+                  style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: 'var(--surface)', fontSize: 13 }} />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--brand-700)', marginBottom: 4 }}>Qualifications</label>
+                <input value={qualifications} onChange={(e) => setQualifications(e.target.value)}
+                  style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: 'var(--surface)', fontSize: 13 }} />
+              </div>
+            </div>
+          </div>
+
+          {branches.length > 0 && (
+            <div>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 10 }}>Branches</label>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                {branches.map((b) => {
+                  const active = branchIds.has(b._id);
+                  return (
+                    <button type="button" key={b._id} onClick={() => toggleBranch(b._id)}
+                      style={{
+                        padding: '6px 14px', borderRadius: 100, fontSize: 12, fontWeight: 600,
+                        background: active ? 'rgba(16,185,129,0.1)' : 'var(--surface-muted)',
+                        color: active ? 'var(--success-text)' : 'var(--text-muted)',
+                        border: `1px solid ${active ? 'var(--success-500)' : 'var(--border)'}`,
+                        cursor: 'pointer',
+                      }}>
+                      {b.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {error && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--danger-500)', fontSize: 13 }}>
+              <Icon name="alertTriangle" size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 12 }}>
+            <button type="button" onClick={onClose}
+              style={{ flex: 1, height: 44, borderRadius: 12, border: '1.5px solid var(--border)', background: 'none', fontWeight: 600, color: 'var(--text-muted)', cursor: 'pointer' }}>
+              Cancel
+            </button>
+            <button type="submit" disabled={saving}
+              style={{ flex: 2, height: 44, borderRadius: 12, border: 'none', background: 'var(--brand-500)', fontWeight: 600, color: 'var(--brand-text)', cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+              {saving ? <Spinner /> : <><Icon name="check" size={14} strokeWidth={2.5} /> Save changes</>}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+/* ── Reset password modal ────────────────────────────────── */
+
+/**
+ * Generates a strong-but-readable password using the browser's CSPRNG.
+ * The character set excludes visually-ambiguous glyphs (0/O/o, 1/l/I/i)
+ * so the admin can dictate it over the phone without mistakes. 12 chars
+ * clears the BE's @MinLength(8); the upper bound from @MaxLength(128)
+ * is far away.
+ */
+function generatePassword(len = 12): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghjkmnpqrstuvwxyz23456789';
+  const out: string[] = [];
+  const arr = new Uint32Array(len);
+  window.crypto.getRandomValues(arr);
+  for (let i = 0; i < len; i++) out.push(chars[arr[i] % chars.length]);
+  return out.join('');
+}
+
+function ResetPasswordModal({
+  user, onClose, onSubmit,
+}: {
+  user: UserRow;
+  onClose: () => void;
+  onSubmit: (newPassword: string) => Promise<void>;
+}) {
+  const [password, setPassword] = useState(() => generatePassword(12));
+  const [showPw, setShowPw] = useState(true);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (password.length < 8) { setError('Password must be at least 8 characters.'); return; }
+    setSubmitting(true);
+    try {
+      await onSubmit(password);
+      setSubmitted(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function copyPassword() {
+    try {
+      await navigator.clipboard.writeText(password);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // older browsers — select-and-copy as a fallback would need a ref;
+      // skip silently to keep the UI honest.
+    }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 100, padding: 20 }}>
+      <div style={{ background: 'var(--surface)', width: '100%', maxWidth: 440, borderRadius: 20, boxShadow: '0 20px 50px rgba(0,0,0,0.15)', overflow: 'hidden' }}>
+        <div style={{ padding: '24px 32px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+          <div>
+            <h2 style={{ margin: 0, fontSize: 18, fontWeight: 700 }}>Reset password</h2>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{user.name}{user.email ? ` · ${user.email}` : ''}</div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)' }}><Icon name="x" size={20} /></button>
+        </div>
+
+        <div style={{ padding: '20px 32px 24px' }}>
+          {!submitted ? (
+            <form onSubmit={handleSubmit}>
+              <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 14 }}>
+                The user's old password will stop working immediately. Share the new password with them via SMS, WhatsApp, or in person — it won't be shown again once you close this dialog.
+              </p>
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>
+                New password
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ position: 'relative', flex: 1 }}>
+                  <input type={showPw ? 'text' : 'password'} value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    style={{ width: '100%', height: 40, padding: '0 40px 0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)', fontFamily: 'monospace', fontSize: 13 }} />
+                  <button type="button" onClick={() => setShowPw((v) => !v)}
+                    aria-label={showPw ? 'Hide password' : 'Show password'}
+                    style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', padding: 6, display: 'flex' }}>
+                    <Icon name={showPw ? 'eye' : 'eyeOff'} size={15} />
+                  </button>
+                </div>
+                <button type="button" onClick={() => setPassword(generatePassword(12))}
+                  title="Generate a new random password"
+                  style={{ height: 40, padding: '0 12px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 12, fontWeight: 600, color: 'var(--text)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <Icon name="refresh" size={13} />
+                  Generate
+                </button>
+              </div>
+              <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 6 }}>
+                At least 8 characters. A random 12-char password is suggested; edit it freely.
+              </div>
+
+              {error && (
+                <div style={{ marginTop: 14, display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--danger-500)', fontSize: 13 }}>
+                  <Icon name="alertTriangle" size={14} style={{ flexShrink: 0, marginTop: 2 }} />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <div style={{ display: 'flex', gap: 12, marginTop: 20 }}>
+                <button type="button" onClick={onClose}
+                  style={{ flex: 1, height: 44, borderRadius: 12, border: '1.5px solid var(--border)', background: 'none', fontWeight: 600, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                  Cancel
+                </button>
+                <button type="submit" disabled={submitting}
+                  style={{ flex: 2, height: 44, borderRadius: 12, border: 'none', background: 'var(--warning-500)', fontWeight: 700, color: 'var(--brand-text)', cursor: submitting ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                  {submitting ? <Spinner /> : 'Reset password'}
+                </button>
+              </div>
+            </form>
+          ) : (
+            // Success view — show the password one last time so the admin
+            // can copy it before closing.
+            <div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'rgba(16,185,129,0.10)', border: '1px solid rgba(16,185,129,0.25)', color: 'var(--success-text)', fontSize: 13, marginBottom: 16 }}>
+                <Icon name="checkCircle" size={16} />
+                Password updated. Share it now — it won't be retrievable later.
+              </div>
+
+              <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>
+                New password
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input readOnly value={password}
+                  style={{ flex: 1, height: 44, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)', fontFamily: 'monospace', fontSize: 15, fontWeight: 700, letterSpacing: '0.04em' }} />
+                <button type="button" onClick={copyPassword}
+                  style={{ height: 44, padding: '0 16px', background: copied ? 'var(--success-bg)' : 'var(--brand-500)', border: 'none', borderRadius: 10, fontSize: 12, fontWeight: 700, color: copied ? 'var(--success-text)' : 'var(--brand-text)', cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                  <Icon name={copied ? 'check' : 'share'} size={13} />
+                  {copied ? 'Copied' : 'Copy'}
+                </button>
+              </div>
+
+              <button type="button" onClick={onClose}
+                style={{ marginTop: 20, width: '100%', height: 44, borderRadius: 12, border: 'none', background: 'var(--brand-500)', fontWeight: 600, color: 'var(--brand-text)', cursor: 'pointer' }}>
+                Done
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

@@ -153,7 +153,7 @@ function mapVitalsToBe(v: Record<string, string>): Record<string, any> {
 }
 
 export function EncounterScreen() {
-  const { ctx, selectedAppointmentId, setSelectedAppointmentId, setScreen } = useApp();
+  const { ctx, selectedAppointmentId, setSelectedAppointmentId, setScreen, selectedDate } = useApp();
   const [patientId, setPatientId] = useState('');
   const [doctorId, setDoctorId] = useState(ctx.userId);
   const [encounterId, setEncounterId] = useState<string | undefined>();
@@ -200,30 +200,37 @@ export function EncounterScreen() {
   useEffect(() => {
     if (encounter) return;
     setLoadingRecent(true);
-    apiGet<(Encounter & { patientId: { fullName: string; mrn?: string } })[]>(ctx, '/encounters?limit=50')
+    const qs = new URLSearchParams({ limit: '50' });
+    if (selectedDate) qs.set('date', selectedDate);
+    // Scope recent encounters to the active branch so switching branches
+    // in the sidebar narrows the list to that branch's bookings.
+    if (ctx.branchId) qs.set('branchId', ctx.branchId);
+    apiGet<(Encounter & { patientId: { fullName: string; mrn?: string } })[]>(ctx, `/encounters?${qs.toString()}`)
       .then(setRecent)
       .catch(() => setRecent([]))
       .finally(() => setLoadingRecent(false));
-  }, [encounter, ctx]);
+  }, [encounter, ctx, selectedDate, ctx.branchId]);
 
   useEffect(() => {
     if (!patientId.trim()) { setPatient(null); return; }
     apiGet<Patient>(ctx, `/patients/${patientId.trim()}`).then(setPatient).catch(() => setPatient(null));
   }, [patientId, ctx]);
 
-  // Debounced search
+  // Debounced search. `cancelled` keeps an in-flight response for an
+  // outdated query from overwriting the results of the latest one.
   useEffect(() => {
     if (patient) { setPatientResults([]); return; } // already chosen
     if (!patientQuery.trim()) { setPatientResults([]); return; }
     setSearching(true);
+    let cancelled = false;
     const t = setTimeout(() => {
       const qs = new URLSearchParams({ query: patientQuery.trim(), limit: '10' });
       apiGet<Patient[]>(ctx, `/patients?${qs.toString()}`)
-        .then(setPatientResults)
-        .catch(() => setPatientResults([]))
-        .finally(() => setSearching(false));
+        .then((r) => { if (!cancelled) setPatientResults(r); })
+        .catch(() => { if (!cancelled) setPatientResults([]); })
+        .finally(() => { if (!cancelled) setSearching(false); });
     }, 200);
-    return () => clearTimeout(t);
+    return () => { cancelled = true; clearTimeout(t); };
   }, [patientQuery, patient, ctx]);
 
   function pickPatient(p: Patient) {

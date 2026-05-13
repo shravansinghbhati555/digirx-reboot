@@ -87,10 +87,15 @@ function LogsTab() {
   const [expanded, setExpanded] = useState<string | null>(null);
 
   useEffect(() => {
-    apiGet<NotifLog[]>(ctx, '/notifications/logs?limit=100')
+    // Pass the active branchId so switching branches narrows the log.
+    // ctx.branchId is included in the dep array below so the effect
+    // re-runs on branch change.
+    const qs = new URLSearchParams({ limit: '100' });
+    if (ctx.branchId) qs.set('branchId', ctx.branchId);
+    apiGet<NotifLog[]>(ctx, `/notifications/logs?${qs.toString()}`)
       .then(setLogs)
       .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [ctx]);
+  }, [ctx, ctx.branchId]);
 
   const filtered = logs?.filter((l) => filter === 'all' || (l.status || '').toLowerCase() === filter) ?? null;
 

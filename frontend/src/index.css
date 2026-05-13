@@ -118,6 +118,39 @@ input,
 select,
 textarea {
   font-family: inherit;
+  /* Native form controls don't inherit `color` from the body — they
+     fall back to OS black, which ends up unreadable on the dark-theme
+     surfaces. Forcing var(--text) propagates the right colour to every
+     input that doesn't already set its own. Individual call sites that
+     intentionally want a different colour (e.g. an input on a brand
+     gradient) can still override inline. */
+  color: var(--text);
+}
+
+/* Placeholder text needs its own rule — `color` doesn't reach it. */
+input::placeholder,
+textarea::placeholder {
+  color: var(--text-subtle);
+  opacity: 1;
+  /* Firefox defaults placeholders to opacity:0.54; pin to 1 so the
+     subtle token controls the contrast end-to-end. */
+}
+
+/* Chrome's autofill paints a yellow background and forces black text
+   via an internal stylesheet that overrides our `color` rule. The
+   text-fill-color + huge inset shadow trick is the canonical workaround:
+   the shadow paints over the yellow with our surface colour, and
+   text-fill-color overrides the black text. Transition delay keeps
+   the override active beyond the brief autofill flash. */
+input:-webkit-autofill,
+input:-webkit-autofill:hover,
+input:-webkit-autofill:focus,
+textarea:-webkit-autofill,
+select:-webkit-autofill {
+  -webkit-text-fill-color: var(--text);
+  caret-color: var(--text);
+  -webkit-box-shadow: 0 0 0 1000px var(--surface-muted) inset;
+  transition: background-color 9999s ease-in-out 0s;
 }
 
 @keyframes slideUp {
