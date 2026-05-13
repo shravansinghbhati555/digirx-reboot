@@ -138,6 +138,11 @@ export class AuthService {
           Permission.AccessLogRead,
           Permission.ReportsRead,
           Permission.ReportsWrite,
+          Permission.SettingsClinicRead,
+          Permission.SettingsBranchesRead,
+          Permission.SettingsAvailabilityRead,
+          Permission.SettingsNotificationsRead,
+          Permission.SettingsAuditRead,
         ],
       },
       // Patient-facing reception: registers patients, books appointments,
@@ -157,6 +162,7 @@ export class AuthService {
           Permission.BillingWrite,
           Permission.DocumentRead,
           Permission.NotificationRead,
+          Permission.SettingsAvailabilityRead,
         ],
       },
       // Clinicians: see and edit their patients, manage their own
@@ -176,6 +182,7 @@ export class AuthService {
           Permission.DocumentWrite,
           Permission.NotificationRead,
           Permission.ReportsRead,
+          Permission.SettingsAvailabilityRead,
         ],
       },
       // Pharmacy: manages stock, dispenses medicines, raises pharmacy

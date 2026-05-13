@@ -46,11 +46,11 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
   const [ownerName, setOwnerName] = useState('');
   const [category, setCategory] = useState<DocumentCategory>('OTHER');
   const [access, setAccess] = useState<'INTERNAL_ONLY' | 'SHAREABLE_WITH_TOKEN'>('INTERNAL_ONLY');
-  
+
   const [documents, setDocuments] = useState<ServerDoc[]>([]);
   const [loadingDocs, setLoadingDocs] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  
+
   const [progress, setProgress] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [sharing, setSharing] = useState<ServerDoc | null>(null);
@@ -132,7 +132,7 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
         xhr.onerror = () => reject(new Error('Upload network error'));
         xhr.send(file);
       });
-      
+
       await apiPost(ctx, `/documents/${res.documentId}/confirm`, {});
       toast(`${file.name} uploaded`, 'success');
       void fetchDocuments();
@@ -161,6 +161,8 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
       await apiDelete(ctx, `/documents/${doc._id}`);
       toast('Document deleted', 'success');
       setDocuments(docs => docs.filter(d => d._id !== doc._id));
+      if (previewing?._id === doc._id) setPreviewing(null);
+      if (sharing?._id === doc._id) setSharing(null);
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Delete failed', 'error');
     }
@@ -193,16 +195,28 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
           {!isEmbedded && (
             <div style={{ flex: '1 1 300px' }}>
               {ownerType === 'PATIENT' ? (
-                <PatientSearch 
-                  onSelect={(p) => { setOwnerId(p._id); setOwnerName(p.fullName); }} 
-                  selectedName={ownerName} 
-                  onClear={() => { setOwnerId(''); setOwnerName(''); }} 
+                <PatientSearch
+                  onSelect={(p) => { setOwnerId(p._id); setOwnerName(p.fullName); }}
+                  selectedName={ownerName}
+                  onClear={() => { setOwnerId(''); setOwnerName(''); }}
                 />
               ) : ownerType === 'USER' ? (
-                <UserSearch 
-                  onSelect={(u) => { setOwnerId(u._id); setOwnerName(u.name); }} 
-                  selectedName={ownerName} 
-                  onClear={() => { setOwnerId(''); setOwnerName(''); }} 
+                <UserSearch
+                  onSelect={(u) => { setOwnerId(u._id); setOwnerName(u.name); }}
+                  selectedName={ownerName}
+                  onClear={() => { setOwnerId(''); setOwnerName(''); }}
+                />
+              ) : ownerType === 'APPOINTMENT' ? (
+                <AppointmentSearch
+                  onSelect={(a) => { setOwnerId(a._id); setOwnerName(`Appointment ${a._id.slice(-6).toUpperCase()}`); }}
+                  selectedId={ownerId}
+                  onClear={() => { setOwnerId(''); setOwnerName(''); }}
+                />
+              ) : ownerType === 'ENCOUNTER' ? (
+                <EncounterSearch
+                  onSelect={(e) => { setOwnerId(e._id); setOwnerName(e.readableId || `Encounter ${e._id.slice(-6).toUpperCase()}`); }}
+                  selectedId={ownerId}
+                  onClear={() => { setOwnerId(''); setOwnerName(''); }}
                 />
               ) : (
                 <Field label={`${ownerType.charAt(0) + ownerType.slice(1).toLowerCase()} ID`} value={ownerId} onChange={setOwnerId} placeholder="Enter ID here..." />
@@ -232,9 +246,9 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
           onDragOver={(e) => e.preventDefault()}
           onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) void handleFile(f); }}
           onClick={() => progress === null && fileInputRef.current?.click()}
-          style={{ 
-            border: `2px dashed ${progress !== null ? 'var(--border)' : 'var(--brand-300)'}`, 
-            borderRadius: 14, padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12, 
+          style={{
+            border: `2px dashed ${progress !== null ? 'var(--border)' : 'var(--brand-300)'}`,
+            borderRadius: 14, padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
             cursor: progress !== null ? 'default' : 'pointer', background: 'var(--surface-muted)', transition: 'all 0.2s ease',
             opacity: (!ownerId && !isEmbedded) ? 0.6 : 1,
             pointerEvents: (!ownerId && !isEmbedded) ? 'none' : 'auto'
@@ -307,7 +321,7 @@ function DocCard({ doc, onPreview, onDownload, onShare, onDelete, showOwner, dow
   const cat = DOCUMENT_CATEGORIES.find(c => c.value === doc.category) || DOCUMENT_CATEGORIES[5];
 
   return (
-    <div 
+    <div
       onClick={onPreview}
       style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 16, display: 'flex', gap: 14, position: 'relative', transition: 'all 0.2s ease', boxShadow: 'var(--shadow-sm)', cursor: 'pointer' }}
       onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--brand-400)')}
@@ -316,7 +330,7 @@ function DocCard({ doc, onPreview, onDownload, onShare, onDelete, showOwner, dow
       <div style={{ width: 48, height: 48, borderRadius: 12, background: 'var(--surface-muted)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
         <Icon name={cat.icon as any} size={22} style={{ color: 'var(--brand-500)' }} />
       </div>
-      
+
       <div style={{ flex: 1, minWidth: 0 }}>
         <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={doc.fileName}>{doc.fileName}</div>
         <div style={{ display: 'flex', gap: 6, alignItems: 'center', marginTop: 3 }}>
@@ -527,6 +541,112 @@ function UserSearch({ onSelect, selectedName, onClear }: { onSelect: (u: User) =
               </div>
             </button>
           ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function AppointmentSearch({ onSelect, selectedId, onClear }: { onSelect: (a: any) => void; selectedId?: string; onClear: () => void }) {
+  const { ctx } = useApp();
+  const [patient, setPatient] = useState<Patient | null>(null);
+  const [appointments, setAppointments] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!patient) { setAppointments([]); return; }
+    setLoading(true);
+    apiGet<any[]>(ctx, `/appointments?patientId=${patient._id}&limit=10`)
+      .then(setAppointments)
+      .catch(() => setAppointments([]))
+      .finally(() => setLoading(false));
+  }, [patient, ctx]);
+
+  if (selectedId) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', height: 42, background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 10 }}>
+        <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: 'var(--brand-600)' }}>A</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--brand-700)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>ID: {selectedId.slice(-8).toUpperCase()}</div>
+          <div style={{ fontSize: 10, color: 'var(--brand-600)' }}>Selected Appointment</div>
+        </div>
+        <button onClick={onClear} style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Change</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {!patient ? (
+        <PatientSearch onSelect={setPatient} onClear={() => setPatient(null)} />
+      ) : (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <label style={labelStyle}>Select Appointment for {patient.fullName}</label>
+            <button onClick={() => setPatient(null)} style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>Back to Patient Search</button>
+          </div>
+          <select onChange={(e) => { const a = appointments.find(x => x._id === e.target.value); if (a) onSelect(a); }}
+            style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none' }}>
+            <option value="">{loading ? 'Loading appointments...' : appointments.length === 0 ? 'No appointments found' : 'Pick an appointment...'}</option>
+            {appointments.map(a => (
+              <option key={a._id} value={a._id}>
+                {a.type === 'TIME' ? formatDateTime(a.startAt) : `${a.queueDate} (Token ${a.queueNumber})`} — {a.status}
+              </option>
+            ))}
+          </select>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function EncounterSearch({ onSelect, selectedId, onClear }: { onSelect: (e: any) => void; selectedId?: string; onClear: () => void }) {
+  const { ctx } = useApp();
+  const [patient, setPatient] = useState<Patient | null>(null);
+  const [encounters, setEncounters] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    if (!patient) { setEncounters([]); return; }
+    setLoading(true);
+    apiGet<any[]>(ctx, `/encounters?patientId=${patient._id}&limit=10`)
+      .then(setEncounters)
+      .catch(() => setEncounters([]))
+      .finally(() => setLoading(false));
+  }, [patient, ctx]);
+
+  if (selectedId) {
+    return (
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '0 12px', height: 42, background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 10 }}>
+        <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700, color: 'var(--brand-600)' }}>E</div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--brand-700)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{selectedId.slice(-8).toUpperCase()}</div>
+          <div style={{ fontSize: 10, color: 'var(--brand-600)' }}>Selected Encounter</div>
+        </div>
+        <button onClick={onClear} style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>Change</button>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+      {!patient ? (
+        <PatientSearch onSelect={setPatient} onClear={() => setPatient(null)} />
+      ) : (
+        <div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+            <label style={labelStyle}>Select Encounter for {patient.fullName}</label>
+            <button onClick={() => setPatient(null)} style={{ background: 'none', border: 'none', color: 'var(--brand-600)', fontSize: 10, fontWeight: 700, cursor: 'pointer' }}>Back to Patient Search</button>
+          </div>
+          <select onChange={(e) => { const enc = encounters.find(x => x._id === e.target.value); if (enc) onSelect(enc); }}
+            style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none' }}>
+            <option value="">{loading ? 'Loading encounters...' : encounters.length === 0 ? 'No encounters found' : 'Pick an encounter...'}</option>
+            {encounters.map(enc => (
+              <option key={enc._id} value={enc._id}>
+                {enc.readableId || enc._id.slice(-6).toUpperCase()} — {formatDateTime(enc.visitedAt)} ({enc.status})
+              </option>
+            ))}
+          </select>
         </div>
       )}
     </div>

@@ -4,7 +4,7 @@ import { useApp } from '../../app/AppContext';
 import { emitAvailabilityChanged } from '../../app/events';
 import { Perm, type PermName } from '../../app/permissions';
 import { isValidIndianMobile, normalizeIndianMobile } from '../../app/validators';
-import { Checkbox, Field, Spinner, labelStyle, useToast } from '../shared/primitives';
+import { Checkbox, Dropdown, EmptyState, Field, Spinner, labelStyle, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
 // InventoryScreen used to be embedded under a Settings → Inventory tab,
 // but inventory now has its own top-level sidebar entry. The tab was
@@ -58,12 +58,19 @@ type SettingsTab = 'clinic' | 'branches' | 'availability' | 'notif_cfg' | 'audit
 // `perm` of `null` = visible to any signed-in user.
 type NavItem = { id: SettingsTab; label: string; icon: IconName; perm: PermName | null };
 
+// Each tab is gated by its own dedicated `settings:*:read` permission
+// so the Super Admin can toggle tab visibility per role from the
+// Roles & Permissions screen without touching the underlying data
+// permissions that gate the tab's body content. The body itself still
+// reads ClinicWrite / BranchWrite / NotificationWrite / AuditRead the
+// way it always did — so e.g. granting SettingsClinicRead opens the
+// tab but the form stays read-only until ClinicWrite is also granted.
 const NAV: NavItem[] = [
-  { id: 'clinic', label: 'Clinic', icon: 'cross', perm: Perm.ClinicWrite },
-  { id: 'branches', label: 'Branches', icon: 'mapPin', perm: Perm.BranchRead },
-  { id: 'availability', label: 'Availability', icon: 'clock', perm: Perm.ClinicRead },
-  { id: 'notif_cfg', label: 'Quiet hours', icon: 'bell', perm: Perm.NotificationRead },
-  { id: 'audit', label: 'Audit log', icon: 'scroll', perm: Perm.AuditRead },
+  { id: 'clinic', label: 'Clinic', icon: 'cross', perm: Perm.SettingsClinicRead },
+  { id: 'branches', label: 'Branches', icon: 'mapPin', perm: Perm.SettingsBranchesRead },
+  { id: 'availability', label: 'Availability', icon: 'clock', perm: Perm.SettingsAvailabilityRead },
+  { id: 'notif_cfg', label: 'Quiet hours', icon: 'bell', perm: Perm.SettingsNotificationsRead },
+  { id: 'audit', label: 'Audit log', icon: 'scroll', perm: Perm.SettingsAuditRead },
   { id: 'about', label: 'About', icon: 'info', perm: null },
 ];
 
@@ -108,11 +115,13 @@ export function SettingsScreen() {
         ))}
       </div>
 
-      <div style={{ flex: 1, minWidth: 0, padding: '24px 32px', height: '100%', overflowY: 'auto' }}>
-        <div key={tab} style={{ animation: 'slideUp 160ms ease-out', maxWidth: 800 }}>
-          <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 20 }}>
-            {visibleNav.find((n) => n.id === tab)?.label}
-          </h2>
+      <div style={{ flex: 1, minWidth: 0, padding: tab === 'audit' ? '0' : '24px 32px', height: '100%', overflow: tab === 'audit' ? 'hidden' : 'auto' }}>
+        <div key={tab} style={{ animation: 'slideUp 160ms ease-out', maxWidth: tab === 'audit' ? 'none' : 800, margin: tab === 'audit' ? '0' : undefined, height: tab === 'audit' ? '100%' : 'auto', display: tab === 'audit' ? 'flex' : 'block', flexDirection: 'column' }}>
+          {tab !== 'audit' && (
+            <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 20 }}>
+              {visibleNav.find((n) => n.id === tab)?.label}
+            </h2>
+          )}
           {activeAllowed && tab === 'clinic' && <ClinicTab />}
           {activeAllowed && tab === 'branches' && <BranchesTab />}
           {activeAllowed && tab === 'availability' && <AvailabilityTab />}
@@ -254,9 +263,9 @@ function ClinicTab() {
                 </datalist>
               </div>
               <Field label="Currency (ISO 4217)" value={currency} onChange={(v) => setCurrency(v.toUpperCase())} placeholder="INR" />
-              <Row label="Clinic ID">
+              {/* <Row label="Clinic ID">
                 <code style={{ fontFamily: 'monospace', fontSize: 11 }}>{data.clinic._id}</code>
-              </Row>
+              </Row> */}
             </div>
           </div>
 
@@ -353,6 +362,15 @@ type DaySlots = {
   slotMinutes: number;
   slots: { startAt: string; endAt: string }[];
 };
+type VisitTypeRow = {
+  _id: string;
+  clinicId: string;
+  doctorUserId: string;
+  name: string;
+  price: number;
+  currency: string;
+  active: boolean;
+};
 
 const WEEKDAY_LABELS = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
@@ -406,6 +424,15 @@ function AvailabilityTab() {
   const [previewDate, setPreviewDate] = useState('');
   const [previewing, setPreviewing] = useState(false);
   const [preview, setPreview] = useState<DaySlots | null>(null);
+
+  // Per-doctor visit-type (consultation pricing) catalog. Each row drives
+  // the BookSheet picker and, when chosen at booking time, the BE auto-
+  // issues a SERVICE bill of `price` linked to the appointment.
+  const [visitTypes, setVisitTypes] = useState<VisitTypeRow[]>([]);
+  const [vtName, setVtName] = useState('');
+  const [vtPrice, setVtPrice] = useState('');
+  const [vtSaving, setVtSaving] = useState(false);
+  const [vtError, setVtError] = useState<string | null>(null);
 
   function branchQs() {
     return ctx.branchId ? `?branchId=${encodeURIComponent(ctx.branchId)}` : '';
@@ -612,6 +639,62 @@ function AvailabilityTab() {
     }
   }
 
+  // --- Visit-types (per-doctor consultation pricing) ---
+  // Refetch whenever the active doctor changes. BE owns the
+  // "admin OR self" ownership rule for mutations.
+  useEffect(() => {
+    if (!doctorId.trim()) { setVisitTypes([]); return; }
+    let cancelled = false;
+    apiGet<VisitTypeRow[]>(ctx, `/visit-types?doctorId=${encodeURIComponent(doctorId.trim())}&includeInactive=true`)
+      .then((r) => { if (!cancelled) setVisitTypes(r); })
+      .catch(() => { if (!cancelled) setVisitTypes([]); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [doctorId, ctx.clinicId, ctx.accessToken]);
+
+  async function addVisitType() {
+    setVtError(null);
+    const name = vtName.trim();
+    const priceNum = Number(vtPrice);
+    if (!name) { setVtError('Name is required.'); return; }
+    if (!Number.isFinite(priceNum) || priceNum < 0) { setVtError('Price must be a non-negative number.'); return; }
+    setVtSaving(true);
+    try {
+      const created = await apiPost<VisitTypeRow>(ctx, '/visit-types', {
+        doctorUserId: doctorId.trim(),
+        name,
+        price: priceNum,
+      });
+      setVisitTypes((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name)));
+      setVtName(''); setVtPrice('');
+    } catch (e) {
+      setVtError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setVtSaving(false);
+    }
+  }
+
+  async function setVisitTypeActive(row: VisitTypeRow, active: boolean) {
+    try {
+      const updated = await apiPatch<VisitTypeRow>(ctx, `/visit-types/${row._id}`, { active });
+      setVisitTypes((prev) => prev.map((v) => (v._id === row._id ? updated : v)));
+    } catch (e) {
+      setVtError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
+  async function deleteVisitType(row: VisitTypeRow) {
+    if (!window.confirm(`Remove visit type "${row.name}"? Existing bookings referencing it are not affected.`)) return;
+    try {
+      await apiDelete(ctx, `/visit-types/${row._id}`);
+      // BE soft-deletes (sets active=false); reflect that locally so the
+      // operator can still see the row but it's clearly inactive.
+      setVisitTypes((prev) => prev.map((v) => (v._id === row._id ? { ...v, active: false } : v)));
+    } catch (e) {
+      setVtError(e instanceof Error ? e.message : String(e));
+    }
+  }
+
   if (!canRead) return <PermissionGate perm="clinic:read" />;
 
   return (
@@ -799,6 +882,86 @@ function AvailabilityTab() {
                 );
               })}
             </div>
+          </div>
+        )}
+      </div>
+
+      {/* Visit types & pricing — per-doctor consultation catalog. Drives
+          the BookSheet picker; each row is the price the front desk will
+          collect for that visit. */}
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>Visit types & pricing</div>
+        <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginBottom: 12 }}>
+          Each visit type sets a price the front desk collects at booking time before check-in.
+        </div>
+
+        {canWriteThis && (
+          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 8, alignItems: 'flex-end', marginBottom: 12 }}>
+            <Field label="Name" value={vtName} onChange={setVtName} placeholder="e.g. Consultation" />
+            <Field label="Price" value={vtPrice} onChange={setVtPrice} placeholder="e.g. 500" />
+            <button onClick={() => void addVisitType()} disabled={vtSaving || !vtName.trim() || !vtPrice.trim()}
+              style={{
+                height: 40, padding: '0 18px', background: 'var(--brand-500)', color: 'var(--brand-text)',
+                border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                cursor: vtSaving ? 'wait' : (!vtName.trim() || !vtPrice.trim() ? 'not-allowed' : 'pointer'),
+                opacity: vtSaving || !vtName.trim() || !vtPrice.trim() ? 0.6 : 1,
+              }}>
+              {vtSaving ? <Spinner /> : 'Add'}
+            </button>
+          </div>
+        )}
+        {vtError && (
+          <div style={{ marginBottom: 10, padding: '8px 12px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, fontSize: 12, color: 'var(--danger-500)' }}>
+            {vtError}
+          </div>
+        )}
+
+        {visitTypes.length === 0 ? (
+          <div style={{ padding: 16, textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)', background: 'var(--surface-muted)', border: '1px dashed var(--border)', borderRadius: 10 }}>
+            No visit types yet. Add one above so the front desk can pick it during booking.
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            {visitTypes.map((vt) => (
+              <div key={vt._id}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 10,
+                  padding: '8px 12px',
+                  background: vt.active ? 'var(--surface-muted)' : 'var(--surface)',
+                  borderRadius: 9, border: '1px solid var(--border)',
+                  opacity: vt.active ? 1 : 0.55,
+                }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{vt.name}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1 }}>
+                    {vt.currency} {vt.price.toLocaleString('en-IN')}
+                    {!vt.active && <span style={{ marginLeft: 8, fontWeight: 600 }}>· Inactive</span>}
+                  </div>
+                </div>
+                {canWriteThis && (
+                  <div style={{ display: 'flex', gap: 6 }}>
+                    <button type="button" onClick={() => void setVisitTypeActive(vt, !vt.active)}
+                      title={vt.active ? 'Deactivate (hide from booking)' : 'Reactivate'}
+                      style={{
+                        width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7,
+                        cursor: 'pointer', color: 'var(--text-muted)',
+                      }}>
+                      <Icon name={vt.active ? 'eyeOff' : 'eye'} size={13} />
+                    </button>
+                    <button type="button" onClick={() => void deleteVisitType(vt)}
+                      title="Remove (soft delete)"
+                      style={{
+                        width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7,
+                        cursor: 'pointer', color: 'var(--danger-500)',
+                      }}>
+                      <Icon name="trash" size={13} />
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>
@@ -1849,61 +2012,94 @@ function AuditTab() {
 
   if (!canRead) return <PermissionGate perm="clinic:write" />;
 
+  // Same visual language as BillingScreen: a single rounded card with a
+  // pill-chip toolbar on top, a brand-coloured primary action button on
+  // the right, and the table flush below. Empty state uses the shared
+  // EmptyState component so it stays consistent with other screens.
+  const ACTIONS: Array<{ id: '' | 'CREATE' | 'UPDATE' | 'DELETE'; label: string }> = [
+    { id: '',       label: 'All' },
+    { id: 'CREATE', label: 'Create' },
+    { id: 'UPDATE', label: 'Update' },
+    { id: 'DELETE', label: 'Delete' },
+  ];
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      {/* Filter bar */}
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 14, display: 'flex', gap: 10, alignItems: 'flex-end', flexWrap: 'wrap' }}>
-        <div style={{ minWidth: 140 }}>
-          <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Action</label>
-          <select value={actionFilter} onChange={(e) => setActionFilter(e.target.value as typeof actionFilter)}
-            style={{ width: '100%', height: 36, padding: '0 10px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }}>
-            <option value="">All actions</option>
-            <option value="CREATE">Create</option>
-            <option value="UPDATE">Update</option>
-            <option value="DELETE">Delete</option>
-          </select>
-        </div>
-        <div style={{ flex: 1, minWidth: 220 }}>
-          <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '0.05em' }}>Actor</label>
-          <select value={actorFilter} onChange={(e) => setActorFilter(e.target.value)}
-            style={{ width: '100%', height: 36, padding: '0 10px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }}>
-            <option value="">All users</option>
-            {Array.from(users.entries()).map(([id, name]) => (
-              <option key={id} value={id}>{name}</option>
-            ))}
-          </select>
-        </div>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}>
+      {/* Toolbar matches BillingScreen exactly */}
+      <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 100, padding: 4, border: '1px solid var(--border)' }}>
+            {ACTIONS.map((a) => {
+              const active = actionFilter === a.id;
+              return (
+                <button key={a.id || 'all'} onClick={() => setActionFilter(a.id)}
+                  style={{
+                    padding: '6px 14px', borderRadius: 100, border: 'none',
+                    background: active ? 'var(--brand-100)' : 'transparent',
+                    color: active ? 'var(--text)' : 'var(--text-muted)',
+                    fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                    textTransform: 'capitalize', transition: 'all 0.2s',
+                  }}>
+                  {a.label}
+                </button>
+              );
+            })}
+          </div>
+
+          <div style={{ flex: 1 }} />
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <Dropdown
+              value={actorFilter}
+              onChange={(v) => setActorFilter(v)}
+              placeholder="Search by actor…"
+              options={[
+                { value: '', label: 'All users', icon: 'users' },
+                ...Array.from(users.entries()).map(([id, name]) => ({
+                  value: id,
+                  label: name.split(' (')[0],
+                  hint: name.includes('(') ? name.split(' (')[1].replace(')', '') : undefined,
+                  icon: 'user' as IconName,
+                }))
+              ]}
+              width={220}
+              size="sm"
+            />
+          </div>
+
         <button onClick={() => void load(true)} disabled={loading}
-          style={{ height: 36, padding: '0 16px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 9, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
-          {loading ? 'Loading…' : 'Refresh'}
+          style={{
+            display: 'flex', alignItems: 'center', gap: 8, height: 36, padding: '0 18px',
+            background: 'var(--brand-600)', color: 'var(--brand-text)', border: 'none', borderRadius: 10,
+            fontSize: 12, fontWeight: 700, cursor: loading ? 'wait' : 'pointer',
+            boxShadow: '0 4px 12px rgba(239,68,68,0.2)', // Matching brand-600 red shadow
+          }}>
+          <Icon name="refresh" size={14} strokeWidth={3} style={{ animation: loading ? 'spin 800ms linear infinite' : undefined }} />
+          {loading ? 'Refreshing…' : 'Refresh'}
         </button>
       </div>
 
-      {error && (
-        <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: 'var(--danger-500)' }}>
-          {error}
-        </div>
-      )}
-
-      {/* Table */}
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
-        {loading && rows.length === 0 ? (
-          <div style={{ padding: 32, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>Loading audit log…</div>
-        ) : rows.length === 0 ? (
-          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-subtle)' }}>
-            <Icon name="scroll" size={28} style={{ color: 'var(--text-subtle)', margin: '0 auto 10px' }} />
-            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>No audit entries</div>
-            <div style={{ fontSize: 12, marginTop: 4 }}>Mutations to patients, appointments, bills, etc. will appear here.</div>
+      {/* Body */}
+      <div style={{ flex: 1, overflowY: 'auto' }}>
+        {error && (
+          <div style={{ margin: 16, padding: '10px 14px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, fontSize: 13, color: 'var(--danger-500)' }}>
+            {error}
           </div>
+        )}
+        {loading && rows.length === 0 ? (
+          <div style={{ padding: 60, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>Loading audit log…</div>
+        ) : rows.length === 0 ? (
+          <EmptyState
+            illustration="receipt"
+            title="No audit entries"
+            hint="Mutations to patients, appointments, bills, and clinic settings will appear here."
+          />
         ) : (
           <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead>
-              <tr style={{ background: 'var(--surface-muted)' }}>
-                <th style={thAuditStyle}>Time</th>
-                <th style={thAuditStyle}>Action</th>
-                <th style={thAuditStyle}>Entity</th>
-                <th style={thAuditStyle}>Actor</th>
-                <th style={thAuditStyle}>Detail</th>
+            <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--surface)' }}>
+              <tr style={{ background: 'var(--surface-muted)', borderBottom: '1px solid var(--border)' }}>
+                {['Time', 'Action', 'Entity', 'Actor', 'Detail'].map((h) => (
+                  <th key={h} style={{ padding: '12px 20px', textAlign: 'left', fontSize: 10, fontWeight: 800, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.1em' }}>{h}</th>
+                ))}
               </tr>
             </thead>
             <tbody>
@@ -1911,26 +2107,24 @@ function AuditTab() {
                 const actor = r.actorUserId ? users.get(r.actorUserId) ?? r.actorUserId.slice(-6) : '—';
                 const color = ACTION_COLORS[r.action] ?? ACTION_COLORS.UPDATE;
                 return (
-                  <tr key={r._id} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={tdAuditStyle}>
+                  <tr key={r._id} className="row-hover" style={{ borderBottom: '1px solid var(--border)' }}>
+                    <td style={{ padding: '14px 20px', verticalAlign: 'top' }}>
                       <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text-muted)' }}>{formatAuditTime(r.createdAt)}</span>
                     </td>
-                    <td style={tdAuditStyle}>
-                      <span style={{ display: 'inline-block', padding: '2px 9px', borderRadius: 100, background: color.bg, color: color.text, border: `1px solid ${color.border}`, fontSize: 11, fontWeight: 700, letterSpacing: '0.04em' }}>{r.action}</span>
+                    <td style={{ padding: '14px 20px', verticalAlign: 'top' }}>
+                      <span style={{ display: 'inline-block', padding: '2px 9px', borderRadius: 100, background: color.bg, color: color.text, border: `1px solid ${color.border}`, fontSize: 10, fontWeight: 700, letterSpacing: '0.06em' }}>
+                        {r.action}
+                      </span>
                     </td>
-                    <td style={tdAuditStyle}>
-                      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{entityLabel(r.entityType)}</div>
-                      <div style={{ fontSize: 10, color: 'var(--text-subtle)', fontFamily: 'monospace', marginTop: 1 }}>
+                    <td style={{ padding: '14px 20px', verticalAlign: 'top' }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{entityLabel(r.entityType)}</div>
+                      <div style={{ fontSize: 10, color: 'var(--text-subtle)', fontFamily: 'monospace', marginTop: 2 }}>
                         {r.entityId === 'n/a' ? '—' : r.entityId.slice(-12)}
                       </div>
                     </td>
-                    <td style={tdAuditStyle}>
-                      <span style={{ fontSize: 12, color: 'var(--text)' }}>{actor}</span>
-                    </td>
-                    <td style={tdAuditStyle}>
-                      <div style={{ fontSize: 13, color: 'var(--text)' }}>
-                        {auditDetailLabel(r.meta?.method, r.entityType) ?? <span style={{ color: 'var(--text-subtle)' }}>—</span>}
-                      </div>
+                    <td style={{ padding: '14px 20px', verticalAlign: 'top', fontSize: 12, color: 'var(--text)' }}>{actor}</td>
+                    <td style={{ padding: '14px 20px', verticalAlign: 'top', fontSize: 13, color: 'var(--text)' }}>
+                      {auditDetailLabel(r.meta?.method, r.entityType) ?? <span style={{ color: 'var(--text-subtle)' }}>—</span>}
                     </td>
                   </tr>
                 );
@@ -1941,31 +2135,18 @@ function AuditTab() {
       </div>
 
       {/* Footer: count + load more */}
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-subtle)', padding: '0 4px' }}>
-        <span>{rows.length} row{rows.length === 1 ? '' : 's'} loaded</span>
-        {nextBefore && (
-          <button onClick={() => void load(false)} disabled={loading}
-            style={{ height: 32, padding: '0 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 500, cursor: loading ? 'wait' : 'pointer' }}>
-            {loading ? 'Loading…' : 'Load more'}
-          </button>
-        )}
-      </div>
+      {rows.length > 0 && (
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 12, color: 'var(--text-subtle)', padding: '12px 24px', borderTop: '1px solid var(--border)', background: 'var(--surface)' }}>
+          <span>{rows.length} row{rows.length === 1 ? '' : 's'} loaded</span>
+          {nextBefore && (
+            <button onClick={() => void load(false)} disabled={loading}
+              style={{ height: 32, padding: '0 14px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 500, cursor: loading ? 'wait' : 'pointer' }}>
+              {loading ? 'Loading…' : 'Load more'}
+            </button>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
-const thAuditStyle: React.CSSProperties = {
-  padding: '10px 14px',
-  textAlign: 'left',
-  fontSize: 10,
-  fontWeight: 700,
-  color: 'var(--text-subtle)',
-  textTransform: 'uppercase',
-  letterSpacing: '0.06em',
-  borderBottom: '1px solid var(--border)',
-};
-
-const tdAuditStyle: React.CSSProperties = {
-  padding: '10px 14px',
-  verticalAlign: 'top',
-};

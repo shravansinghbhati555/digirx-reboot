@@ -1,4 +1,4 @@
-import { IsEnum, IsISO8601, IsMongoId, IsOptional, IsString, Matches, MaxLength } from 'class-validator';
+import { IsEnum, IsISO8601, IsMongoId, IsNumber, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
 import {
   AppointmentSource,
   AppointmentType,
@@ -39,4 +39,26 @@ export class CreateAppointmentDto {
   @IsString()
   @MaxLength(1000)
   notes?: string;
+
+  // Optional per-doctor visit-type. When set, the BE creates an ISSUED
+  // bill of the visit-type's price linked to this appointment so the
+  // front desk can collect payment before check-in.
+  @IsOptional()
+  @IsMongoId()
+  visitTypeId?: string;
+
+  // Manual fee captured at booking when the doctor has no visit-type
+  // catalog. Same effect as visit-type: the BE auto-issues an ISSUED
+  // bill with this amount + label so the check-in gate can enforce
+  // payment. Ignored if `visitTypeId` is also set (visit-type wins).
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  manualBillAmount?: number;
+
+  @IsOptional()
+  @IsString()
+  @MinLength(1)
+  @MaxLength(80)
+  manualBillLabel?: string;
 }

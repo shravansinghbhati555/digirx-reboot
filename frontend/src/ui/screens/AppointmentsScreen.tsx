@@ -15,12 +15,14 @@ type Appointment = {
   type: AppointmentType;
   status: string;
   doctorId: string;
-  patientId: string;
+  patientId: any;
   startAt?: string;
   endAt?: string;
   queueDate?: string;
   queueNumber?: number;
   notes?: string;
+  visitTypeId?: string;
+  billId?: string;
 };
 
 type PatientLite = {
@@ -33,14 +35,50 @@ type PatientLite = {
   tags?: string[];
 };
 
+type UserListItem = {
+  _id: string;
+  name: string;
+  roleIds: string[];
+  branchIds: string[];
+  roles: { _id: string; name: string }[];
+};
+
+// Small "pay before check-in" chip. Visible only while the appointment is
+// still BOOKED *and* a bill was auto-issued at create time. Tapping it deep-
+// links into BillingScreen with the bill pre-selected so the front desk can
+// collect payment in one hop. Once the patient is CHECKED_IN (BE gate
+// verifies the bill is fully paid) the chip disappears.
+function PaymentChip({
+  appt, onOpen,
+}: { appt: Appointment; onOpen: (billId: string) => void }) {
+  if (!appt.billId) return null;
+  if (statusKey(appt.status) !== 'BOOKED') return null;
+  return (
+    <button type="button"
+      onClick={(e) => { e.stopPropagation(); onOpen(appt.billId!); }}
+      title="Collect consultation fee before check-in"
+      style={{
+        height: 22, padding: '0 8px',
+        display: 'inline-flex', alignItems: 'center', gap: 4,
+        background: 'rgba(245,158,11,0.12)', border: '1px solid rgba(245,158,11,0.35)',
+        color: '#b45309', borderRadius: 999,
+        fontSize: 10, fontWeight: 700, letterSpacing: '0.02em',
+        cursor: 'pointer', whiteSpace: 'nowrap',
+      }}>
+      <Icon name="receipt" size={10} /> Unpaid
+    </button>
+  );
+}
+
 // MRN is the human-readable identifier; fall back to a `_id` tail only when
 // no MRN was minted (legacy data) or when the patient lookup hasn't resolved.
 function patientRefLabel(
   p: { mrn?: string; _id: string } | undefined,
-  id?: string,
+  id?: any,
 ): string {
   if (p?.mrn) return p.mrn;
-  const fallback = (p?._id ?? id ?? '').slice(-6);
+  const rawId = typeof id === 'object' ? id?._id : id;
+  const fallback = (p?._id ?? rawId ?? '').toString().slice(-6);
   return fallback ? `#${fallback}` : '—';
 }
 
@@ -297,7 +335,7 @@ function computeDayLayout(appts: Appointment[]) {
 
 
 export function AppointmentsScreen() {
-  const { ctx, selectedPatientId, setSelectedPatientId, setScreen, setSelectedAppointmentId, setSelectedBillId, selectedDate, setSelectedDate } = useApp();
+  const { ctx, selectedPatientId, setSelectedPatientId, setScreen, setSelectedBillId, selectedDate, setSelectedDate } = useApp();
   const { has } = usePerm();
   const canBook = has(Perm.AppointmentWrite);
   const toast = useToast();
@@ -338,20 +376,33 @@ export function AppointmentsScreen() {
       const qs = new URLSearchParams({ branchId: ctx.branchId, date });
       const data = await apiGet<Appointment[]>(ctx, `/appointments?${qs.toString()}`);
       setItems(data);
-      // Lazy-load patient names
-      const ids = Array.from(new Set(data.map((a) => a.patientId).filter(Boolean)));
-      if (ids.length) {
-        const next = new Map(patients);
-        await Promise.all(ids.filter((id) => !next.has(id)).map(async (id) => {
-          try {
-            const p = await apiGet<PatientLite>(ctx, `/patients/${id}`);
-            next.set(id, p);
-          } catch {
-            next.set(id, { _id: id, fullName: id.slice(-6) });
-          }
-        }));
-        setPatients(next);
+      // Populate the patients map from the already-populated data if available,
+      // otherwise lazy-load the rest.
+      const next = new Map(patients);
+      const missingIds: string[] = [];
+
+      for (const a of data) {
+        if (!a.patientId) continue;
+        if (typeof a.patientId === 'object' && a.patientId._id) {
+          next.set(a.patientId._id, a.patientId);
+        } else if (typeof a.patientId === 'string' && !next.has(a.patientId)) {
+          missingIds.push(a.patientId);
+        }
       }
+
+      if (missingIds.length > 0) {
+        await Promise.all(
+          Array.from(new Set(missingIds)).map(async (id) => {
+            try {
+              const p = await apiGet<PatientLite>(ctx, `/patients/${id}`);
+              next.set(id, p);
+            } catch {
+              next.set(id, { _id: id, fullName: id.slice(-6) });
+            }
+          })
+        );
+      }
+      setPatients(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -405,17 +456,36 @@ export function AppointmentsScreen() {
         return [d, [] as Appointment[]] as const;
       }
     }))
-      .then((results) => {
+      .then(async (results) => {
         const map = new Map<string, Appointment[]>();
         results.forEach(([d, items]) => map.set(d, items));
         setWeekItems(map);
         // Also pull in patient names from week data
-        const ids = Array.from(new Set(results.flatMap(([, items]) => items.map((a) => a.patientId))));
         const next = new Map(patients);
-        Promise.all(ids.filter((id) => !next.has(id)).map(async (id) => {
-          try { next.set(id, await apiGet<PatientLite>(ctx, `/patients/${id}`)); }
-          catch { next.set(id, { _id: id, fullName: id.slice(-6) }); }
-        })).then(() => setPatients(next));
+        const missingIds: string[] = [];
+
+        results.flatMap(([, items]) => items).forEach(a => {
+          if (!a.patientId) return;
+          if (typeof a.patientId === 'object' && a.patientId._id) {
+            next.set(a.patientId._id, a.patientId);
+          } else if (typeof a.patientId === 'string' && !next.has(a.patientId)) {
+            missingIds.push(a.patientId);
+          }
+        });
+
+        if (missingIds.length > 0) {
+          await Promise.all(
+            Array.from(new Set(missingIds)).map(async (id) => {
+              try {
+                const p = await apiGet<PatientLite>(ctx, `/patients/${id}`);
+                next.set(id, p);
+              } catch {
+                next.set(id, { _id: id, fullName: id.slice(-6) });
+              }
+            })
+          );
+        }
+        setPatients(next);
       })
       .finally(() => setWeekLoading(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -451,8 +521,10 @@ export function AppointmentsScreen() {
     setDate(d.toISOString().slice(0, 10));
   }
 
-  function getName(id: string): string {
-    return patients.get(id)?.fullName ?? id.slice(-6);
+  function getName(id: any): string {
+    const stringId = typeof id === 'object' ? id?._id : id;
+    if (!stringId) return '—';
+    return patients.get(stringId)?.fullName ?? (typeof stringId === 'string' ? stringId.slice(-6) : '—');
   }
 
   return (
@@ -573,6 +645,10 @@ export function AppointmentsScreen() {
                   const col = STATUS_COLORS[statusKey(a.status)] ?? STATUS_COLORS.BOOKED;
                   const layout = dayLayout.get(a._id) ?? { left: '8px', width: 'calc(100% - 16px)' };
 
+                  // Tiny dot in the corner whenever the appointment has an
+                  // unpaid auto-issued bill — keeps the calendar block compact
+                  // but still flags "needs payment before check-in" at a glance.
+                  const unpaid = !!a.billId && statusKey(a.status) === 'BOOKED';
                   return (
                     <div key={a._id} onClick={(e) => { e.stopPropagation(); setSelected(a); }}
                       style={{
@@ -582,6 +658,14 @@ export function AppointmentsScreen() {
                         borderRadius: 10, padding: '6px 10px', cursor: 'pointer', overflow: 'hidden', zIndex: 2,
                         boxShadow: 'var(--e1)', display: 'flex', flexDirection: 'column', gap: 2
                       }}>
+                      {unpaid && (
+                        <span title="Unpaid · pay before check-in"
+                          style={{
+                            position: 'absolute', top: 6, right: 8,
+                            width: 8, height: 8, borderRadius: 999,
+                            background: '#f59e0b', boxShadow: '0 0 0 2px var(--surface)',
+                          }} />
+                      )}
                       <div style={{ fontSize: 12, fontWeight: 700, color: col.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {getName(a.patientId)}
                       </div>
@@ -634,6 +718,7 @@ export function AppointmentsScreen() {
                         {doctors.get(a.doctorId) ? `Dr. ${doctors.get(a.doctorId)}` : `Doctor #${a.doctorId.slice(-8).toUpperCase()}`}
                       </div>
                     </div>
+                    <PaymentChip appt={a} onOpen={(billId) => { setSelectedBillId(billId); setScreen('billing'); }} />
                     <StatusPill status={statusToken(a.status)} small />
                   </div>
                 ))}
@@ -680,6 +765,7 @@ function ApptSheet({
   const [busy, setBusy] = useState(false);
   const [bill, setBill] = useState<any>(null);
   const [billLoading, setBillLoading] = useState(true);
+  const [showTriage, setShowTriage] = useState(false);
 
   useEffect(() => {
     setBillLoading(true);
@@ -690,16 +776,7 @@ function ApptSheet({
   }, [appt._id, ctx]);
 
   async function checkIn() {
-    setBusy(true);
-    try {
-      await apiPost(ctx, `/appointments/${appt._id}/checkin`, {});
-      toast(`${patientName} checked in`, 'success');
-      onChanged();
-    } catch (e) {
-      toast(e instanceof Error ? e.message : 'Check-in failed', 'error');
-    } finally {
-      setBusy(false);
-    }
+    setShowTriage(true);
   }
 
   function startEncounter() {
@@ -816,7 +893,160 @@ function ApptSheet({
             </button>
           )}
         </div>
+
+        {showTriage && (
+          <TriageModal
+            appt={appt}
+            patientName={patientName}
+            onClose={() => setShowTriage(false)}
+            onSaved={() => {
+              setShowTriage(false);
+              onChanged();
+            }}
+          />
+        )}
       </div>
+    </div>
+  );
+}
+
+function TriageModal({
+  appt, patientName, onClose, onSaved,
+}: {
+  appt: Appointment; patientName: string; onClose: () => void; onSaved: () => void;
+}) {
+  const { ctx } = useApp();
+  const toast = useToast();
+  const [busy, setBusy] = useState(false);
+  const [complaint, setComplaint] = useState('');
+  const [vitals, setVitals] = useState<Record<string, string>>({
+    bp: '', spo2: '', temp: '', pulse: '', rr: '', weight: '', height: ''
+  });
+
+  async function save() {
+    setBusy(true);
+    try {
+      // 1. Check in if still BOOKED
+      if (appt.status === 'BOOKED') {
+        await apiPost(ctx, `/appointments/${appt._id}/checkin`, {});
+      }
+
+      // 2. Create/Get Encounter Draft
+      let encId: string;
+      try {
+        const existing = await apiGet<any>(ctx, `/encounters/by-appointment/${appt._id}`);
+        encId = existing._id;
+      } catch {
+        const newEnc = await apiPost<any>(ctx, '/encounters', {
+          appointmentId: appt._id,
+          patientId: appt.patientId?._id || appt.patientId,
+          doctorId: appt.doctorId,
+          branchId: ctx.branchId,
+          chiefComplaint: complaint,
+        });
+        encId = newEnc._id;
+      }
+
+      // 3. Save Vitals (using same mapping as EncounterScreen)
+      const out: Record<string, any> = {};
+      if (vitals.bp) {
+        const parts = vitals.bp.split('/');
+        const sys = parseInt(parts[0]?.trim());
+        const dia = parseInt(parts[1]?.trim());
+        if (!isNaN(sys)) out.bpSystolic = sys;
+        if (!isNaN(dia)) out.bpDiastolic = dia;
+      }
+      if (vitals.spo2) {
+        const val = parseInt(vitals.spo2);
+        if (!isNaN(val)) out.spo2 = val;
+      }
+      if (vitals.temp) {
+        const val = parseFloat(vitals.temp);
+        if (!isNaN(val)) out.temperatureC = parseFloat(((val - 32) * 5 / 9).toFixed(1));
+      }
+      if (vitals.pulse) {
+        const val = parseInt(vitals.pulse);
+        if (!isNaN(val)) out.pulseBpm = val;
+      }
+      if (vitals.rr) {
+        const val = parseInt(vitals.rr);
+        if (!isNaN(val)) out.respiratoryRate = val;
+      }
+      if (vitals.weight) {
+        const val = parseFloat(vitals.weight);
+        if (!isNaN(val)) out.weightKg = val;
+      }
+      if (vitals.height) {
+        const val = parseFloat(vitals.height);
+        if (!isNaN(val)) out.heightCm = val;
+      }
+
+      await apiPatch(ctx, `/encounters/${encId}`, {
+        vitals: out,
+        chiefComplaint: complaint || undefined
+      });
+
+      // 4. Status is already CHECKED_IN from step 1
+      toast('Triage completed & Patient checked in', 'success');
+      onSaved();
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Failed to save triage', 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
+      <div className="modal-content" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, width: '100%', maxWidth: 440, padding: 24, boxShadow: 'var(--e4)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <div>
+            <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Patient Triage</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{patientName}</p>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-subtle)', cursor: 'pointer' }}><Icon name="x" size={20} /></button>
+        </div>
+
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <ModalInput label="Weight (kg)" value={vitals.weight} onChange={v => setVitals({ ...vitals, weight: v })} type="number" />
+            <ModalInput label="Height (cm)" value={vitals.height} onChange={v => setVitals({ ...vitals, height: v })} type="number" />
+            <ModalInput label="Temp (°F)" value={vitals.temp} onChange={v => setVitals({ ...vitals, temp: v })} type="number" />
+            <ModalInput label="Pulse (bpm)" value={vitals.pulse} onChange={v => setVitals({ ...vitals, pulse: v })} type="number" />
+            <ModalInput label="SpO2 (%)" value={vitals.spo2} onChange={v => setVitals({ ...vitals, spo2: v })} type="number" />
+            <ModalInput label="RR (/min)" value={vitals.rr} onChange={v => setVitals({ ...vitals, rr: v })} type="number" />
+            <ModalInput label="BP (mmHg)" value={vitals.bp} onChange={v => setVitals({ ...vitals, bp: v })} placeholder="120/80" />
+          </div>
+          <div>
+            <label style={labelStyle}>Chief Complaint</label>
+            <textarea
+              value={complaint} onChange={e => setComplaint(e.target.value)}
+              placeholder="Optional notes..."
+              style={{ width: '100%', height: 80, padding: 10, borderRadius: 10, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', fontSize: 13, outline: 'none', resize: 'none' }}
+            />
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
+          <button onClick={save} disabled={busy} style={{ flex: 1, height: 44, background: 'var(--brand-500)', color: 'white', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            {busy ? <Spinner size={16} /> : <><Icon name="check" size={16} /> Check In & Save</>}
+          </button>
+          <button onClick={onClose} style={{ flex: 1, height: 44, background: 'none', border: '1px solid var(--border)', borderRadius: 10, fontWeight: 600, cursor: 'pointer', color: 'var(--text)' }}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ModalInput({ label, value, onChange, type = 'text', placeholder }: { label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string }) {
+  return (
+    <div>
+      <label style={labelStyle}>{label}</label>
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+        style={{ width: '100%', height: 38, padding: '0 10px', borderRadius: 8, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', fontSize: 13, color: 'var(--text)', outline: 'none' }}
+      />
     </div>
   );
 }
@@ -835,6 +1065,15 @@ function Cell({ label, value }: { label: string; value: string }) {
 const APPT_TYPES = ['Consultation', 'Follow-up', 'Procedure', 'Telemedicine'] as const;
 const ROOMS = ['Room 1', 'Room 2', 'Room 3'] as const;
 const DURATIONS = [15, 20, 30, 45, 60] as const;
+// Payment methods mirror the set used by the Billing screen's PaymentSheet
+// so the front desk sees the same chips/labels in both places.
+const PAYMENT_METHODS: { id: string; label: string; icon: 'banknote' | 'smartphone' | 'creditCard' | 'send' | 'arrowUp' }[] = [
+  { id: 'CASH', label: 'Cash', icon: 'banknote' },
+  { id: 'UPI', label: 'UPI', icon: 'smartphone' },
+  { id: 'CARD', label: 'Card', icon: 'creditCard' },
+  { id: 'ONLINE', label: 'Online', icon: 'send' },
+  { id: 'BANK_TRANSFER', label: 'Bank', icon: 'arrowUp' },
+];
 
 type SlotStatus = 'available' | 'booked' | 'past' | 'too-short';
 
@@ -887,7 +1126,19 @@ function BookSheet({
   onCreated: () => void;
 }) {
   const { ctx } = useApp();
-  const [step, setStep] = useState<1 | 2 | 3>(defaultPatientId ? 2 : 1);
+  // 4-step wizard: 1 Patient → 2 Details → 3 Payment → 4 Confirm.
+  // Step 3 collects payment info; the appointment + bill + payment are all
+  // submitted together at step 4 so an abandoned wizard never leaves a
+  // half-created appointment in the DB. Step 3 is skipped when the doctor
+  // has no visit-type catalog (no bill would be issued anyway).
+  const [step, setStep] = useState<1 | 2 | 3 | 4>(defaultPatientId ? 2 : 1);
+  // Payment fields — mirror the PaymentSheet inside BillingScreen so the
+  // front desk recognizes the layout. Idempotency key is generated once
+  // per wizard so a retry doesn't double-record the payment.
+  const [payMethod, setPayMethod] = useState('UPI');
+  const [payAmount, setPayAmount] = useState('');
+  const [payRef, setPayRef] = useState('');
+  const [payIdempKey] = useState(() => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`));
 
   // Step 1
   const [patientQuery, setPatientQuery] = useState('');
@@ -903,6 +1154,12 @@ function BookSheet({
   const [slotsLoading, setSlotsLoading] = useState(false);
   const [slotMinutes, setSlotMinutes] = useState<number>(15);
   const [apptType, setApptType] = useState<typeof APPT_TYPES[number]>('Consultation');
+  // Per-doctor visit-type catalog. When the picked doctor has any active
+  // visit types, the front desk must pick one — that drives the auto-issued
+  // bill the patient pays before check-in. Doctors with an empty catalog
+  // fall back to the legacy free-text APPT_TYPES dropdown (no bill).
+  const [visitTypes, setVisitTypes] = useState<Array<{ _id: string; name: string; price: number; currency: string }>>([]);
+  const [visitTypeId, setVisitTypeId] = useState<string>('');
   const [duration, setDuration] = useState<number>(30);
   // Bumped by the manual refresh button AND by the availability-changed
   // event so the slot useEffect re-runs and pulls a fresh view. Without
@@ -913,8 +1170,9 @@ function BookSheet({
   // It defaults to the signed-in user (the common single-doctor case) but
   // is editable so a receptionist booking on someone else's behalf doesn't
   // silently query the wrong doctor's hours — the bug we shipped this for.
-  const [doctorId, setDoctorId] = useState(ctx.userId);
-  const [doctors, setDoctors] = useState<Array<{ _id: string; name: string }>>([]);
+  const [doctorId, setDoctorId] = useState('');
+  const [doctors, setDoctors] = useState<UserListItem[]>([]);
+  const [doctorsLoading, setDoctorsLoading] = useState(false);
   const [room, setRoom] = useState<typeof ROOMS[number]>('Room 1');
   const [notes, setNotes] = useState('');
 
@@ -927,10 +1185,16 @@ function BookSheet({
   // when the user keeps typing while a request is in flight.
   useEffect(() => {
     if (step !== 1) return;
+    const q = patientQuery.trim();
+    if (q.length < 3) {
+      setPatients([]);
+      setPatientsLoading(false);
+      return;
+    }
     setPatientsLoading(true);
     let cancelled = false;
     const qs = new URLSearchParams();
-    if (patientQuery.trim()) qs.set('query', patientQuery.trim());
+    qs.set('query', q);
     qs.set('limit', '50');
     const t = setTimeout(() => {
       apiGet<PatientLite[]>(ctx, `/patients?${qs.toString()}`)
@@ -954,10 +1218,57 @@ function BookSheet({
   // in that case the picker degrades to a one-option list (the signed-in
   // user), which preserves the previous behavior.
   useEffect(() => {
-    apiGet<Array<{ _id: string; name: string }>>(ctx, '/users')
-      .then((list) => setDoctors(list))
-      .catch(() => setDoctors([]));
-  }, [ctx.clinicId, ctx.accessToken]);
+    setDoctorsLoading(true);
+    apiGet<UserListItem[]>(ctx, '/users')
+      .then((list) => {
+        // Only show users who have the exact 'Doctor' role.
+        const branchDoctors = list.filter((u) => {
+          const hasBranch = !ctx.branchId || (u.branchIds && u.branchIds.includes(ctx.branchId));
+          const isDoctor = u.roles.some((r) => r.name.toLowerCase() === 'doctor');
+          return hasBranch && isDoctor;
+        });
+        setDoctors(branchDoctors);
+
+        // Pick a default doctor: either the first one in the list, 
+        // or the current user if they happen to be a doctor in this branch.
+        const meAsDoctor = branchDoctors.find(d => d._id === ctx.userId);
+        if (meAsDoctor) {
+          setDoctorId(meAsDoctor._id);
+        } else if (branchDoctors.length > 0) {
+          setDoctorId(branchDoctors[0]._id);
+        }
+      })
+      .catch(() => setDoctors([]))
+      .finally(() => setDoctorsLoading(false));
+  }, [ctx.clinicId, ctx.accessToken, ctx.branchId, ctx.userId]);
+
+  // Pull the picked doctor's visit-type catalog. We only ask for active
+  // rows because the picker is a *choose-to-bill* surface — deactivated
+  // entries stay invisible until the admin reactivates them in Settings.
+  useEffect(() => {
+    if (!doctorId) { setVisitTypes([]); setVisitTypeId(''); return; }
+    let cancelled = false;
+    const qs = new URLSearchParams({ doctorId });
+    apiGet<Array<{ _id: string; name: string; price: number; currency: string }>>(ctx, `/visit-types?${qs.toString()}`)
+      .then((rows) => {
+        if (cancelled) return;
+        setVisitTypes(rows);
+        // Auto-select the first row so the front desk never lands on a
+        // doctor with options but an empty picker.
+        setVisitTypeId((prev) => (prev && rows.some((r) => r._id === prev) ? prev : (rows[0]?._id ?? '')));
+      })
+      .catch(() => { if (!cancelled) { setVisitTypes([]); setVisitTypeId(''); } });
+    return () => { cancelled = true; };
+  }, [doctorId, ctx]);
+
+  // Whenever the picked visit type changes, prefill the payment amount
+  // with its price so the front desk doesn't have to retype. They can
+  // still edit it (partial / advance / split payment scenarios).
+  useEffect(() => {
+    const vt = visitTypes.find((v) => v._id === visitTypeId);
+    if (vt) setPayAmount(String(vt.price));
+    else setPayAmount('');
+  }, [visitTypeId, visitTypes]);
 
   // Resolve the picked doctor's display label. Prefer the users list (so
   // switching the picker updates the label), then fall back to ctx.fullName
@@ -1004,13 +1315,17 @@ function BookSheet({
           status: (s.status ?? 'available') as SlotStatus,
           bookedBy: s.bookedBy ?? null,
         }));
-        setSlots(labeled);
+
+        // Filter out past slots from the primary 'slots' state so that the 
+        // total count and grid stay in sync with the user's view.
+        const futureSlots = labeled.filter(s => s.status !== 'past');
+        setSlots(futureSlots);
+
         if (typeof r.slotMinutes === 'number' && r.slotMinutes > 0) setSlotMinutes(r.slotMinutes);
-        // Auto-pick the first AVAILABLE slot — never booked, past, or
-        // too-short. If the receptionist switches duration and their
-        // selected slot becomes unavailable, we rotate to a still-valid one.
-        const firstAvail = labeled.find((s) => s.status === 'available');
-        const stillValid = labeled.find(
+
+        // Auto-pick the first AVAILABLE slot
+        const firstAvail = futureSlots.find((s) => s.status === 'available');
+        const stillValid = futureSlots.find(
           (s) => s.label === slotStart && s.status === 'available',
         );
         if (firstAvail && !stillValid) {
@@ -1033,6 +1348,14 @@ function BookSheet({
     return () => window.removeEventListener(AVAILABILITY_CHANGED_EVENT, onChange);
   }, []);
 
+  // Payment step always shows. When the doctor has a visit-type catalog
+  // the BE will auto-issue the bill using the picked row's price; when
+  // there's no catalog the front desk types the amount in manually and
+  // we send it to the BE as a manual bill (same auto-issue path, just
+  // with a typed-in label + amount). Either way the check-in gate
+  // applies because the appointment ends up with `billId` set.
+  const pickedVisitType = visitTypes.find((v) => v._id === visitTypeId) ?? null;
+
   function continueFromStep1() {
     if (!selectedPatient) return;
     setStep(2);
@@ -1041,39 +1364,73 @@ function BookSheet({
   function continueFromStep2() {
     if (!doctorId.trim()) { setError('Doctor is required.'); return; }
     if (apptKind === 'TIME' && !slotStart) { setError('Pick a time slot.'); return; }
+    if (visitTypes.length > 0 && !visitTypeId) {
+      setError('Pick a visit type so a bill can be issued.');
+      return;
+    }
     setError(null);
     setStep(3);
+  }
+
+  function continueFromStep3() {
+    const amountNum = Number(payAmount);
+    if (!payAmount || !Number.isFinite(amountNum) || amountNum <= 0) {
+      setError('Enter a valid payment amount.');
+      return;
+    }
+    // When a visit-type is picked the BE pegs the bill at its catalog
+    // price — refuse to advance if the front desk typed a smaller amount,
+    // otherwise the patient walks in underpaid.
+    if (pickedVisitType && amountNum < pickedVisitType.price) {
+      setError(`Amount is less than the consultation fee (${pickedVisitType.currency} ${pickedVisitType.price.toLocaleString('en-IN')}). Collect the full amount before continuing.`);
+      return;
+    }
+    setError(null);
+    setStep(4);
   }
 
   async function submit() {
     if (!ctx.branchId) { setError('Branch ID is required (sign in to a branch).'); return; }
     if (!selectedPatient) { setError('Patient is required.'); return; }
     if (!doctorId.trim()) { setError('Doctor is required.'); return; }
+    if (visitTypes.length > 0 && !visitTypeId) { setError('Pick a visit type so a bill can be issued.'); return; }
+    const amountNum = Number(payAmount);
+    if (!payAmount || !Number.isFinite(amountNum) || amountNum <= 0) {
+      setError('Payment amount is required.');
+      return;
+    }
     setSaving(true); setError(null);
     try {
+      // 1) Create the appointment. The BE auto-issues a SERVICE bill when
+      //    `visitTypeId` OR `manualBillAmount + manualBillLabel` are set,
+      //    and returns the appointment row with `billId` populated.
+      const billLabel = pickedVisitType?.name ?? apptType;
+      let body: Record<string, unknown>;
       if (apptKind === 'QUEUE') {
-        await apiPost(ctx, '/appointments', {
+        body = {
           type: 'QUEUE',
           branchId: ctx.branchId,
           doctorId: doctorId.trim(),
           patientId: selectedPatient._id,
           queueDate: date,
           notes: notes.trim() || undefined,
-        });
+          visitTypeId: visitTypeId || undefined,
+          // Only send manual bill fields when there's no visit type;
+          // visit-type wins on the BE.
+          manualBillAmount: visitTypeId ? undefined : amountNum,
+          manualBillLabel: visitTypeId ? undefined : billLabel,
+        };
       } else {
         if (!slotStart) { setError('Time slot is required.'); setSaving(false); return; }
         const start = combineToIso(date, slotStart);
         const end = new Date(start.getTime() + duration * 60_000);
-        // Defence-in-depth — if the modal sat open across midnight, or
-        // a slot polled "available" minutes ago is now in the past, fail
-        // before the round-trip rather than waiting for a 400.
         if (start.getTime() < Date.now()) {
           setError('That time slot is in the past — pick a future slot.');
           setSaving(false);
           return;
         }
-        const composedNotes = [apptType, room, notes.trim()].filter(Boolean).join(' · ');
-        await apiPost(ctx, '/appointments', {
+        const composedNotes = [billLabel, room, notes.trim()].filter(Boolean).join(' · ');
+        body = {
           type: 'TIME',
           branchId: ctx.branchId,
           doctorId: doctorId.trim(),
@@ -1081,7 +1438,34 @@ function BookSheet({
           startAt: start.toISOString(),
           endAt: end.toISOString(),
           notes: composedNotes,
-        });
+          visitTypeId: visitTypeId || undefined,
+          manualBillAmount: visitTypeId ? undefined : amountNum,
+          manualBillLabel: visitTypeId ? undefined : billLabel,
+        };
+      }
+      const created = await apiPost<{ _id: string; billId?: string }>(ctx, '/appointments', body);
+
+      // 2) Record the payment against the auto-issued bill. Idempotency
+      //    key was generated when the wizard mounted, so a retry on a
+      //    transient failure won't double-charge. A payment failure does
+      //    NOT roll back the appointment — surface the error and let the
+      //    front desk settle from BillingScreen.
+      if (created.billId) {
+        try {
+          await apiPost(ctx, `/bills/${created.billId}/payments`, {
+            method: payMethod,
+            amount: amountNum,
+            providerRef: payRef.trim() || undefined,
+            idempotencyKey: payIdempKey,
+          });
+        } catch (payErr) {
+          setError(
+            `Appointment booked, but payment recording failed: ${payErr instanceof Error ? payErr.message : String(payErr)}. Settle the bill from Billing → Pending.`,
+          );
+          setSaving(false);
+          onCreated();
+          return;
+        }
       }
       onCreated();
     } catch (e) {
@@ -1091,7 +1475,8 @@ function BookSheet({
     }
   }
 
-  const stepLabel = step === 1 ? 'Patient' : step === 2 ? 'Details' : 'Confirm';
+  const totalSteps = 4;
+  const stepLabel = step === 1 ? 'Patient' : step === 2 ? 'Details' : step === 3 ? 'Payment' : 'Confirm';
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
@@ -1100,16 +1485,16 @@ function BookSheet({
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 17, fontWeight: 700, color: 'var(--text)' }}>Book appointment</div>
-            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>Step {step} of 3 — {stepLabel}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>Step {step} of {totalSteps} — {stepLabel}</div>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}>
             <Icon name="x" size={18} />
           </button>
         </div>
 
-        {/* Step indicator */}
+        {/* Step indicator — always 4 segments now (Patient/Details/Payment/Confirm). */}
         <div style={{ padding: '12px 24px 0', display: 'flex', gap: 6 }}>
-          {[1, 2, 3].map((n) => (
+          {[1, 2, 3, 4].map((n) => (
             <div key={n} style={{
               flex: 1, height: 3, borderRadius: 2,
               background: n <= step ? 'var(--brand-500)' : 'var(--border)',
@@ -1136,11 +1521,12 @@ function BookSheet({
               date={date} setDate={setDate}
               slotStart={slotStart} setSlotStart={setSlotStart}
               slots={slots} slotsLoading={slotsLoading} slotMinutes={slotMinutes}
-              apptType={apptType} setApptType={setApptType}
-              duration={duration} setDuration={setDuration}
               doctorId={doctorId} setDoctorId={setDoctorId}
-              doctors={doctors}
-              doctorName={doctorName}
+              doctors={doctors} doctorName={doctorName}
+              doctorsLoading={doctorsLoading}
+              apptType={apptType} setApptType={setApptType}
+              visitTypes={visitTypes} visitTypeId={visitTypeId} setVisitTypeId={setVisitTypeId}
+              duration={duration} setDuration={setDuration}
               room={room} setRoom={setRoom}
               notes={notes} setNotes={setNotes}
               onRefreshSlots={() => setSlotsRefreshKey((k) => k + 1)}
@@ -1148,11 +1534,25 @@ function BookSheet({
           )}
 
           {step === 3 && (
+            <PaymentStep
+              visitType={pickedVisitType}
+              fallbackLabel={apptType}
+              currency={pickedVisitType?.currency ?? 'INR'}
+              payMethod={payMethod} setPayMethod={setPayMethod}
+              payAmount={payAmount} setPayAmount={setPayAmount}
+              payRef={payRef} setPayRef={setPayRef}
+              idempotencyKey={payIdempKey}
+            />
+          )}
+
+          {step === 4 && (
             <ConfirmStep
               patient={selectedPatient}
               apptKind={apptKind}
               date={date} time={slotStart} duration={duration}
               apptType={apptType} doctorName={doctorName} room={room}
+              visitType={pickedVisitType}
+              paid={Number(payAmount) > 0 ? { method: payMethod, amount: Number(payAmount), reference: payRef.trim() || undefined, currency: pickedVisitType?.currency ?? 'INR' } : null}
             />
           )}
 
@@ -1174,11 +1574,16 @@ function BookSheet({
             </button>
           ) : (
             <>
-              <button onClick={() => setStep((s) => (s === 3 ? 2 : 1))}
+              <button onClick={() => {
+                if (step === 4) setStep(3);
+                else if (step === 3) setStep(2);
+                else setStep(1);
+                setError(null);
+              }}
                 style={{ flex: 1, height: 44, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
                 Back
               </button>
-              {step === 2 ? (
+              {step === 2 && (
                 <button onClick={continueFromStep2}
                   disabled={!doctorId.trim() || (apptKind === 'TIME' && !slotStart)}
                   style={{
@@ -1190,7 +1595,21 @@ function BookSheet({
                   }}>
                   Continue <Icon name="chevronRight" size={14} strokeWidth={2.5} />
                 </button>
-              ) : (
+              )}
+              {step === 3 && (
+                <button onClick={continueFromStep3}
+                  disabled={!payAmount || Number(payAmount) <= 0}
+                  style={{
+                    flex: 2, height: 44, border: 'none', borderRadius: 10,
+                    background: payAmount && Number(payAmount) > 0 ? 'var(--brand-500)' : 'rgba(99,102,241,0.4)',
+                    color: 'var(--brand-text)', fontSize: 14, fontWeight: 600,
+                    cursor: payAmount && Number(payAmount) > 0 ? 'pointer' : 'not-allowed',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  }}>
+                  Confirm payment <Icon name="chevronRight" size={14} strokeWidth={2.5} />
+                </button>
+              )}
+              {step === 4 && (
                 <button onClick={submit} disabled={saving}
                   style={{ flex: 2, height: 44, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
                   {saving ? <Spinner /> : <><Icon name="check" size={14} strokeWidth={2.5} /> Confirm booking</>}
@@ -1224,12 +1643,17 @@ function PatientStep({
       </div>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 380, overflowY: 'auto' }}>
-        {loading && patients.length === 0 && (
+        {query.trim().length < 3 ? (
+          <div style={{ padding: '40px 24px', textAlign: 'center' }}>
+            <Icon name="search" size={32} style={{ color: 'var(--text-subtle)', opacity: 0.2, marginBottom: 12 }} />
+            <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-muted)' }}>Search Patients</div>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 4 }}>Enter at least 3 characters to search...</div>
+          </div>
+        ) : loading && patients.length === 0 ? (
           <div style={{ padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--text-subtle)' }}>Searching…</div>
-        )}
-        {!loading && patients.length === 0 && (
-          <div style={{ padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--text-subtle)' }}>No patients match.</div>
-        )}
+        ) : !loading && patients.length === 0 ? (
+          <div style={{ padding: 24, textAlign: 'center', fontSize: 13, color: 'var(--text-subtle)' }}>No patients match "{query}".</div>
+        ) : null}
         {patients.map((p) => {
           const age = getAge(p.dob);
           const phone = p.phones?.[0] ?? '';
@@ -1269,8 +1693,10 @@ function DetailsStep({
   patient, onChangePatient,
   apptKind, setApptKind,
   date, setDate, slotStart, setSlotStart, slots, slotsLoading, slotMinutes,
-  apptType, setApptType, duration, setDuration,
-  doctorId, setDoctorId, doctors, doctorName,
+  doctorId, setDoctorId, doctors, doctorName, doctorsLoading,
+  apptType, setApptType,
+  visitTypes, visitTypeId, setVisitTypeId,
+  duration, setDuration,
   room, setRoom, notes, setNotes,
   onRefreshSlots,
 }: {
@@ -1280,11 +1706,14 @@ function DetailsStep({
   date: string; setDate: (v: string) => void;
   slotStart: string; setSlotStart: (v: string) => void;
   slots: SlotChoice[]; slotsLoading: boolean; slotMinutes: number;
-  apptType: typeof APPT_TYPES[number]; setApptType: (v: typeof APPT_TYPES[number]) => void;
-  duration: number; setDuration: (v: number) => void;
   doctorId: string; setDoctorId: (v: string) => void;
   doctors: Array<{ _id: string; name: string }>;
   doctorName: string;
+  doctorsLoading: boolean;
+  apptType: typeof APPT_TYPES[number]; setApptType: (v: typeof APPT_TYPES[number]) => void;
+  visitTypes: Array<{ _id: string; name: string; price: number; currency: string }>;
+  visitTypeId: string; setVisitTypeId: (v: string) => void;
+  duration: number; setDuration: (v: number) => void;
   room: typeof ROOMS[number]; setRoom: (v: typeof ROOMS[number]) => void;
   notes: string; setNotes: (v: string) => void;
   onRefreshSlots: () => void;
@@ -1306,6 +1735,19 @@ function DetailsStep({
           </button>
         </div>
       )}
+
+      {/* Doctor picker — sits at the top of step 2 because slot availability
+          and the visit-type catalog both key off the picked doctor. */}
+      <div>
+        <label style={labelStyle}>Doctor</label>
+        <DoctorPicker
+          doctorId={doctorId}
+          setDoctorId={setDoctorId}
+          doctors={doctors}
+          fallbackLabel={doctorName}
+          loading={doctorsLoading}
+        />
+      </div>
 
       {/* Appointment kind toggle */}
       <div>
@@ -1346,30 +1788,45 @@ function DetailsStep({
               <label style={{ ...labelStyle, marginBottom: 0 }}>Time slot</label>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
-                  {slotsLoading ? 'Loading…' : `${slots.length} available`}
+                  {(slotsLoading || doctorsLoading) ? 'Loading…' : `${slots.length} available`}
                 </span>
-                <button type="button" onClick={onRefreshSlots} disabled={slotsLoading}
+                <button type="button" onClick={onRefreshSlots} disabled={slotsLoading || doctorsLoading}
                   title="Refresh slots"
                   aria-label="Refresh slots"
-                  style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 6, cursor: slotsLoading ? 'wait' : 'pointer', color: 'var(--text-muted)' }}>
-                  <Icon name="refresh" size={11} style={{ animation: slotsLoading ? 'spin 800ms linear infinite' : undefined }} />
+                  style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 6, cursor: (slotsLoading || doctorsLoading) ? 'wait' : 'pointer', color: 'var(--text-muted)' }}>
+                  <Icon name="refresh" size={11} style={{ animation: (slotsLoading || doctorsLoading) ? 'spin 800ms linear infinite' : undefined }} />
                 </button>
               </div>
-            </div>
+            </div >
             <TimeSlotGrid
               slotMinutes={slotMinutes}
               available={slots}
               value={slotStart}
               onChange={setSlotStart}
             />
-          </div>
+          </div >
 
           <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 16, alignItems: 'flex-start' }}>
             <div>
-              <label style={labelStyle}>Type</label>
-              <select value={apptType} onChange={(e) => setApptType(e.target.value as typeof APPT_TYPES[number])} style={selectStyle}>
-                {APPT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
-              </select>
+              <label style={labelStyle}>Visit type</label>
+              {visitTypes.length > 0 ? (
+                <select value={visitTypeId} onChange={(e) => setVisitTypeId(e.target.value)} style={selectStyle}>
+                  {visitTypes.map((vt) => (
+                    <option key={vt._id} value={vt._id}>
+                      {vt.name} — {vt.currency} {vt.price.toLocaleString('en-IN')}
+                    </option>
+                  ))}
+                </select>
+              ) : (
+                <select value={apptType} onChange={(e) => setApptType(e.target.value as typeof APPT_TYPES[number])} style={selectStyle}>
+                  {APPT_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
+                </select>
+              )}
+              {visitTypes.length === 0 && (
+                <div style={{ marginTop: 4, fontSize: 10, color: 'var(--text-subtle)' }}>
+                  No catalog set — enter the fee manually on the next step.
+                </div>
+              )}
             </div>
             <div>
               <label style={labelStyle}>Duration</label>
@@ -1390,37 +1847,15 @@ function DetailsStep({
             </div>
           </div>
         </>
-      )}
+      )
+      }
 
-      {apptKind === 'TIME' ? (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-          <div>
-            <label style={labelStyle}>Doctor</label>
-            <DoctorPicker
-              doctorId={doctorId}
-              setDoctorId={setDoctorId}
-              doctors={doctors}
-              fallbackLabel={doctorName}
-            />
-          </div>
-          <div>
-            <label style={labelStyle}>Room</label>
-            <select value={room} onChange={(e) => setRoom(e.target.value as typeof ROOMS[number])} style={selectStyle}>
-              {ROOMS.map((r) => <option key={r} value={r}>{r}</option>)}
-            </select>
-          </div>
-        </div>
-      ) : (
-        <div>
-          <label style={labelStyle}>Doctor</label>
-          <DoctorPicker
-            doctorId={doctorId}
-            setDoctorId={setDoctorId}
-            doctors={doctors}
-            fallbackLabel={doctorName}
-          />
-        </div>
-      )}
+      <div>
+        <label style={labelStyle}>Room</label>
+        <select value={room} onChange={(e) => setRoom(e.target.value as typeof ROOMS[number])} style={selectStyle}>
+          {ROOMS.map((r) => <option key={r} value={r}>{r}</option>)}
+        </select>
+      </div>
 
       <div>
         <label style={labelStyle}>
@@ -1451,18 +1886,25 @@ function TimeSlotGrid({
   // typical clinic hours; slots the doctor's rules don't cover render as
   // dim "off-hours" cells. Backend-returned slots that fall outside this
   // window get added so we never silently hide the doctor's actual hours.
+  // O(1) lookup from grid label → slot status / metadata.
+  const slotByLabel = new Map(available.map((s) => [s.label, s]));
+
   const startMin = 8 * 60;
   const endMin = 20 * 60;
   const step = Math.max(5, Math.min(180, slotMinutes || 15));
   const grid: string[] = [];
   for (let m = startMin; m + step <= endMin; m += step) {
-    grid.push(`${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+    const label = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
+    // Past slots are already filtered out of the 'available' prop by the parent.
+    // If a grid label is not in 'available', it's an 'off-hours' slot.
+    // We only hide it if it's actually in the past (based on current time).
+    grid.push(label);
   }
-  for (const s of available) if (!grid.includes(s.label)) grid.push(s.label);
+  // Also add any special slots from backend that might be outside our 08:00–20:00 grid
+  for (const s of available) {
+    if (!grid.includes(s.label)) grid.push(s.label);
+  }
   grid.sort();
-
-  // O(1) lookup from grid label → slot status / metadata.
-  const slotByLabel = new Map(available.map((s) => [s.label, s]));
 
   return (
     <div>
@@ -1471,6 +1913,11 @@ function TimeSlotGrid({
         maxHeight: 240, overflowY: 'auto',
         padding: 8, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
       }}>
+        {grid.length === 0 && (
+          <div style={{ gridColumn: '1 / -1', padding: '32px 0', textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>
+            No future slots available for this day.
+          </div>
+        )}
         {grid.map((t) => {
           const slot = slotByLabel.get(t);
           // The doctor doesn't have rules for this minute → off-hours.
@@ -1532,11 +1979,10 @@ function TimeSlotGrid({
         )}
       </div>
 
-      <div style={{ display: 'flex', gap: 12, marginTop: 8, fontSize: 11, color: 'var(--text-subtle)', flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 12, marginTop: 12, fontSize: 11, color: 'var(--text-subtle)', flexWrap: 'wrap', padding: '0 4px' }}>
         <Legend swatch="var(--surface)" border="var(--border)" label="Available" />
         <Legend swatch="rgba(239,68,68,0.12)" border="rgba(239,68,68,0.4)" label="Booked" />
-        <Legend swatch="var(--surface-muted)" border="var(--border)" label="Past" />
-        <Legend swatch="rgba(245,158,11,0.08)" border="rgba(245,158,11,0.35)" label="Won't fit duration" />
+        <Legend swatch="rgba(245,158,11,0.08)" border="rgba(245,158,11,0.35)" label="Won't fit" />
       </div>
     </div>
   );
@@ -1558,15 +2004,16 @@ const offHoursStyle: React.CSSProperties = {
 
 function slotStyle(status: SlotStatus, isSelected: boolean): React.CSSProperties {
   const base: React.CSSProperties = {
-    padding: '7px 4px',
-    borderRadius: 8,
+    padding: '10px 4px',
+    borderRadius: 10,
     fontSize: 12,
-    fontFamily: 'monospace',
-    transition: 'all 120ms',
+    fontFamily: "'Manrope', sans-serif",
+    transition: 'all 150ms cubic-bezier(0.4, 0, 0.2, 1)',
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     justifyContent: 'center',
+    border: '1.5px solid transparent',
   };
   if (status === 'available') {
     return {
@@ -1628,12 +2075,13 @@ function Legend({ swatch, border, label }: { swatch: string; border: string; lab
 }
 
 function DoctorPicker({
-  doctorId, setDoctorId, doctors, fallbackLabel,
+  doctorId, setDoctorId, doctors, fallbackLabel, loading,
 }: {
   doctorId: string;
   setDoctorId: (v: string) => void;
   doctors: Array<{ _id: string; name: string }>;
   fallbackLabel: string;
+  loading?: boolean;
 }) {
   // If the current doctorId isn't in the fetched list (e.g., the caller
   // lacks user:read or the list hasn't landed yet), surface a synthetic
@@ -1644,43 +2092,188 @@ function DoctorPicker({
     <select
       value={doctorId}
       onChange={(e) => setDoctorId(e.target.value)}
-      style={selectStyle}
+      style={{ ...selectStyle, cursor: loading ? 'wait' : 'pointer', opacity: loading ? 0.7 : 1 }}
+      disabled={loading}
     >
-      {!inList && doctorId && (
+      {loading && <option value="">Loading doctors...</option>}
+      {!loading && !inList && doctorId && (
         <option value={doctorId}>{fallbackLabel}</option>
       )}
-      {doctors.map((d) => (
-        <option key={d._id} value={d._id}>Dr. {d.name}</option>
-      ))}
-      {doctors.length === 0 && !doctorId && (
+      {doctors.map((d) => {
+        const displayName = d.name.toLowerCase().startsWith('dr.') ? d.name : `Dr. ${d.name}`;
+        return (
+          <option key={d._id} value={d._id}>{displayName}</option>
+        );
+      })}
+      {!loading && doctors.length === 0 && !doctorId && (
         <option value="">— no doctors available —</option>
       )}
     </select>
   );
 }
 
+// Inline payment form rendered as step 3. Mirrors the BillingScreen
+// PaymentSheet's layout so the front desk sees a familiar UI: method
+// chips, amount field with quick-suggest chips, optional reference, and
+// the idempotency key footnote. Works in two modes:
+//   • visitType set → amount is pegged to the catalog price (front desk
+//     can still type but can't undercollect; enforced at Continue).
+//   • visitType null → manual entry, fallbackLabel is shown as the bill
+//     line, no preset price, suggestion chips fall back to common
+//     consultation amounts.
+function PaymentStep({
+  visitType, fallbackLabel, currency,
+  payMethod, setPayMethod, payAmount, setPayAmount, payRef, setPayRef, idempotencyKey,
+}: {
+  visitType: { _id: string; name: string; price: number; currency: string } | null;
+  fallbackLabel: string;
+  currency: string;
+  payMethod: string; setPayMethod: (v: string) => void;
+  payAmount: string; setPayAmount: (v: string) => void;
+  payRef: string; setPayRef: (v: string) => void;
+  idempotencyKey: string;
+}) {
+  const due = visitType?.price ?? 0;
+  const label = visitType?.name ?? fallbackLabel;
+  const suggestions = visitType
+    ? Array.from(new Set([due, Math.round(due / 2), 500, 1000].filter((v) => v > 0))).slice(0, 4)
+    : [300, 500, 1000, 1500];
+  return (
+    <>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 10 }}>
+        <Icon name="receipt" size={20} style={{ color: 'var(--brand-600)' }} />
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--brand-700)' }}>{label}</div>
+          <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1 }}>
+            {visitType ? 'Consultation fee due' : 'Enter the consultation fee to collect'}
+          </div>
+        </div>
+        {visitType && (
+          <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 800, color: 'var(--brand-700)', fontVariantNumeric: 'tabular-nums' }}>
+            {visitType.currency} {due.toLocaleString('en-IN')}
+          </div>
+        )}
+      </div>
+
+      <div>
+        <label style={labelStyle}>Method</label>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {PAYMENT_METHODS.map((m) => (
+            <button key={m.id} type="button" onClick={() => setPayMethod(m.id)}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6,
+                padding: '7px 14px',
+                border: `1.5px solid ${payMethod === m.id ? 'var(--brand-500)' : 'var(--border)'}`,
+                borderRadius: 10,
+                background: payMethod === m.id ? 'var(--brand-50)' : 'var(--surface-muted)',
+                color: payMethod === m.id ? 'var(--brand-600)' : 'var(--text-muted)',
+                fontSize: 12, fontWeight: 600, cursor: 'pointer',
+              }}>
+              <Icon name={m.icon} size={13} />
+              {m.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label style={labelStyle}>
+          Amount <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>({currency})</span>
+        </label>
+        <div style={{ position: 'relative' }}>
+          <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 14, color: 'var(--text-muted)', fontFamily: "'Manrope',sans-serif", fontWeight: 700 }}>
+            {currency}
+          </span>
+          <input
+            type="number"
+            value={payAmount}
+            onChange={(e) => setPayAmount(e.target.value)}
+            placeholder={visitType ? undefined : 'Enter amount'}
+            style={{
+              width: '100%', height: 52, padding: '0 14px 0 44px',
+              background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 12,
+              fontSize: 22, fontWeight: 700, color: 'var(--text)',
+              fontFamily: "'Manrope',sans-serif", outline: 'none', boxSizing: 'border-box',
+              fontVariantNumeric: 'tabular-nums',
+            }}
+          />
+        </div>
+        <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+          {suggestions.map((v) => (
+            <button key={v} type="button" onClick={() => setPayAmount(String(v))}
+              style={{
+                padding: '4px 10px', border: '1px solid var(--border)', borderRadius: 8,
+                background: 'var(--surface-muted)', fontSize: 11, fontWeight: 500,
+                color: 'var(--text-muted)', cursor: 'pointer', fontVariantNumeric: 'tabular-nums',
+              }}>
+              {currency} {v.toLocaleString('en-IN')}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label style={labelStyle}>
+          Reference / transaction ID <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>(optional)</span>
+        </label>
+        <input
+          value={payRef}
+          onChange={(e) => setPayRef(e.target.value)}
+          placeholder="UPI ref, cheque no."
+          style={{
+            width: '100%', height: 40, padding: '0 12px',
+            background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
+            fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
+          }}
+        />
+      </div>
+
+      <div style={{ background: 'var(--surface-muted)', borderRadius: 12, padding: '10px 12px', border: '1px solid var(--border)', fontSize: 11, color: 'var(--text-subtle)' }}>
+        Idempotency key: <code style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>{idempotencyKey.slice(0, 8)}…</code>
+      </div>
+    </>
+  );
+}
+
 function ConfirmStep({
-  patient, apptKind, date, time, duration, apptType, doctorName, room,
+  patient, apptKind, date, time, duration, apptType, doctorName, room, visitType, paid,
 }: {
   patient: PatientLite | null;
   apptKind: AppointmentType;
   date: string; time: string; duration: number;
   apptType: string; doctorName: string; room: string;
+  visitType: { _id: string; name: string; price: number; currency: string } | null;
+  paid: { method: string; amount: number; reference?: string; currency: string } | null;
 }) {
-  const rows: { label: string; value: string; icon: 'user' | 'calendar' | 'clock' | 'clipboard' | 'stethoscope' | 'mapPin' }[] = apptKind === 'QUEUE'
+  const typeLabel = visitType?.name ?? apptType;
+  const feeRow = visitType
+    ? [{ label: 'Fee due', value: `${visitType.currency} ${visitType.price.toLocaleString('en-IN')}`, icon: 'clipboard' as const }]
+    : [];
+  const paidRow = paid
+    ? [{
+        label: 'Payment',
+        value: `${paid.currency} ${paid.amount.toLocaleString('en-IN')} · ${paid.method}${paid.reference ? ` · ${paid.reference}` : ''}`,
+        icon: 'receipt' as const,
+      }]
+    : [];
+  const rows: { label: string; value: string; icon: 'user' | 'calendar' | 'clock' | 'clipboard' | 'stethoscope' | 'mapPin' | 'receipt' }[] = apptKind === 'QUEUE'
     ? [
       { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
       { label: 'Date', value: date || '—', icon: 'calendar' },
-      { label: 'Type', value: 'Walk-in queue', icon: 'clipboard' },
+      { label: 'Type', value: typeLabel, icon: 'clipboard' },
       { label: 'Doctor', value: doctorName, icon: 'stethoscope' },
+      ...feeRow,
+      ...paidRow,
     ]
     : [
       { label: 'Patient', value: patient?.fullName ?? '—', icon: 'user' },
       { label: 'Date', value: date || '—', icon: 'calendar' },
       { label: 'Time', value: `${time || '—'} · ${duration} min`, icon: 'clock' },
-      { label: 'Type', value: apptType, icon: 'clipboard' },
+      { label: 'Type', value: typeLabel, icon: 'clipboard' },
       { label: 'Doctor', value: doctorName, icon: 'stethoscope' },
       { label: 'Room', value: room, icon: 'mapPin' },
+      ...feeRow,
+      ...paidRow,
     ];
   return (
     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>

@@ -480,6 +480,10 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [duplicate, setDuplicate] = useState<Patient | null>(null);
   const { shakeProps, shake } = useShake();
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const handlePhoneChange = (v: string) => {
+    const digits = v.replace(/\D/g, '').slice(0, 10);
+    set('phone', digits);
+  };
   const steps = ['Identity', 'Contact', 'Tags & Notes'];
 
   // Debounced duplicate-phone check on contact step. The `cancelled`
@@ -524,6 +528,11 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
       };
       if (form.dob) body.dob = form.dob;
       if (form.gender) body.gender = form.gender.toUpperCase();
+      if (form.phone.trim()) {
+        const p = form.phone.trim();
+        if (p.length !== 10) { shake(); setError('Phone number must be exactly 10 digits.'); setSaving(false); return; }
+        body.phones = [p];
+      }
       if (form.email.trim()) body.emails = [form.email.trim()];
       const tagList = form.tags.split(',').map((t) => t.trim()).filter(Boolean);
       if (tagList.length) body.tags = tagList;
@@ -583,7 +592,7 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
           )}
           {step === 1 && (
             <>
-              <Field label="Phone number" value={form.phone} onChange={(v) => set('phone', v)} placeholder="98765 43210" prefix="+91" />
+              <Field label="Phone number" value={form.phone} onChange={handlePhoneChange} placeholder="98765 43210" prefix="+91" />
               {duplicate && (
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'var(--warning-bg-soft)', border: '1px solid var(--warning-border-soft)', fontSize: 12, color: 'var(--warning-text)' }}>
                   <Icon name="alertTriangle" size={14} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -647,6 +656,10 @@ function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; o
   const [error, setError] = useState<string | null>(null);
   const { shakeProps, shake } = useShake();
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
+  const handlePhoneChange = (v: string) => {
+    const digits = v.replace(/\D/g, '').slice(0, 10);
+    set('phone', digits);
+  };
 
   async function submit() {
     if (!form.fullName.trim()) { shake(); setError('Full name is required.'); return; }
@@ -660,7 +673,13 @@ function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; o
       const body: Record<string, unknown> = { fullName: form.fullName.trim() };
       body.dob = form.dob || null;
       body.gender = form.gender ? form.gender.toUpperCase() : null;
-      body.phones = [phoneNormalized];
+      if (form.phone.trim()) {
+        const p = form.phone.trim();
+        if (p.length !== 10) { shake(); setError('Phone number must be exactly 10 digits.'); setSaving(false); return; }
+        body.phones = [p];
+      } else {
+        body.phones = [];
+      }
       body.emails = form.email.trim() ? [form.email.trim()] : [];
       body.tags = form.tags.split(',').map((t) => t.trim()).filter(Boolean);
       body.notes = form.notes.trim() || null;
@@ -709,8 +728,8 @@ function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; o
                 ))}
               </div>
             </div>
-            <Field label="Phone number" value={form.phone} onChange={(v) => set('phone', v)} prefix="+91" />
-            <Field label="Email address" value={form.email} onChange={(v) => set('email', v)} optional />
+            <Field label="Phone number" value={form.phone} onChange={handlePhoneChange} prefix="+91" />
+            <Field label="Email address" value={form.email} onChange={(v) => set('email', v)} />
             <div style={{ gridColumn: 'span 2' }}>
               <Field label="Tags" value={form.tags} onChange={(v) => set('tags', v)} placeholder="comma-separated" optional />
             </div>

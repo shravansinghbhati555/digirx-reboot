@@ -104,15 +104,29 @@ describe('AppointmentsService.create', () => {
       enqueueSend: jest.fn().mockResolvedValue(undefined),
       isChannelEnabled: jest.fn().mockResolvedValue(true),
     } as any;
+    // VisitType + Bill models are only used by the auto-bill hook in
+    // create(), which only fires when dto.visitTypeId is set. The
+    // existing specs don't pass visitTypeId so the hook short-circuits
+    // — no-op mocks are sufficient.
+    const visitTypeModel = { findOne: jest.fn().mockResolvedValue(null) } as any;
+    const billModel = {
+      create: jest.fn(),
+      findOne: jest.fn(),
+      aggregate: jest.fn(),
+    } as any;
+    const billNumbering = { mint: jest.fn().mockResolvedValue('TEST/0001') } as any;
     service = new AppointmentsService(
       apptModel,
       counterModel,
       clinicModel,
       userModel,
       patientModel,
+      visitTypeModel,
+      billModel,
       connection,
       availability,
       notifications,
+      billNumbering,
     );
   });
 

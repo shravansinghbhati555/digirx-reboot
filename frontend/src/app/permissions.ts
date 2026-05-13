@@ -36,6 +36,15 @@ export const Perm = {
   // appointments), so granting only DashboardRead opens the page but
   // shows just the tiles whose data the role can actually fetch.
   DashboardRead: 'dashboard:read',
+  // Per-tab Settings permissions — each one independently controls
+  // whether that tab appears in the Settings sidebar. They sit
+  // alongside the existing data permissions (ClinicWrite, BranchWrite,
+  // AuditRead, …) which still gate the tab's body content.
+  SettingsClinicRead: 'settings:clinic:read',
+  SettingsBranchesRead: 'settings:branches:read',
+  SettingsAvailabilityRead: 'settings:availability:read',
+  SettingsNotificationsRead: 'settings:notifications:read',
+  SettingsAuditRead: 'settings:audit:read',
 } as const;
 
 export type PermName = typeof Perm[keyof typeof Perm];
@@ -43,19 +52,19 @@ export type PermName = typeof Perm[keyof typeof Perm];
 // Permissions required to access each screen. `null` = open to any signed-in user.
 // "Any one suffices" semantics.
 export const SCREEN_REQUIRED: Record<ScreenKey, PermName[] | null> = {
-  dashboard:     [Perm.ClinicWrite, Perm.DashboardRead],
-  patients:      [Perm.PatientRead],
-  appointments:  [Perm.AppointmentRead],
-  encounters:    [Perm.PatientRead],
-  billing:       [Perm.BillingRead],
-  documents:     [Perm.DocumentRead],
-  reports:       [Perm.BillingRead, Perm.ReportsRead, Perm.ReportsWrite],
+  dashboard: [Perm.ClinicWrite, Perm.DashboardRead],
+  patients: [Perm.PatientRead],
+  appointments: [Perm.AppointmentRead],
+  encounters: [Perm.PatientRead],
+  billing: [Perm.BillingRead],
+  documents: [Perm.DocumentRead],
+  reports: [Perm.BillingRead, Perm.ReportsRead, Perm.ReportsWrite],
   notifications: [Perm.NotificationRead],
-  inventory:     [Perm.InventoryRead],
-  pharmacy:      [Perm.BillingRead],
-  users:         [Perm.UserRead],
-  roles:         [Perm.UserRead],
-  settings:      [Perm.ClinicRead],
+  inventory: [Perm.InventoryRead],
+  pharmacy: [Perm.BillingRead],
+  users: [Perm.UserRead],
+  roles: [Perm.UserRead],
+  settings: [Perm.ClinicRead],
 };
 
 export function hasPerm(set: Set<string>, perm: PermName): boolean {

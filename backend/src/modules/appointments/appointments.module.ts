@@ -16,6 +16,10 @@ import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
 import { User, UserSchema } from '../authz/schemas/user.schema';
 import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
+import { VisitType, VisitTypeSchema } from '../visit-types/schemas/visit-type.schema';
+import { Bill, BillSchema } from '../billing/schemas/bill.schema';
+import { BillCounter, BillCounterSchema } from '../billing/schemas/bill-counter.schema';
+import { BillNumberingService } from '../billing/bill-numbering.service';
 
 @Module({
   imports: [
@@ -27,6 +31,14 @@ import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
       { name: Branch.name, schema: BranchSchema },
       { name: User.name, schema: UserSchema },
       { name: Patient.name, schema: PatientSchema },
+      // Per-doctor visit-type catalog + the Bill collection so the
+      // booking flow can auto-issue a SERVICE bill at create time. The
+      // Bill model lives in BillingModule but BillingModule doesn't
+      // export the Mongoose feature; re-registering here is the path
+      // of least resistance and avoids a module-shape change.
+      { name: VisitType.name, schema: VisitTypeSchema },
+      { name: Bill.name, schema: BillSchema },
+      { name: BillCounter.name, schema: BillCounterSchema },
     ]),
     // forwardRef matches the reverse edge from AvailabilityModule —
     // AppointmentsService → AvailabilityService and
@@ -35,7 +47,7 @@ import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
     forwardRef(() => AvailabilityModule),
   ],
   controllers: [AppointmentsController],
-  providers: [AppointmentsService],
+  providers: [AppointmentsService, BillNumberingService],
   exports: [AppointmentsService],
 })
 export class AppointmentsModule {}

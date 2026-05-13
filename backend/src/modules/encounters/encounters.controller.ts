@@ -8,7 +8,7 @@ import { EncountersService } from './encounters.service';
 
 @Controller('encounters')
 export class EncountersController {
-  constructor(private readonly encounters: EncountersService) {}
+  constructor(private readonly encounters: EncountersService) { }
 
   @Post()
   @RequirePermissions(Permission.PatientWrite)
@@ -22,12 +22,14 @@ export class EncountersController {
     @Req() req: AppRequest,
     @Query('branchId') branchId?: string,
     @Query('date') date?: string,
+    @Query('patientId') patientId?: string,
     @Query('limit') limit?: string,
     @Query('offset') offset?: string,
   ) {
     return await this.encounters.findAll(req.context!.clinicId, {
       branchId,
       date,
+      patientId,
       limit: limit ? Number(limit) : undefined,
       offset: offset ? Number(offset) : undefined,
     });

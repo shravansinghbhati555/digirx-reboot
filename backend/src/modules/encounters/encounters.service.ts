@@ -37,7 +37,7 @@ export class EncountersService implements OnModuleInit {
     private readonly counterModel: Model<EncounterCounter>,
     @InjectModel(Clinic.name)
     private readonly clinicModel: Model<Clinic>,
-  ) {}
+  ) { }
 
   async onModuleInit() {
     await this.backfillMissingReadableIds();
@@ -199,10 +199,12 @@ export class EncountersService implements OnModuleInit {
 
   async findAll(
     clinicId: Types.ObjectId,
-    query: { branchId?: string; date?: string; limit?: number; offset?: number },
+    query: { branchId?: string; date?: string; limit?: number; offset?: number; patientId?: string; },
+
   ) {
     const filter: any = { clinicId };
     if (query.branchId) filter.branchId = new Types.ObjectId(query.branchId);
+    if (query.patientId) filter.patientId = new Types.ObjectId(query.patientId);
 
     // Date filter — `date=YYYY-MM-DD` is interpreted in the clinic's local
     // timezone and applied to `visitedAt`. Lets the global header date

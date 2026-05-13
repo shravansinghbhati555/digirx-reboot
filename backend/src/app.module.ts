@@ -24,6 +24,7 @@ import { TenancyModule } from './modules/tenancy/tenancy.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
 import { PatientsModule } from './modules/patients/patients.module';
 import { AppointmentsModule } from './modules/appointments/appointments.module';
+import { VisitTypesModule } from './modules/visit-types/visit-types.module';
 import { EncountersModule } from './modules/encounters/encounters.module';
 import { PrescriptionsModule } from './modules/prescriptions/prescriptions.module';
 import { MedicinesModule } from './modules/medicines/medicines.module';
@@ -88,6 +89,7 @@ import { StorageModule } from './modules/storage/storage.module';
     AvailabilityModule,
     PatientsModule,
     AppointmentsModule,
+    VisitTypesModule,
     EncountersModule,
     PrescriptionsModule,
     MedicinesModule,

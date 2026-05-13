@@ -75,6 +75,16 @@ const PERMISSION_GROUPS: PermGroup[] = [
     ],
   },
   {
+    title: 'Settings tabs',
+    rows: [
+      { perm: Perm.SettingsClinicRead, label: 'Settings → Clinic' },
+      { perm: Perm.SettingsBranchesRead, label: 'Settings → Branches' },
+      { perm: Perm.SettingsAvailabilityRead, label: 'Settings → Availability' },
+      { perm: Perm.SettingsNotificationsRead, label: 'Settings → Quiet hours' },
+      { perm: Perm.SettingsAuditRead, label: 'Settings → Audit log' },
+    ],
+  },
+  {
     title: 'Clinic admin',
     rows: [
       { perm: Perm.ClinicRead, label: 'View clinic settings' },

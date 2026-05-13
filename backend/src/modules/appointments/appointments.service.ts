@@ -24,6 +24,9 @@ import { Patient } from '../patients/schemas/patient.schema';
 import { computeClinicDayRange } from '../../common/clinic-time';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationChannel } from '../notifications/schemas/notification-template.schema';
+import { VisitType } from '../visit-types/schemas/visit-type.schema';
+import { Bill, BillKind, BillStatus, type BillLineItem } from '../billing/schemas/bill.schema';
+import { BillNumberingService } from '../billing/bill-numbering.service';
 
 // Statuses that hold a TIME slot and therefore block another appointment
 // from being created over the same window. CANCELLED and NO_SHOW are
@@ -44,11 +47,11 @@ export type EnrichedSlot =
   | { startAt: string; endAt: string; status: 'available' }
   | { startAt: string; endAt: string; status: 'past' }
   | {
-      startAt: string;
-      endAt: string;
-      status: 'booked';
-      bookedBy: { apptId: string; patientName: string | null; status: string };
-    };
+    startAt: string;
+    endAt: string;
+    status: 'booked';
+    bookedBy: { apptId: string; patientName: string | null; status: string };
+  };
 
 const CANCELLABLE_STATUSES: AppointmentStatus[] = [
   AppointmentStatus.Booked,
@@ -67,6 +70,7 @@ const ALLOWED_STATUS_TRANSITIONS: Record<AppointmentStatus, AppointmentStatus[]>
     AppointmentStatus.Cancelled,
     AppointmentStatus.NoShow,
   ],
+
   [AppointmentStatus.InProgress]: [
     AppointmentStatus.Done,
     AppointmentStatus.Cancelled,
@@ -128,10 +132,13 @@ export class AppointmentsService {
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(Patient.name) private readonly patientModel: Model<Patient>,
+    @InjectModel(VisitType.name) private readonly visitTypeModel: Model<VisitType>,
+    @InjectModel(Bill.name) private readonly billModel: Model<Bill>,
     @InjectConnection() private readonly connection: Connection,
     private readonly availability: AvailabilityService,
     private readonly notifications: NotificationsService,
-  ) {}
+    private readonly billNumbering: BillNumberingService,
+  ) { }
 
   async create(
     clinicId: Types.ObjectId,
@@ -232,7 +239,13 @@ export class AppointmentsService {
               .then((docs) => docs[0]);
           });
           if (!created) throw new Error('Appointment not created');
-          return created;
+          return await this.finalizeBookingBill({
+            appt: created,
+            visitTypeId: dto.visitTypeId,
+            manualBillAmount: dto.manualBillAmount,
+            manualBillLabel: dto.manualBillLabel,
+            clinicId, branchId, doctorId, patientId, actorUserId,
+          });
         } catch (e: any) {
           // fall back when transactions are not supported
           const msg = String(e?.message ?? '');
@@ -260,7 +273,7 @@ export class AppointmentsService {
         });
       }
 
-      return await this.apptModel.create({
+      const createdTime = await this.apptModel.create({
         clinicId,
         branchId,
         doctorId,
@@ -272,6 +285,13 @@ export class AppointmentsService {
         source,
         notes: dto.notes,
         createdBy: actorUserId,
+      });
+      return await this.finalizeBookingBill({
+        appt: createdTime,
+        visitTypeId: dto.visitTypeId,
+        manualBillAmount: dto.manualBillAmount,
+        manualBillLabel: dto.manualBillLabel,
+        clinicId, branchId, doctorId, patientId, actorUserId,
       });
     }
 
@@ -339,7 +359,13 @@ export class AppointmentsService {
               .then((docs) => docs[0]);
           });
           if (!created) throw new Error('Appointment not created');
-          return created;
+          return await this.finalizeBookingBill({
+            appt: created,
+            visitTypeId: dto.visitTypeId,
+            manualBillAmount: dto.manualBillAmount,
+            manualBillLabel: dto.manualBillLabel,
+            clinicId, branchId, doctorId, patientId, actorUserId,
+          });
         } catch (e: any) {
           const msg = String(e?.message ?? '');
           if (!msg.includes('Transaction numbers are only allowed')) throw e;
@@ -354,7 +380,7 @@ export class AppointmentsService {
         { upsert: true, new: true },
       );
       const queueNumber = counter.lastNumber;
-      return await this.apptModel.create({
+      const createdQueue = await this.apptModel.create({
         clinicId,
         branchId,
         doctorId,
@@ -367,9 +393,130 @@ export class AppointmentsService {
         notes: dto.notes,
         createdBy: actorUserId,
       });
+      return await this.finalizeBookingBill({
+        appt: createdQueue,
+        visitTypeId: dto.visitTypeId,
+        manualBillAmount: dto.manualBillAmount,
+        manualBillLabel: dto.manualBillLabel,
+        clinicId, branchId, doctorId, patientId, actorUserId,
+      });
     }
 
     throw new BadRequestException('Unsupported appointment type');
+  }
+
+  /**
+   * Auto-bill hook for new appointments. When the booking DTO carries a
+   * `visitTypeId`, we look up the catalog row (must belong to this
+   * clinic + doctor and be active), mint a bill number, and insert an
+   * already-ISSUED bill of the visit-type's price linked to this
+   * appointment. The appointment row is then patched with the linked
+   * `visitTypeId` + `billId` so the FE can render a payment chip and so
+   * `assertCanCheckIn` can refuse check-in until the bill is settled.
+   *
+   * Visit-type misconfiguration (not found, inactive, wrong doctor)
+   * never fails the appointment booking — we log and skip. A real
+   * database error during bill insert DOES propagate, so the caller
+   * can choose to retry.
+   */
+  private async finalizeBookingBill(input: {
+    appt: Appointment;
+    visitTypeId?: string;
+    manualBillAmount?: number;
+    manualBillLabel?: string;
+    clinicId: Types.ObjectId;
+    branchId: Types.ObjectId;
+    doctorId: Types.ObjectId;
+    patientId: Types.ObjectId;
+    actorUserId?: Types.ObjectId;
+  }): Promise<Appointment> {
+    // Resolve which billing source to use:
+    //  1. visit-type wins when both are present (it's the configured path)
+    //  2. manualBillAmount+manualBillLabel covers doctors without a catalog
+    //  3. neither set → skip auto-bill (legacy / walk-in path)
+    let chargeName: string;
+    let chargePrice: number;
+    let chargeCurrency: string;
+    let visitTypeRef: Types.ObjectId | undefined;
+
+    if (input.visitTypeId && Types.ObjectId.isValid(input.visitTypeId)) {
+      const visitType = await this.visitTypeModel.findOne({
+        _id: new Types.ObjectId(input.visitTypeId),
+        clinicId: input.clinicId,
+        doctorUserId: input.doctorId,
+      });
+      if (!visitType || !visitType.active) {
+        this.logger.warn(
+          `[book] visitType ${input.visitTypeId} not found or inactive for doctor ${input.doctorId.toHexString()} — skipping auto-bill`,
+        );
+        return input.appt;
+      }
+      chargeName = visitType.name;
+      chargePrice = visitType.price;
+      chargeCurrency = visitType.currency;
+      visitTypeRef = visitType._id;
+    } else if (
+      typeof input.manualBillAmount === 'number' &&
+      input.manualBillAmount > 0 &&
+      input.manualBillLabel &&
+      input.manualBillLabel.trim()
+    ) {
+      const clinic = await this.clinicModel.findById(input.clinicId);
+      chargeName = input.manualBillLabel.trim();
+      chargePrice = input.manualBillAmount;
+      chargeCurrency = clinic?.currency || 'INR';
+    } else {
+      return input.appt;
+    }
+
+    const issuedAt = new Date();
+    const item: BillLineItem = {
+      customName: chargeName,
+      quantity: 1,
+      unitPrice: chargePrice,
+      amount: chargePrice,
+    };
+    const billNo = await this.billNumbering.mint(
+      input.clinicId,
+      input.branchId,
+      issuedAt,
+    );
+    const apptDoc: any = input.appt;
+    const apptId = apptDoc._id as Types.ObjectId;
+    const bill = await this.billModel.create({
+      clinicId: input.clinicId,
+      branchId: input.branchId,
+      patientId: input.patientId,
+      appointmentId: apptId,
+      billNo,
+      currency: chargeCurrency,
+      items: [item],
+      subtotal: chargePrice,
+      discount: 0,
+      tax: 0,
+      total: chargePrice,
+      status: BillStatus.Issued,
+      issuedAt,
+      kind: BillKind.Service,
+      createdBy: input.actorUserId,
+    });
+
+    await this.apptModel.updateOne(
+      { _id: apptId },
+      {
+        $set: {
+          ...(visitTypeRef ? { visitTypeId: visitTypeRef } : {}),
+          billId: bill._id,
+        },
+      },
+    );
+
+    this.logger.log(
+      `[book] Auto-issued bill ${billNo} (${chargeCurrency} ${chargePrice}) for appointment ${apptId.toHexString()}${visitTypeRef ? ' [visit-type]' : ' [manual]'}`,
+    );
+
+    const reloaded = await this.apptModel.findById(apptId);
+    return reloaded ?? input.appt;
   }
 
   async listByDate(
@@ -398,23 +545,34 @@ export class AppointmentsService {
           { type: AppointmentType.Queue, queueDate: date },
         ],
       })
-      .sort({ startAt: 1, queueNumber: 1 });
+      .sort({ startAt: 1, queueNumber: 1 })
+      .populate({ path: 'patientId', select: 'fullName mrn' });
   }
 
-  /**
-   * Returns every slot for the doctor's day with its real status. The
-   * front-desk needs to *see* booked slots (so they can read the doctor's
-   * day at a glance) — they're not filtered out, just marked.
-   *
-   * Slot status:
-   *   - `past`      — slot's startAt is before now. Cannot be booked.
-   *   - `booked`    — an active TIME appointment overlaps this slot.
-   *   - `available` — open. Default.
-   *
-   * `booked` slots include a `bookedBy` ref so the UI can surface a
-   * patient-name tooltip without a second fetch. `populate('patientId')`
-   * with a `fullName` projection avoids leaking PHI we don't need.
-   */
+  async findAll(
+    clinicId: Types.ObjectId,
+    query: {
+      branchId?: string;
+      patientId?: string;
+      doctorId?: string;
+      limit?: number;
+    },
+  ) {
+    const filter: any = { clinicId };
+    if (query.branchId) filter.branchId = new Types.ObjectId(query.branchId);
+    if (query.patientId) filter.patientId = new Types.ObjectId(query.patientId);
+    if (query.doctorId) filter.doctorId = new Types.ObjectId(query.doctorId);
+
+    const limit = Number(query.limit) || 20;
+
+    return await this.apptModel
+      .find(filter)
+      .sort({ startAt: -1, queueDate: -1 })
+      .limit(limit)
+      .lean();
+  }
+
+
   async availableSlots(input: {
     clinicId: Types.ObjectId;
     branchId: string;
@@ -450,48 +608,37 @@ export class AppointmentsService {
         doctorId: doctorObjId,
         type: AppointmentType.Time,
         status: { $in: ACTIVE_TIME_STATUSES },
-        startAt: { $gte: dayStartUtc, $lte: dayEndUtc },
+        startAt: { $lt: dayEndUtc },
+        endAt: { $gt: dayStartUtc },
       })
       .populate({ path: 'patientId', select: 'fullName' });
 
-    // Build a lookup keyed on `startAt|endAt` so a slot match is O(1).
-    // Two booked appts at the same exact slot is structurally impossible
-    // (the partial unique index in the schema enforces that), so the
-    // map is safe to be 1:1.
-    const bookedByKey = new Map<
-      string,
-      { apptId: string; patientName: string | null; status: string }
-    >();
-    for (const a of booked) {
-      if (!a.startAt || !a.endAt) continue;
-      const key = `${a.startAt.toISOString()}|${a.endAt.toISOString()}`;
-      const populatedPatient = a.patientId as unknown as
-        | { fullName?: string }
-        | null;
-      bookedByKey.set(key, {
-        apptId: a._id.toHexString(),
-        patientName: populatedPatient?.fullName ?? null,
-        status: a.status,
-      });
-    }
-
     // Use Luxon for "now" so the comparison is in the same timezone context
-    // as slot generation — both anchored to the clinic's IANA zone.
-    // A 30-second grace window prevents a slot from flickering to "past"
-    // while the receptionist is mid-click.
     const nowDt = DateTime.now().setZone(tz).minus({ seconds: 30 });
     const slots: EnrichedSlot[] = daySlots.slots.map((s) => {
-      const key = `${s.startAt}|${s.endAt}`;
-      const slotStartDt = DateTime.fromISO(s.startAt, { zone: 'utc' }).setZone(tz);
-      const conflict = bookedByKey.get(key);
+      const sStart = new Date(s.startAt);
+      const sEnd = new Date(s.endAt);
+
+      // Find ANY appointment that overlaps this specific slot
+      const conflict = booked.find(a =>
+        a.startAt && a.endAt && a.startAt < sEnd && a.endAt > sStart
+      );
+
       if (conflict) {
+        const populatedPatient = conflict.patientId as unknown as { fullName?: string } | null;
         return {
           startAt: s.startAt,
           endAt: s.endAt,
           status: 'booked' as const,
-          bookedBy: conflict,
+          bookedBy: {
+            apptId: conflict._id.toHexString(),
+            patientName: populatedPatient?.fullName ?? null,
+            status: conflict.status,
+          },
         };
       }
+
+      const slotStartDt = DateTime.fromISO(s.startAt, { zone: 'utc' }).setZone(tz);
       if (slotStartDt.isValid && slotStartDt < nowDt) {
         return {
           startAt: s.startAt,
@@ -585,6 +732,38 @@ export class AppointmentsService {
     const clinic = await this.clinicModel.findById(clinicId);
     if (!clinic) throw new NotFoundException('Clinic not found');
     assertCanCheckIn(appt, clinic);
+    // Pre-payment gate: when the appointment carries an auto-issued
+    // visit-type bill, the patient must settle it before check-in.
+    // Bills that were never linked (legacy appointments or walk-ins
+    // booked without a visit type) skip this gate entirely. Aggregating
+    // payments via the matching index used by `pendingPayments` keeps
+    // this cheap.
+    if (appt.billId) {
+      const bill = await this.billModel.findOne({
+        _id: appt.billId,
+        clinicId,
+      });
+      if (bill && bill.status !== BillStatus.Paid) {
+        const paid = await this.billModel.aggregate<{ totalPaid: number }>([
+          { $match: { _id: bill._id } },
+          {
+            $lookup: {
+              from: 'payments',
+              localField: '_id',
+              foreignField: 'billId',
+              as: 'payments',
+            },
+          },
+          { $project: { totalPaid: { $sum: '$payments.amount' } } },
+        ]);
+        const totalPaid = paid[0]?.totalPaid ?? 0;
+        if (totalPaid < bill.total) {
+          throw new BadRequestException(
+            `Consultation fee not settled (outstanding ${bill.currency} ${(bill.total - totalPaid).toFixed(2)}). Collect payment on bill ${bill.billNo ?? bill._id.toHexString().slice(-6)} before checking the patient in.`,
+          );
+        }
+      }
+    }
     assertAllowedTransition(appt.status, AppointmentStatus.CheckedIn);
     appt.status = AppointmentStatus.CheckedIn;
     await appt.save();
@@ -825,9 +1004,9 @@ export class AppointmentsService {
     const patientIds = Array.from(new Set(conflicting.map((a) => a.patientId.toString())));
     const patients = patientIds.length
       ? await this.patientModel.find({
-          _id: { $in: patientIds.map((id) => new Types.ObjectId(id)) },
-          clinicId: input.clinicId,
-        })
+        _id: { $in: patientIds.map((id) => new Types.ObjectId(id)) },
+        clinicId: input.clinicId,
+      })
       : [];
     const patientById = new Map(patients.map((p) => [p._id.toString(), p]));
 

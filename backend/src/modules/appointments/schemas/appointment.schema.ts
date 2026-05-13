@@ -73,6 +73,18 @@ export class Appointment {
   @Prop()
   notes?: string;
 
+  // Visit-type + auto-issued bill linkage. New per-doctor pricing flow
+  // (the front desk picks a visit type at booking time → BE creates an
+  // ISSUED bill of that price → patient must pay before check-in).
+  // Both optional during transition: legacy appointments don't have
+  // either field and continue to behave as they always did (bill is
+  // generated post-visit if at all).
+  @Prop({ type: Types.ObjectId, ref: 'VisitType' })
+  visitTypeId?: Types.ObjectId;
+
+  @Prop({ type: Types.ObjectId, ref: 'Bill', index: true })
+  billId?: Types.ObjectId;
+
   @Prop({ type: Types.ObjectId })
   createdBy?: Types.ObjectId;
 

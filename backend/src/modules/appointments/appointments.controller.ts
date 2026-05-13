@@ -19,7 +19,7 @@ import { AppointmentsService } from './appointments.service';
 
 @Controller('appointments')
 export class AppointmentsController {
-  constructor(private readonly appts: AppointmentsService) {}
+  constructor(private readonly appts: AppointmentsService) { }
 
   @Post()
   @RequirePermissions(Permission.AppointmentWrite)
@@ -35,16 +35,26 @@ export class AppointmentsController {
   @RequirePermissions(Permission.AppointmentRead)
   async list(
     @Req() req: AppRequest,
-    @Query('branchId') branchId: string,
-    @Query('date') date: string,
+    @Query('branchId') branchId?: string,
+    @Query('date') date?: string,
+    @Query('patientId') patientId?: string,
     @Query('doctorId') doctorId?: string,
+    @Query('limit') limit?: string,
   ) {
-    return await this.appts.listByDate(
-      req.context!.clinicId,
+    if (date && branchId) {
+      return await this.appts.listByDate(
+        req.context!.clinicId,
+        branchId,
+        date,
+        doctorId,
+      );
+    }
+    return await this.appts.findAll(req.context!.clinicId, {
       branchId,
-      date,
+      patientId,
       doctorId,
-    );
+      limit: limit ? Number(limit) : undefined,
+    });
   }
 
   // `no-store`: this is the slot picker; staleness causes real bookings

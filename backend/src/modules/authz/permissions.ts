@@ -49,4 +49,17 @@ export enum Permission {
   // that has DashboardRead but no BillingRead sees only the tiles it
   // can actually fetch data for.
   DashboardRead = 'dashboard:read',
+
+  // Settings tabs — each is independently togglable from the Roles
+  // matrix so the Super Admin can hand out (or revoke) one tab at a
+  // time without rippling into the underlying data permissions
+  // (ClinicWrite, BranchWrite, AuditRead, …) which are still used by
+  // their respective screens. A role needs the matching settings:* to
+  // see the tab; the tab body still respects the data-level read/write
+  // gates inside it.
+  SettingsClinicRead = 'settings:clinic:read',
+  SettingsBranchesRead = 'settings:branches:read',
+  SettingsAvailabilityRead = 'settings:availability:read',
+  SettingsNotificationsRead = 'settings:notifications:read',
+  SettingsAuditRead = 'settings:audit:read',
 }
