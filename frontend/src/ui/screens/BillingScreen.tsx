@@ -378,8 +378,8 @@ function BillDetail({
 
   useEffect(() => {
     let cancelled = false;
-    setPatientName(null);
-    apiGet<{ fullName?: string }>(ctx, `/patients/${bill.patientId}`)
+    const pid = typeof bill.patientId === 'object' ? (bill.patientId as any)._id : bill.patientId;
+    apiGet<{ fullName?: string }>(ctx, `/patients/${pid}`)
       .then((p) => { if (!cancelled) setPatientName(p.fullName ?? null); })
       .catch(() => { if (!cancelled) setPatientName(null); });
     return () => { cancelled = true; };
@@ -861,11 +861,13 @@ function CreateBillSheet({
   useEffect(() => {
     if (initialEncounterId) {
       apiGet<any>(ctx, `/encounters/${initialEncounterId}`).then((enc) => {
-        apiGet<PatientHit>(ctx, `/patients/${enc.patientId}`).then(setPatient);
+        const pid = typeof enc.patientId === 'object' ? enc.patientId._id : enc.patientId;
+        apiGet<PatientHit>(ctx, `/patients/${pid}`).then(setPatient);
       }).catch(() => undefined);
     } else if (initialAppointmentId) {
       apiGet<any>(ctx, `/appointments/${initialAppointmentId}`).then((appt) => {
-        apiGet<PatientHit>(ctx, `/patients/${appt.patientId}`).then(setPatient);
+        const pid = typeof appt.patientId === 'object' ? appt.patientId._id : appt.patientId;
+        apiGet<PatientHit>(ctx, `/patients/${pid}`).then(setPatient);
       }).catch(() => undefined);
     }
   }, [initialEncounterId, initialAppointmentId, ctx]);

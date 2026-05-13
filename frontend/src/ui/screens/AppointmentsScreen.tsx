@@ -40,6 +40,13 @@ type UserListItem = {
   roles: { _id: string; name: string }[];
 };
 
+function formatDrName(name: string | undefined): string {
+  if (!name) return 'Doctor';
+  const trimmed = name.trim();
+  if (/^dr\.?\s/i.test(trimmed)) return trimmed;
+  return `Dr. ${trimmed}`;
+}
+
 // MRN is the human-readable identifier; fall back to a `_id` tail only when
 // no MRN was minted (legacy data) or when the patient lookup hasn't resolved.
 function patientRefLabel(
@@ -648,7 +655,7 @@ export function AppointmentsScreen() {
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{getName(a.patientId)}</div>
                       <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>
-                        {doctors.get(a.doctorId) ? `Dr. ${doctors.get(a.doctorId)}` : `Doctor #${a.doctorId.slice(-8).toUpperCase()}`}
+                        {doctors.get(a.doctorId) ? formatDrName(doctors.get(a.doctorId)) : `Doctor #${a.doctorId.slice(-8).toUpperCase()}`}
                       </div>
                     </div>
                     <StatusPill status={statusToken(a.status)} small />
@@ -765,7 +772,7 @@ function ApptSheet({
             </div>
           </div>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <Cell label="Doctor" value={doctorName ? `Dr. ${doctorName}` : appt.doctorId.slice(-8)} />
+            <Cell label="Doctor" value={doctorName ? formatDrName(doctorName) : appt.doctorId.slice(-8)} />
             <Cell label="Status" value={statusToken(appt.status)} />
             <Cell label="Type" value={appt.type} />
             <Cell label="ID" value={`#${appt._id.slice(-8).toUpperCase()}`} />
@@ -862,7 +869,7 @@ function TriageModal({
       if (appt.status === 'BOOKED') {
         await apiPost(ctx, `/appointments/${appt._id}/checkin`, {});
       }
-      
+
       // 2. Create/Get Encounter Draft
       let encId: string;
       try {
@@ -913,9 +920,9 @@ function TriageModal({
         if (!isNaN(val)) out.heightCm = val;
       }
 
-      await apiPatch(ctx, `/encounters/${encId}`, { 
-        vitals: out, 
-        chiefComplaint: complaint || undefined 
+      await apiPatch(ctx, `/encounters/${encId}`, {
+        vitals: out,
+        chiefComplaint: complaint || undefined
       });
 
       // 4. Status is already CHECKED_IN from step 1
@@ -930,44 +937,44 @@ function TriageModal({
 
   return (
     <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-       <div className="modal-content" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, width: '100%', maxWidth: 440, padding: 24, boxShadow: 'var(--e4)' }}>
-         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-           <div>
-             <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Patient Triage</h3>
-             <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{patientName}</p>
-           </div>
-           <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-subtle)', cursor: 'pointer' }}><Icon name="x" size={20} /></button>
-         </div>
+      <div className="modal-content" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, width: '100%', maxWidth: 440, padding: 24, boxShadow: 'var(--e4)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
+          <div>
+            <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Patient Triage</h3>
+            <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{patientName}</p>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-subtle)', cursor: 'pointer' }}><Icon name="x" size={20} /></button>
+        </div>
 
-         <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <ModalInput label="Weight (kg)" value={vitals.weight} onChange={v => setVitals({...vitals, weight: v})} type="number" />
-              <ModalInput label="Height (cm)" value={vitals.height} onChange={v => setVitals({...vitals, height: v})} type="number" />
-              <ModalInput label="Temp (°F)" value={vitals.temp} onChange={v => setVitals({...vitals, temp: v})} type="number" />
-              <ModalInput label="Pulse (bpm)" value={vitals.pulse} onChange={v => setVitals({...vitals, pulse: v})} type="number" />
-              <ModalInput label="SpO2 (%)" value={vitals.spo2} onChange={v => setVitals({...vitals, spo2: v})} type="number" />
-              <ModalInput label="RR (/min)" value={vitals.rr} onChange={v => setVitals({...vitals, rr: v})} type="number" />
-              <ModalInput label="BP (mmHg)" value={vitals.bp} onChange={v => setVitals({...vitals, bp: v})} placeholder="120/80" />
-            </div>
-            <div>
-              <label style={labelStyle}>Chief Complaint</label>
-              <textarea 
-                value={complaint} onChange={e => setComplaint(e.target.value)}
-                placeholder="Optional notes..."
-                style={{ width: '100%', height: 80, padding: 10, borderRadius: 10, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', fontSize: 13, outline: 'none', resize: 'none' }}
-              />
-            </div>
-         </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+            <ModalInput label="Weight (kg)" value={vitals.weight} onChange={v => setVitals({ ...vitals, weight: v })} type="number" />
+            <ModalInput label="Height (cm)" value={vitals.height} onChange={v => setVitals({ ...vitals, height: v })} type="number" />
+            <ModalInput label="Temp (°F)" value={vitals.temp} onChange={v => setVitals({ ...vitals, temp: v })} type="number" />
+            <ModalInput label="Pulse (bpm)" value={vitals.pulse} onChange={v => setVitals({ ...vitals, pulse: v })} type="number" />
+            <ModalInput label="SpO2 (%)" value={vitals.spo2} onChange={v => setVitals({ ...vitals, spo2: v })} type="number" />
+            <ModalInput label="RR (/min)" value={vitals.rr} onChange={v => setVitals({ ...vitals, rr: v })} type="number" />
+            <ModalInput label="BP (mmHg)" value={vitals.bp} onChange={v => setVitals({ ...vitals, bp: v })} placeholder="120/80" />
+          </div>
+          <div>
+            <label style={labelStyle}>Chief Complaint</label>
+            <textarea
+              value={complaint} onChange={e => setComplaint(e.target.value)}
+              placeholder="Optional notes..."
+              style={{ width: '100%', height: 80, padding: 10, borderRadius: 10, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', fontSize: 13, outline: 'none', resize: 'none' }}
+            />
+          </div>
+        </div>
 
-         <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
-           <button onClick={save} disabled={busy} style={{ flex: 1, height: 44, background: 'var(--brand-500)', color: 'white', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
-             {busy ? <Spinner size={16} /> : <><Icon name="check" size={16} /> Check In & Save</>}
-           </button>
-           <button onClick={onClose} style={{ flex: 1, height: 44, background: 'none', border: '1px solid var(--border)', borderRadius: 10, fontWeight: 600, cursor: 'pointer' }}>
-             Cancel
-           </button>
-         </div>
-       </div>
+        <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
+          <button onClick={save} disabled={busy} style={{ flex: 1, height: 44, background: 'var(--brand-500)', color: 'white', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+            {busy ? <Spinner size={16} /> : <><Icon name="check" size={16} /> Check In & Save</>}
+          </button>
+          <button onClick={onClose} style={{ flex: 1, height: 44, background: 'none', border: '1px solid var(--border)', borderRadius: 10, fontWeight: 600, cursor: 'pointer' }}>
+            Cancel
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -1143,8 +1150,8 @@ function BookSheet({
   // when the picked doctor is the signed-in user, then to a generic label.
   const doctorName = useMemo(() => {
     const match = doctors.find((d) => d._id === doctorId);
-    if (match) return `Dr. ${match.name}`;
-    if (doctorId === ctx.userId && ctx.fullName) return `Dr. ${ctx.fullName}`;
+    if (match) return formatDrName(match.name);
+    if (doctorId === ctx.userId && ctx.fullName) return formatDrName(ctx.fullName);
     return 'Doctor';
   }, [doctorId, doctors, ctx.userId, ctx.fullName]);
 
