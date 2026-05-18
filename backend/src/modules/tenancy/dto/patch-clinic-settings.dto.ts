@@ -14,7 +14,7 @@ import {
 } from 'class-validator';
 import { Type } from 'class-transformer';
 
-class PatchAppointmentsDto {
+export class PatchAppointmentsDto {
   @IsOptional()
   @IsIn(['TIME', 'QUEUE', 'BOTH'])
   mode?: 'TIME' | 'QUEUE' | 'BOTH';
@@ -26,13 +26,13 @@ class PatchAppointmentsDto {
   slotMinutesDefault?: number;
 }
 
-class PatchInventoryDto {
+export class PatchInventoryDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
 }
 
-class PatchChannelToggleDto {
+export class PatchChannelToggleDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
@@ -42,7 +42,7 @@ class PatchChannelToggleDto {
 // hours disabled. Mirroring the QuietHours type in clinic-settings.types.ts.
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
-class PatchQuietHoursDto {
+export class PatchQuietHoursDto {
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
   @IsString()
@@ -56,7 +56,7 @@ class PatchQuietHoursDto {
   end?: string | null;
 }
 
-class PatchNotificationsDto {
+export class PatchNotificationsDto {
   @IsOptional()
   @ValidateNested()
   @Type(() => PatchChannelToggleDto)
@@ -73,13 +73,13 @@ class PatchNotificationsDto {
   quietHours?: PatchQuietHoursDto;
 }
 
-class PatchFaceRecognitionDto {
+export class PatchFaceRecognitionDto {
   @IsOptional()
   @IsBoolean()
   enabled?: boolean;
 }
 
-class PatchModulesDto {
+export class PatchModulesDto {
   @IsOptional()
   @ValidateNested()
   @Type(() => PatchInventoryDto)
@@ -96,7 +96,7 @@ class PatchModulesDto {
   faceRecognition?: PatchFaceRecognitionDto;
 }
 
-class PatchBrandingDto {
+export class PatchBrandingDto {
   @IsOptional()
   @IsString()
   @Length(0, 120)
