@@ -5,7 +5,6 @@ import {
   IsInt,
   IsOptional,
   IsString,
-  IsUrl,
   Length,
   Matches,
   Max,
@@ -74,6 +73,12 @@ class PatchNotificationsDto {
   quietHours?: PatchQuietHoursDto;
 }
 
+class PatchFaceRecognitionDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+}
+
 class PatchModulesDto {
   @IsOptional()
   @ValidateNested()
@@ -84,6 +89,11 @@ class PatchModulesDto {
   @ValidateNested()
   @Type(() => PatchNotificationsDto)
   notifications?: PatchNotificationsDto;
+
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PatchFaceRecognitionDto)
+  faceRecognition?: PatchFaceRecognitionDto;
 }
 
 class PatchBrandingDto {
@@ -92,8 +102,14 @@ class PatchBrandingDto {
   @Length(0, 120)
   displayName?: string | null;
 
+  // Either a full http(s) URL (legacy) OR an internal S3 object key
+  // produced by POST /clinics/:id/logo. The dedicated upload endpoint
+  // is the normal path for setting this; this field stays here so
+  // a PATCH that round-trips the existing value doesn't fail.
   @IsOptional()
-  @IsUrl({ require_protocol: true, protocols: ['http', 'https'] })
+  @Matches(/^(https?:\/\/.+|clinics\/[0-9a-fA-F]{24}\/logo)$/, {
+    message: 'logoUrl must be a URL address or an uploaded-logo key',
+  })
   logoUrl?: string | null;
 
   @IsOptional()

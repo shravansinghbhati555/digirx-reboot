@@ -62,4 +62,12 @@ export enum Permission {
   SettingsAvailabilityRead = 'settings:availability:read',
   SettingsNotificationsRead = 'settings:notifications:read',
   SettingsAuditRead = 'settings:audit:read',
+
+  // Face recognition. Enroll = "capture a patient's face and store the
+  // embedding"; Recognize = "scan a face and look up which patient it
+  // is". Both are independently granted because the recognition surface
+  // is the front desk's daily tool while enrollment is a registration-
+  // time gesture; some clinics will want one without the other.
+  FaceEnroll = 'face:enroll',
+  FaceRecognize = 'face:recognize',
 }

@@ -12,6 +12,11 @@ import {
 import { PatchClinicSettingsDto } from './dto/patch-clinic-settings.dto';
 import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
+import { StorageService } from '../storage/storage.service';
+
+export function clinicLogoKey(clinicId: Types.ObjectId): string {
+  return `clinics/${clinicId.toHexString()}/logo`;
+}
 
 @Injectable()
 export class TenancyService {
@@ -19,12 +24,78 @@ export class TenancyService {
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
     @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
+    private readonly storage: StorageService,
   ) { }
+
+  async uploadLogo(input: {
+    clinicId: Types.ObjectId;
+    bytes: Uint8Array;
+    contentType: string;
+  }) {
+    const key = clinicLogoKey(input.clinicId);
+    await this.storage.putObject({
+      key,
+      body: input.bytes,
+      contentType: input.contentType,
+    });
+    // Store the S3 key in branding.logoUrl. The PdfService and the FE
+    // both treat any non-URL string as an internal storage key, so the
+    // existing field shape stays back-compatible: legacy `https://…`
+    // URLs still fetch as before.
+    await this.clinicModel.updateOne(
+      { _id: input.clinicId },
+      { $set: { 'settings.branding.logoUrl': key } },
+    );
+    return await this.getSettings(input.clinicId);
+  }
+
+  async getLogo(clinicId: Types.ObjectId): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+    const clinic = await this.clinicModel.findById(clinicId).lean();
+    if (!clinic) return null;
+    const settings = mergeClinicSettings(clinic.settings);
+    const stored = settings.branding.logoUrl;
+    if (!stored) return null;
+    // Only S3-key form is served by this endpoint. Legacy URL-form
+    // logos are fetched by the browser directly from their origin.
+    if (/^https?:\/\//i.test(stored)) return null;
+    try {
+      const res = await this.storage.getObject({ key: stored });
+      return {
+        bytes: res.bytes,
+        contentType: res.contentType ?? 'application/octet-stream',
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async deleteLogo(clinicId: Types.ObjectId) {
+    const key = clinicLogoKey(clinicId);
+    try {
+      await this.storage.deleteObject({ key });
+    } catch {
+      // S3 deletes are idempotent; swallow errors so the FE flow keeps
+      // working even if the object was already gone.
+    }
+    await this.clinicModel.updateOne(
+      { _id: clinicId },
+      { $set: { 'settings.branding.logoUrl': null } },
+    );
+    return await this.getSettings(clinicId);
+  }
 
   async getClinic(clinicId: Types.ObjectId) {
     const clinic = await this.clinicModel.findById(clinicId);
     if (!clinic) throw new NotFoundException('Clinic not found');
     return clinic;
+  }
+
+  /** Plain ObjectId parser used by public routes that don't have a context. */
+  parseClinicId(pathId: string): Types.ObjectId {
+    if (!Types.ObjectId.isValid(pathId)) {
+      throw new NotFoundException('Clinic not found');
+    }
+    return new Types.ObjectId(pathId);
   }
 
   /**
@@ -121,6 +192,11 @@ export class TenancyService {
                 ? (patch.modules.notifications.quietHours.end ?? null)
                 : current.modules.notifications.quietHours.end,
           },
+        },
+        faceRecognition: {
+          enabled:
+            patch.modules?.faceRecognition?.enabled ??
+            current.modules.faceRecognition.enabled,
         },
       },
       branding: {

@@ -13,6 +13,7 @@ import {
   DoctorAvailabilityRuleSchema,
 } from '../availability/schemas/doctor-availability-rule.schema';
 import { CreditNotesModule } from '../credit-notes/credit-notes.module';
+import { FxModule } from '../fx/fx.module';
 import { ReportsController } from './reports.controller';
 import { ReportsService } from './reports.service';
 
@@ -34,6 +35,7 @@ import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
       },
     ]),
     CreditNotesModule,
+    FxModule,
   ],
   controllers: [ReportsController],
   providers: [ReportsService],

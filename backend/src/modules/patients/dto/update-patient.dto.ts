@@ -1,5 +1,6 @@
 import {
   IsArray,
+  IsBoolean,
   IsEmail,
   IsEnum,
   IsISO8601,
@@ -52,4 +53,13 @@ export class UpdatePatientDto {
   @IsString()
   @MaxLength(2000)
   notes?: string;
+
+  // Face-recognition opt-in. The FE flips this to `true` during the
+  // registration wizard's face step right before POSTing the captured
+  // image; the BE refuses the enroll endpoint until this is set.
+  // `faceConsentAt` is stamped server-side when consent transitions
+  // from falsy → true, so the FE never sends it.
+  @IsOptional()
+  @IsBoolean()
+  faceConsent?: boolean;
 }

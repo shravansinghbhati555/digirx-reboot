@@ -226,7 +226,7 @@ export class CreditNotesService {
   async sumRefundsInRange(
     clinicId: Types.ObjectId,
     range: { start: Date; end: Date; branchId?: Types.ObjectId },
-  ): Promise<{ count: number; totalRefunded: number }> {
+  ): Promise<{ count: number; totalRefunded: number; perCurrency: Array<{ currency: string; amount: number }> }> {
     const match: Record<string, unknown> = {
       clinicId,
       status: CreditNoteStatus.Refunded,
@@ -234,20 +234,45 @@ export class CreditNotesService {
     };
     if (range.branchId) match.branchId = range.branchId;
 
+    // Credit notes don't carry their own currency — they inherit from
+    // the bill they credit. $lookup gives us the bill's currency so
+    // the caller can do FX conversion before summing.
     const out = await this.cnModel.aggregate<{
+      _id: string;
       count: number;
       totalRefunded: number;
     }>([
       { $match: match },
       {
+        $lookup: {
+          from: 'bills',
+          localField: 'billId',
+          foreignField: '_id',
+          as: 'bill',
+        },
+      },
+      {
+        $addFields: {
+          currency: { $ifNull: [{ $arrayElemAt: ['$bill.currency', 0] }, 'INR'] },
+        },
+      },
+      {
         $group: {
-          _id: null,
+          _id: '$currency',
           count: { $sum: 1 },
           totalRefunded: { $sum: '$amount' },
         },
       },
     ]);
-    return out[0] ?? { count: 0, totalRefunded: 0 };
+    const perCurrency = out.map((r) => ({ currency: String(r._id || 'INR').toUpperCase(), amount: r.totalRefunded }));
+    return {
+      count: out.reduce((s, r) => s + r.count, 0),
+      // Raw native-currency sum (callers in single-currency clinics
+      // can still read this directly; for mixed-currency clinics the
+      // ReportsService converts perCurrency via FxService).
+      totalRefunded: out.reduce((s, r) => s + r.totalRefunded, 0),
+      perCurrency,
+    };
   }
 
   /**
@@ -263,7 +288,7 @@ export class CreditNotesService {
       tz: string;
       branchId?: Types.ObjectId;
     },
-  ): Promise<{ _id: Date; totalRefunded: number; count: number }[]> {
+  ): Promise<{ _id: { bucket: Date; currency: string }; totalRefunded: number; count: number }[]> {
     const match: Record<string, unknown> = {
       clinicId,
       status: CreditNoteStatus.Refunded,
@@ -271,23 +296,42 @@ export class CreditNotesService {
     };
     if (range.branchId) match.branchId = range.branchId;
 
+    // Same (bucket, currency) two-key group as the other reports —
+    // ReportsService.revenueTimeseries collapses the currency dimension
+    // by converting to the clinic's display currency.
     return await this.cnModel.aggregate([
       { $match: match },
       {
+        $lookup: {
+          from: 'bills',
+          localField: 'billId',
+          foreignField: '_id',
+          as: 'bill',
+        },
+      },
+      {
+        $addFields: {
+          currency: { $ifNull: [{ $arrayElemAt: ['$bill.currency', 0] }, 'INR'] },
+        },
+      },
+      {
         $group: {
           _id: {
-            $dateTrunc: {
-              date: '$refundedAt',
-              unit: range.bucket,
-              timezone: range.tz,
-              startOfWeek: 'monday',
+            bucket: {
+              $dateTrunc: {
+                date: '$refundedAt',
+                unit: range.bucket,
+                timezone: range.tz,
+                startOfWeek: 'monday',
+              },
             },
+            currency: '$currency',
           },
           totalRefunded: { $sum: '$amount' },
           count: { $sum: 1 },
         },
       },
-      { $sort: { _id: 1 } },
+      { $sort: { '_id.bucket': 1 } },
     ]);
   }
 

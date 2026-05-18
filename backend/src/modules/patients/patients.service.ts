@@ -179,6 +179,16 @@ export class PatientsService {
     }
     if (dto.tags !== undefined) patient.tags = dedupeTags(dto.tags);
     if (dto.notes !== undefined) patient.notes = dto.notes;
+    if (dto.faceConsent !== undefined) {
+      // Stamp the consent timestamp on the leading edge (false → true).
+      // Revoking (true → false) leaves the historical timestamp alone so
+      // we can audit when the consent originally lived.
+      const wasConsented = (patient as unknown as { faceConsent?: boolean }).faceConsent === true;
+      (patient as unknown as { faceConsent: boolean }).faceConsent = dto.faceConsent;
+      if (dto.faceConsent && !wasConsented) {
+        (patient as unknown as { faceConsentAt?: Date }).faceConsentAt = new Date();
+      }
+    }
 
     await patient.save();
     return patient;

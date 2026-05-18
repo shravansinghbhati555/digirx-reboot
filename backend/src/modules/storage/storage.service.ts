@@ -81,4 +81,23 @@ export class StorageService {
     });
     await this.client().send(cmd);
   }
+
+  /**
+   * Read a small object's full bytes into memory. Use sparingly — the
+   * presign* methods are the right tool for large files. Throws when
+   * the object doesn't exist.
+   */
+  async getObject(input: { key: string }): Promise<{ bytes: Uint8Array; contentType: string | undefined }> {
+    const cmd = new GetObjectCommand({
+      Bucket: this.bucket(),
+      Key: input.key,
+    });
+    const res = await this.client().send(cmd);
+    const body = res.Body;
+    if (!body || typeof (body as { transformToByteArray?: () => Promise<Uint8Array> }).transformToByteArray !== 'function') {
+      throw new Error('S3 returned an empty body');
+    }
+    const bytes = await (body as { transformToByteArray: () => Promise<Uint8Array> }).transformToByteArray();
+    return { bytes, contentType: res.ContentType };
+  }
 }

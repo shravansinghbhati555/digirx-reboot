@@ -49,6 +49,8 @@ async function bootstrap() {
     'http://127.0.0.1:5173',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
+    'http://digirx.coderly.in',
+    'https://digirx.coderly.in'
   ]);
   if (process.env.FRONTEND_ORIGIN) allowedOrigins.add(process.env.FRONTEND_ORIGIN);
   if (process.env.CORS_ORIGINS) {

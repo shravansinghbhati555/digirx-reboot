@@ -37,6 +37,8 @@ import { ReportsModule } from './modules/reports/reports.module';
 import { AccessLogsModule } from './modules/access-logs/access-logs.module';
 import { PdfModule } from './modules/pdf/pdf.module';
 import { StorageModule } from './modules/storage/storage.module';
+import { FaceModule } from './modules/face/face.module';
+import { FxModule } from './modules/fx/fx.module';
 
 @Module({
   imports: [
@@ -50,9 +52,9 @@ import { StorageModule } from './modules/storage/storage.module';
           process.env.NODE_ENV === 'production'
             ? undefined
             : {
-                target: 'pino-pretty',
-                options: { singleLine: true, translateTime: 'SYS:HH:MM:ss.l' },
-              },
+              target: 'pino-pretty',
+              options: { singleLine: true, translateTime: 'SYS:HH:MM:ss.l' },
+            },
         redact: {
           paths: [
             'req.headers.authorization',
@@ -102,6 +104,8 @@ import { StorageModule } from './modules/storage/storage.module';
     NotificationsModule.forRoot(),
     ReportsModule,
     AccessLogsModule,
+    FaceModule,
+    FxModule,
     HealthModule,
   ],
   controllers: [AppController],
@@ -129,6 +133,10 @@ export class AppModule implements NestModule {
         { path: 'auth', method: RequestMethod.ALL },
         { path: 'clinic/search', method: RequestMethod.GET },
         { path: 'clinic/:id/branches', method: RequestMethod.GET },
+        // Clinic logo is public — embedded in shared prescriptions and
+        // surfaced in the Settings preview via plain <img src>. No
+        // tenant context needed.
+        { path: 'clinics/:id/logo', method: RequestMethod.GET },
         { path: 'share/*path', method: RequestMethod.ALL },
       )
       // In Nest 11 / Express 5, `forRoutes('*')` walks the registered

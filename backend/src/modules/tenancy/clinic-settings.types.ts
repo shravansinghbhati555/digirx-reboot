@@ -79,6 +79,10 @@ export type ClinicSettingsV1 = {
     notifications: NotificationChannelToggles & {
       quietHours: QuietHours;
     };
+    // Off by default — face recognition requires a running face-svc
+    // sidecar and explicit patient biometric consent, so a fresh clinic
+    // never silently has it active.
+    faceRecognition: { enabled: boolean };
   };
   branding: ClinicBranding;
 };
@@ -99,6 +103,7 @@ export const DEFAULT_CLINIC_SETTINGS: ClinicSettingsV1 = {
       whatsapp: { enabled: true },
       quietHours: { start: null, end: null },
     },
+    faceRecognition: { enabled: false },
   },
   branding: { displayName: null, logoUrl: null, primaryColor: null },
 };
@@ -117,6 +122,21 @@ function coerceUrl(v: unknown): string | null {
   if (!s) return null;
   if (!/^https?:\/\//i.test(s)) return null;
   return s;
+}
+
+/**
+ * Logo reference can be either an http(s) URL (legacy, copied in from
+ * an external host) or an S3 object key from our own bucket (the path
+ * `clinics/<24hex>/logo`, produced by the upload endpoint). Both are
+ * safe to round-trip; the PdfService + FE preview each know how to
+ * dereference whichever form they receive.
+ */
+function coerceLogoRef(v: unknown): string | null {
+  const s = coerceString(v, 1000);
+  if (!s) return null;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (/^clinics\/[0-9a-fA-F]{24}\/logo$/.test(s)) return s;
+  return null;
 }
 
 function coerceHex(v: unknown): string | null {
@@ -139,6 +159,11 @@ export function mergeClinicSettings(raw: unknown): ClinicSettingsV1 {
   const inventory = (
     modules.inventory && typeof modules.inventory === 'object'
       ? modules.inventory
+      : {}
+  ) as Record<string, any>;
+  const faceRecognition = (
+    modules.faceRecognition && typeof modules.faceRecognition === 'object'
+      ? modules.faceRecognition
       : {}
   ) as Record<string, any>;
   const notifications = (
@@ -182,6 +207,7 @@ export function mergeClinicSettings(raw: unknown): ClinicSettingsV1 {
   const mode = appts.mode;
   const slot = appts.slotMinutesDefault;
   const invEnabled = inventory.enabled;
+  const faceEnabled = faceRecognition.enabled;
   const smsEnabled = notifSms.enabled;
   const waEnabled = notifWa.enabled;
 
@@ -264,10 +290,16 @@ export function mergeClinicSettings(raw: unknown): ClinicSettingsV1 {
         },
         quietHours,
       },
+      faceRecognition: {
+        enabled:
+          typeof faceEnabled === 'boolean'
+            ? faceEnabled
+            : DEFAULT_CLINIC_SETTINGS.modules.faceRecognition.enabled,
+      },
     },
     branding: {
       displayName: coerceString(branding.displayName, 120),
-      logoUrl: coerceUrl(branding.logoUrl),
+      logoUrl: coerceLogoRef(branding.logoUrl),
       primaryColor: coerceHex(branding.primaryColor),
     },
   };

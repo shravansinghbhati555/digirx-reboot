@@ -5,6 +5,7 @@ import { Branch, BranchSchema } from './schemas/branch.schema';
 import { User, UserSchema } from '../authz/schemas/user.schema';
 import { TenancyController } from './tenancy.controller';
 import { TenancyService } from './tenancy.service';
+import { StorageModule } from '../storage/storage.module';
 
 @Module({
   imports: [
@@ -13,6 +14,7 @@ import { TenancyService } from './tenancy.service';
       { name: Branch.name, schema: BranchSchema },
       { name: User.name, schema: UserSchema },
     ]),
+    StorageModule,
   ],
   controllers: [TenancyController],
   providers: [TenancyService],

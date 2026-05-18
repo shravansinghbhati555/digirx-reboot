@@ -56,6 +56,20 @@ export class Patient {
 
   @Prop()
   notes?: string;
+
+  // Face recognition opt-in. Without this, the enroll endpoint refuses
+  // — biometric data is sensitive personal data under DPDP / most
+  // healthcare frameworks, so we never store an embedding silently.
+  @Prop({ type: Boolean, default: false })
+  faceConsent!: boolean;
+
+  @Prop()
+  faceConsentAt?: Date;
+
+  // Set when an embedding lands in the FaceEmbedding collection. Used
+  // by the FE to show "enrolled" badge without a second round-trip.
+  @Prop()
+  faceEnrolledAt?: Date;
 }
 
 export const PatientSchema = SchemaFactory.createForClass(Patient);

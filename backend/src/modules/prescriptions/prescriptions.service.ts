@@ -14,6 +14,7 @@ import { renderTemplate } from '../notifications/template.utils';
 import { Patient } from '../patients/schemas/patient.schema';
 import { User } from '../authz/schemas/user.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
+import { mergeClinicSettings } from '../tenancy/clinic-settings.types';
 import { CreatePrescriptionDto } from './dto/create-prescription.dto';
 import { PrescriptionNumberingService } from './prescription-numbering.service';
 import {
@@ -437,8 +438,18 @@ export class PrescriptionsService {
       age = String(a);
     }
 
+    // Pull branding from the clinic's settings — operator-controlled
+    // via Settings → Clinic → Branding. Falls back gracefully when
+    // unset so a clinic that never configured branding still gets a
+    // clean default-styled prescription.
+    const settings = clinic ? mergeClinicSettings(clinic.settings) : null;
+    const branding = settings?.branding;
+
     return await this.pdfService.prescriptionPdf({
       clinicName: clinic?.name ?? 'Clinic',
+      clinicDisplayName: branding?.displayName ?? undefined,
+      clinicLogoUrl: branding?.logoUrl ?? undefined,
+      primaryColor: branding?.primaryColor ?? undefined,
       clinicAddress: branch?.addressLine,
       clinicPhone: branch?.phone,
       patientName: patient?.fullName ?? 'Patient',

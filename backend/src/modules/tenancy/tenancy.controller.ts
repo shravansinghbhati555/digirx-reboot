@@ -1,5 +1,7 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
+import type { Response } from 'express';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
@@ -8,6 +10,9 @@ import { CreateBranchDto } from './dto/create-branch.dto';
 import { UpdateBranchDto } from './dto/update-branch.dto';
 import { TenancyService } from './tenancy.service';
 import { Public } from '../../common/public.decorator';
+
+const LOGO_MAX_BYTES = 2 * 1024 * 1024;
+const LOGO_ACCEPTED = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 @Controller()
 export class TenancyController {
@@ -86,5 +91,64 @@ export class TenancyController {
   ) {
     const clinicId = this.tenancy.assertTenantMatch(id, req.context!.clinicId);
     return await this.tenancy.getBranch(clinicId, branchId);
+  }
+
+  // ---- Clinic logo (Settings → Branding) ----------------------------
+  // Uploads a PNG/JPG/WebP to S3 and records a marker in
+  // branding.logoUrl so the prescription PDF + the Settings preview can
+  // both read it back. Read endpoint is intentionally public so a
+  // simple <img src> in the FE works without auth-juggling — the bytes
+  // are already meant to appear on patient-facing prescriptions.
+
+  @Post('clinics/:id/logo')
+  @RequirePermissions(Permission.ClinicWrite)
+  @UseInterceptors(
+    FileInterceptor('image', { limits: { fileSize: LOGO_MAX_BYTES } }),
+  )
+  async uploadLogo(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    const clinicId = this.tenancy.assertTenantMatch(id, req.context!.clinicId);
+    if (!file) throw new BadRequestException('image is required (multipart field "image")');
+    if (!LOGO_ACCEPTED.has(file.mimetype)) {
+      throw new BadRequestException(`Unsupported type ${file.mimetype} — use PNG, JPG, or WebP`);
+    }
+    return await this.tenancy.uploadLogo({
+      clinicId,
+      bytes: new Uint8Array(file.buffer),
+      contentType: file.mimetype,
+    });
+  }
+
+  @Get('clinics/:id/logo')
+  @Public()
+  async getLogo(@Param('id') id: string, @Res() res: Response) {
+    if (!/^[0-9a-fA-F]{24}$/.test(id)) {
+      res.status(404).end();
+      return;
+    }
+    const result = await this.tenancy.getLogo(
+      // Re-parse without tenant check since this endpoint is public.
+      // It only serves a deliberately-public asset (the clinic's logo),
+      // so leaking the existence of a clinic ID via 200-vs-404 is
+      // acceptable.
+      this.tenancy.parseClinicId(id),
+    );
+    if (!result) {
+      res.status(404).end();
+      return;
+    }
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.end(Buffer.from(result.bytes));
+  }
+
+  @Delete('clinics/:id/logo')
+  @RequirePermissions(Permission.ClinicWrite)
+  async deleteLogo(@Req() req: AppRequest, @Param('id') id: string) {
+    const clinicId = this.tenancy.assertTenantMatch(id, req.context!.clinicId);
+    return await this.tenancy.deleteLogo(clinicId);
   }
 }

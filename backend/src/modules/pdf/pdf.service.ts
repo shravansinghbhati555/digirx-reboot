@@ -13,6 +13,7 @@ import {
   rgb,
 } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
+import { StorageService } from '../storage/storage.service';
 
 const PAGE_WIDTH = 595.28; // A4
 const PAGE_HEIGHT = 841.89;
@@ -35,6 +36,57 @@ type FontCache = Map<string, Uint8Array | null>;
 const fontCache: FontCache = new Map();
 let fontWarnEmitted = false;
 const log = new Logger('PdfService');
+
+// Tight cap on the logo we'll download from a public URL — anything
+// bigger is almost certainly mis-uploaded, and we don't want to OOM the
+// PDF renderer on a malicious URL.
+const MAX_LOGO_BYTES = 2 * 1024 * 1024;
+// Module-level cache so the same logo isn't refetched on every PDF.
+const logoCache = new Map<string, { bytes: Uint8Array; at: number }>();
+const LOGO_CACHE_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Convert a `#RRGGBB` / `#RGB` hex string to pdf-lib's rgb(0..1).
+ * Returns `null` on anything malformed so the caller falls back to its
+ * default color. Lowercase / uppercase / leading-# both accepted.
+ */
+function parseHexColor(hex?: string): ReturnType<typeof rgb> | null {
+  if (!hex || typeof hex !== 'string') return null;
+  let h = hex.trim().replace(/^#/, '');
+  if (h.length === 3) h = h.split('').map((c) => c + c).join('');
+  if (!/^[0-9a-fA-F]{6}$/.test(h)) return null;
+  const r = parseInt(h.slice(0, 2), 16) / 255;
+  const g = parseInt(h.slice(2, 4), 16) / 255;
+  const b = parseInt(h.slice(4, 6), 16) / 255;
+  return rgb(r, g, b);
+}
+
+async function fetchLogoBytes(url: string): Promise<Uint8Array | null> {
+  if (!/^https?:\/\//i.test(url)) return null;
+  const cached = logoCache.get(url);
+  if (cached && Date.now() - cached.at < LOGO_CACHE_TTL_MS) {
+    return cached.bytes;
+  }
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 5000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    if (buf.byteLength > MAX_LOGO_BYTES) {
+      log.warn(`Logo ${url} exceeds ${MAX_LOGO_BYTES} bytes — skipping`);
+      return null;
+    }
+    const bytes = new Uint8Array(buf);
+    logoCache.set(url, { bytes, at: Date.now() });
+    return bytes;
+  } catch (e) {
+    log.warn(`fetchLogoBytes(${url}) failed: ${e instanceof Error ? e.message : e}`);
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 function loadFontIfPresent(fontPath: string): Uint8Array | null {
   if (fontCache.has(fontPath)) return fontCache.get(fontPath) ?? null;
@@ -195,10 +247,33 @@ function drawText(page: PDFPage, text: string, opts: DrawOpts) {
 
 @Injectable()
 export class PdfService {
+  constructor(private readonly storage: StorageService) {}
+
+  private async loadLogoFromStorage(key: string): Promise<Uint8Array | null> {
+    try {
+      const res = await this.storage.getObject({ key });
+      if (res.bytes.byteLength > MAX_LOGO_BYTES) {
+        log.warn(`Storage logo at ${key} exceeds ${MAX_LOGO_BYTES} bytes — skipping`);
+        return null;
+      }
+      return res.bytes;
+    } catch (e) {
+      log.warn(`loadLogoFromStorage(${key}) failed: ${e instanceof Error ? e.message : e}`);
+      return null;
+    }
+  }
+
   async prescriptionPdf(input: {
     clinicName: string;
     clinicAddress?: string;
     clinicPhone?: string;
+    // Branding fields from Settings → Clinic → Branding. When set,
+    // override the defaults: displayName replaces clinicName on the
+    // header, primaryColor recolors the brand bar + heading, logoUrl
+    // is fetched and placed top-right.
+    clinicDisplayName?: string;
+    clinicLogoUrl?: string;
+    primaryColor?: string;
     patientName: string;
     patientAge?: string | number;
     patientGender?: string;
@@ -217,11 +292,50 @@ export class PdfService {
     const pdf = await PDFDocument.create();
     const { font, bold } = await embedFonts(pdf);
 
-    const BRAND_BLUE = rgb(0.06, 0.45, 0.92);
+    // Brand color: hex from settings overrides the legacy blue. Falls
+    // back to the historical color when nothing is configured so old
+    // clinics see no visual change.
+    const BRAND_BLUE = parseHexColor(input.primaryColor) ?? rgb(0.06, 0.45, 0.92);
     const TEXT_DARK = rgb(0.1, 0.1, 0.1);
     const TEXT_MUTED = rgb(0.4, 0.4, 0.4);
     const BORDER_COLOR = rgb(0.9, 0.9, 0.9);
     const STRIP_BG = rgb(0.96, 0.97, 0.99);
+
+    // The branding display name wins when set — typically a polished
+    // "Sunshine Pediatrics" rather than the internal clinic record name.
+    const headerName = (input.clinicDisplayName || '').trim() || input.clinicName;
+
+    // Logo: load + embed at PDF-creation time. Two paths depending on
+    // the stored value:
+    //  • starts with http(s)://  → legacy URL form, fetched via HTTP
+    //  • anything else           → S3 object key, loaded via the
+    //    StorageService (same MinIO/S3 the rest of the backend writes
+    //    to, so internal-network reads stay fast)
+    // All failures are non-fatal — we just render without the logo.
+    let logoImage: Awaited<ReturnType<typeof pdf.embedPng>> | null = null;
+    if (input.clinicLogoUrl) {
+      try {
+        const isUrl = /^https?:\/\//i.test(input.clinicLogoUrl);
+        const bytes = isUrl
+          ? await fetchLogoBytes(input.clinicLogoUrl)
+          : await this.loadLogoFromStorage(input.clinicLogoUrl);
+        if (bytes) {
+          // pdf-lib needs format-specific embed methods. Detect by the
+          // first few bytes rather than trusting the URL extension.
+          if (bytes[0] === 0x89 && bytes[1] === 0x50) {
+            logoImage = await pdf.embedPng(bytes);
+          } else if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+            logoImage = await pdf.embedJpg(bytes);
+          } else {
+            log.warn(`Logo at ${input.clinicLogoUrl} is not PNG/JPG — skipping`);
+          }
+        }
+      } catch (e) {
+        log.warn(
+          `Failed to embed clinic logo from ${input.clinicLogoUrl}: ${e instanceof Error ? e.message : e}`,
+        );
+      }
+    }
 
     let page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     let y = TOP_Y;
@@ -236,9 +350,24 @@ export class PdfService {
         color: BRAND_BLUE,
       });
 
-      // Clinic Info
+      // Clinic Info — name on the left, logo on the right (when set).
       y = PAGE_HEIGHT - 35;
-      drawText(page, input.clinicName, { x: MARGIN_X, y, size: 20, font: bold, color: rgb(1, 1, 1) });
+      drawText(page, headerName, { x: MARGIN_X, y, size: 20, font: bold, color: rgb(1, 1, 1) });
+
+      if (logoImage) {
+        // Scale to fit a 44px-tall slot in the brand bar, preserving
+        // aspect ratio. Anchored to the right margin.
+        const targetH = 44;
+        const ratio = logoImage.height > 0 ? targetH / logoImage.height : 1;
+        const w = Math.min(logoImage.width * ratio, 140);
+        const h = w === logoImage.width * ratio ? targetH : (w / logoImage.width) * logoImage.height;
+        page.drawImage(logoImage, {
+          x: PAGE_WIDTH - MARGIN_X - w,
+          y: PAGE_HEIGHT - 8 - h,
+          width: w,
+          height: h,
+        });
+      }
 
       y = PAGE_HEIGHT - 85;
       if (input.clinicAddress) {
@@ -357,6 +486,14 @@ export class PdfService {
 
   async billPdf(input: {
     clinicName: string;
+    // Branding overrides — same shape as prescriptionPdf. displayName
+    // wins over clinicName on the header; primaryColor recolors the
+    // brand bar / pattern / table header; logoUrl is fetched (via
+    // StorageService if it's a key, or HTTP if a legacy URL) and
+    // replaces the hardcoded medical-cross glyph.
+    clinicDisplayName?: string;
+    clinicLogoUrl?: string;
+    primaryColor?: string;
     branchName?: string;
     clinicAddress?: string;
     clinicPhone?: string;
@@ -381,12 +518,43 @@ export class PdfService {
   }): Promise<Uint8Array> {
     const pdf = await PDFDocument.create();
     const { font, bold } = await embedFonts(pdf);
-    console.log("input", input)
-    const DARK_TEAL = rgb(1 / 255, 66 / 255, 76 / 255);
+
+    // Brand color rules:
+    //  • DARK_TEAL is the main brand surface (banner, totals row) —
+    //    overridden by the clinic's primary color when set.
+    //  • ACCENT_TEAL is the secondary accent (top/bottom pattern, logo
+    //    glyph fallback) — also overridden, using the same color, so the
+    //    pattern stays mono-brand instead of clashing.
+    //  • MINT_BG stays as the page background regardless — recoloring
+    //    it would require also re-evaluating all the text colors.
+    const brandPrimary = parseHexColor(input.primaryColor);
+    const DARK_TEAL = brandPrimary ?? rgb(1 / 255, 66 / 255, 76 / 255);
     const MINT_BG = rgb(240 / 255, 255 / 255, 240 / 255);
-    const ACCENT_TEAL = rgb(10 / 255, 185 / 255, 140 / 255);
+    const ACCENT_TEAL = brandPrimary ?? rgb(10 / 255, 185 / 255, 140 / 255);
     const TEXT_LIGHT = rgb(1, 1, 1);
     const TEXT_DARK = DARK_TEAL;
+
+    const headerName = (input.clinicDisplayName || '').trim() || input.clinicName;
+
+    // Logo: same load logic as prescriptionPdf. Failure → no logo.
+    let logoImage: Awaited<ReturnType<typeof pdf.embedPng>> | null = null;
+    if (input.clinicLogoUrl) {
+      try {
+        const isUrl = /^https?:\/\//i.test(input.clinicLogoUrl);
+        const bytes = isUrl
+          ? await fetchLogoBytes(input.clinicLogoUrl)
+          : await this.loadLogoFromStorage(input.clinicLogoUrl);
+        if (bytes) {
+          if (bytes[0] === 0x89 && bytes[1] === 0x50) {
+            logoImage = await pdf.embedPng(bytes);
+          } else if (bytes[0] === 0xff && bytes[1] === 0xd8) {
+            logoImage = await pdf.embedJpg(bytes);
+          }
+        }
+      } catch {
+        // non-fatal — fall through to the medical-cross glyph below
+      }
+    }
 
     let page = pdf.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
     let currentY = TOP_Y;
@@ -442,11 +610,27 @@ export class PdfService {
       // Title
       drawText(page, continuation ? 'INVOICE (cont.)' : 'INVOICE', { x: MARGIN_X, y: hy, size: 38, font: bold, color: TEXT_LIGHT });
 
-      // Medical Cross (Logo approximation)
-      const cx = PAGE_WIDTH - 80;
-      const cy = hy + 10;
-      page.drawRectangle({ x: cx - 25, y: cy - 10, width: 50, height: 20, color: ACCENT_TEAL });
-      page.drawRectangle({ x: cx - 10, y: cy - 25, width: 20, height: 50, color: ACCENT_TEAL });
+      // Logo: when the clinic has uploaded one, render it top-right.
+      // Otherwise fall back to the original medical-cross glyph so the
+      // header doesn't read as visually broken.
+      if (logoImage) {
+        const targetH = 60;
+        const ratio = logoImage.height > 0 ? targetH / logoImage.height : 1;
+        const w = Math.min(logoImage.width * ratio, 140);
+        const h = w === logoImage.width * ratio ? targetH : (w / logoImage.width) * logoImage.height;
+        page.drawImage(logoImage, {
+          x: PAGE_WIDTH - MARGIN_X - w,
+          y: hy - 15,
+          width: w,
+          height: h,
+        });
+      } else {
+        // Medical Cross (Logo approximation)
+        const cx = PAGE_WIDTH - 80;
+        const cy = hy + 10;
+        page.drawRectangle({ x: cx - 25, y: cy - 10, width: 50, height: 20, color: ACCENT_TEAL });
+        page.drawRectangle({ x: cx - 10, y: cy - 25, width: 20, height: 50, color: ACCENT_TEAL });
+      }
 
       hy -= 15;
       page.drawLine({ start: { x: MARGIN_X, y: hy }, end: { x: MARGIN_X + 220, y: hy }, thickness: 1.5, color: TEXT_LIGHT });
@@ -469,7 +653,7 @@ export class PdfService {
         if (pMeta) drawText(page, pMeta, { x: MARGIN_X, y: hy - 26, size: 9, font, color: TEXT_LIGHT });
 
         drawText(page, 'FROM:', { x: MARGIN_X + 220, y: hy, size: 9, font: bold, color: TEXT_LIGHT });
-        drawText(page, input.clinicName, { x: MARGIN_X + 220, y: hy - 14, size: 10, font: bold, color: TEXT_LIGHT });
+        drawText(page, headerName, { x: MARGIN_X + 220, y: hy - 14, size: 10, font: bold, color: TEXT_LIGHT });
         
         let fromY = hy - 26;
         if (input.branchName) {

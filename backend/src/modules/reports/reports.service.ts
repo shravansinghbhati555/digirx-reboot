@@ -8,6 +8,7 @@ import { Clinic } from '../tenancy/schemas/clinic.schema';
 import { Branch } from '../tenancy/schemas/branch.schema';
 import { DoctorAvailabilityRule } from '../availability/schemas/doctor-availability-rule.schema';
 import { CreditNotesService } from '../credit-notes/credit-notes.service';
+import { FxService } from '../fx/fx.service';
 import { computeClinicDayRange } from '../../common/clinic-time';
 import { DateTime } from 'luxon';
 
@@ -29,7 +30,18 @@ export class ReportsService {
     @InjectModel(DoctorAvailabilityRule.name)
     private readonly ruleModel: Model<DoctorAvailabilityRule>,
     private readonly creditNotes: CreditNotesService,
+    private readonly fx: FxService,
   ) { }
+
+  /**
+   * Resolve the target display currency for a clinic. Always the
+   * clinic's configured currency — the dashboard always presents in
+   * the active currency. Falls back to INR if unset.
+   */
+  private async resolveTargetCurrency(clinicId: Types.ObjectId): Promise<string> {
+    const clinic = await this.clinicModel.findById(clinicId);
+    return (clinic?.currency || 'INR').toUpperCase();
+  }
 
   private async resolveBranchName(clinicId: Types.ObjectId, branchId?: string): Promise<string | null> {
     if (!branchId) return null;
@@ -97,7 +109,17 @@ export class ReportsService {
       ? { branchId: new Types.ObjectId(branchId) }
       : {};
 
-    const issuedBills = await this.billModel.aggregate([
+    // Group by the bill's stored currency first — that's the only
+    // honest way to roll up across a clinic that's had its currency
+    // setting changed historically. FxService then converts each
+    // per-currency bucket into the active display currency.
+    const target = await this.resolveTargetCurrency(clinicId);
+
+    const issuedBillsByCurrency = await this.billModel.aggregate<{
+      _id: string;
+      count: number;
+      totalBilled: number;
+    }>([
       {
         $match: {
           clinicId,
@@ -108,14 +130,20 @@ export class ReportsService {
       },
       {
         $group: {
-          _id: null,
+          _id: '$currency',
           count: { $sum: 1 },
           totalBilled: { $sum: '$total' },
         },
       },
     ]);
 
-    const payments = await this.paymentModel.aggregate([
+    // Payments don't carry their own currency — they inherit from the
+    // bill via billId. $lookup joins them so we can group correctly.
+    const paymentsByCurrency = await this.paymentModel.aggregate<{
+      _id: string;
+      count: number;
+      totalPaid: number;
+    }>([
       {
         $match: {
           clinicId,
@@ -124,25 +152,54 @@ export class ReportsService {
         },
       },
       {
+        $lookup: {
+          from: 'bills',
+          localField: 'billId',
+          foreignField: '_id',
+          as: 'bill',
+        },
+      },
+      {
+        $addFields: {
+          currency: { $ifNull: [{ $arrayElemAt: ['$bill.currency', 0] }, target] },
+        },
+      },
+      {
         $group: {
-          _id: null,
+          _id: '$currency',
           count: { $sum: 1 },
           totalPaid: { $sum: '$amount' },
         },
       },
     ]);
 
-    const billed = issuedBills[0] ?? { count: 0, totalBilled: 0 };
-    const paid = payments[0] ?? { count: 0, totalPaid: 0 };
+    const billedConv = await this.fx.sumInto(
+      issuedBillsByCurrency.map((b) => ({ currency: b._id || target, amount: b.totalBilled })),
+      target,
+    );
+    const paidConv = await this.fx.sumInto(
+      paymentsByCurrency.map((p) => ({ currency: p._id || target, amount: p.totalPaid })),
+      target,
+    );
+
+    const billed = {
+      count: issuedBillsByCurrency.reduce((s, b) => s + b.count, 0),
+      totalBilled: billedConv.total,
+    };
+    const paid = {
+      count: paymentsByCurrency.reduce((s, p) => s + p.count, 0),
+      totalPaid: paidConv.total,
+    };
     const refunds = await this.creditNotes.sumRefundsInRange(clinicId, {
       start,
       end,
       branchId: branchId ? new Types.ObjectId(branchId) : undefined,
     });
+    const refundsConv = await this.fx.sumInto(refunds.perCurrency ?? [], target);
 
     // Net revenue = cash collected (paid) − cash returned (refunds via CN).
     // The bill totals don't change on refund; only the cash-flow does.
-    const netRevenue = (paid.totalPaid ?? 0) - (refunds.totalRefunded ?? 0);
+    const netRevenue = (paid.totalPaid ?? 0) - refundsConv.total;
 
     return {
       from,
@@ -150,14 +207,28 @@ export class ReportsService {
       timezone: tz,
       branchId: branchId ?? null,
       branchName: await this.resolveBranchName(clinicId, branchId),
+      // All monetary fields below are expressed in `currency`. When a
+      // bill was issued in a different currency we converted it via
+      // FxService.sumInto — see the `unconverted` arrays for any
+      // currencies whose rates we couldn't resolve.
+      currency: target,
       issuedBills: {
         count: billed.count,
         totalBilled: billed.totalBilled ?? 0,
+        breakdown: billedConv.breakdown,
+        unconverted: billedConv.unconverted,
       },
-      payments: { count: paid.count, totalPaid: paid.totalPaid ?? 0 },
+      payments: {
+        count: paid.count,
+        totalPaid: paid.totalPaid ?? 0,
+        breakdown: paidConv.breakdown,
+        unconverted: paidConv.unconverted,
+      },
       refunds: {
         count: refunds.count,
-        totalRefunded: refunds.totalRefunded,
+        totalRefunded: refundsConv.total,
+        breakdown: refundsConv.breakdown,
+        unconverted: refundsConv.unconverted,
       },
       netRevenue,
     };
@@ -267,11 +338,31 @@ export class ReportsService {
       { $unwind: { path: '$patient', preserveNullAndEmptyArrays: true } },
     ]);
 
+    // Bucket the outstanding amounts by each bill's stored currency,
+    // then convert into the clinic's display currency. Rows themselves
+    // keep their original currency (the BillingScreen list shows them
+    // each with their own symbol).
+    const target = await this.resolveTargetCurrency(clinicId);
+    const perCurrency = new Map<string, number>();
+    for (const r of rows) {
+      const cur = String((r as { currency?: string }).currency ?? target).toUpperCase();
+      const outstanding = Number((r as { outstanding?: number }).outstanding ?? 0);
+      perCurrency.set(cur, (perCurrency.get(cur) ?? 0) + outstanding);
+    }
+    const conv = await this.fx.sumInto(
+      Array.from(perCurrency.entries()).map(([currency, amount]) => ({ currency, amount })),
+      target,
+    );
+
     return {
       branchId: branchId ?? null,
       branchName: await this.resolveBranchName(clinicId, branchId),
       count: rows.length,
       rows,
+      currency: target,
+      totalOutstanding: conv.total,
+      breakdown: conv.breakdown,
+      unconverted: conv.unconverted,
     };
   }
 
@@ -296,8 +387,11 @@ export class ReportsService {
       ? { branchId: new Types.ObjectId(branchId) }
       : {};
 
+    // Two-key group: (time bucket, currency). For each bucket we then
+    // convert each per-currency sum to the clinic display currency and
+    // collapse into a single per-bucket total.
     const issued = await this.billModel.aggregate<{
-      _id: Date;
+      _id: { bucket: Date; currency: string };
       count: number;
       totalBilled: number;
     }>([
@@ -312,27 +406,48 @@ export class ReportsService {
       {
         $group: {
           _id: {
-            $dateTrunc: {
-              date: '$issuedAt',
-              unit: bucket,
-              timezone: tz,
-              startOfWeek: 'monday',
+            bucket: {
+              $dateTrunc: {
+                date: '$issuedAt',
+                unit: bucket,
+                timezone: tz,
+                startOfWeek: 'monday',
+              },
             },
+            currency: '$currency',
           },
           count: { $sum: 1 },
           totalBilled: { $sum: '$total' },
         },
       },
-      { $sort: { _id: 1 } },
+      { $sort: { '_id.bucket': 1 } },
     ]);
 
+    const target = await this.resolveTargetCurrency(clinicId);
     const fmt = (d: Date) =>
       DateTime.fromJSDate(d, { zone: 'utc' }).setZone(tz).toISODate()!;
-    const buckets = issued.map((r) => ({
-      bucket: fmt(r._id),
-      count: r.count,
-      totalBilled: r.totalBilled,
-    }));
+
+    // Collapse the (bucket, currency) rows into a per-bucket map, with
+    // per-currency sub-totals carried alongside so the FE can show
+    // breakdowns on hover.
+    const byBucket = new Map<string, {
+      count: number;
+      perCurrency: Array<{ currency: string; amount: number }>;
+    }>();
+    for (const r of issued) {
+      const key = fmt(r._id.bucket);
+      const cur = String(r._id.currency || target).toUpperCase();
+      const cell = byBucket.get(key) ?? { count: 0, perCurrency: [] };
+      cell.count += r.count;
+      cell.perCurrency.push({ currency: cur, amount: r.totalBilled });
+      byBucket.set(key, cell);
+    }
+
+    const buckets: Array<{ bucket: string; count: number; totalBilled: number }> = [];
+    for (const [key, cell] of Array.from(byBucket.entries()).sort(([a], [b]) => a.localeCompare(b))) {
+      const conv = await this.fx.sumInto(cell.perCurrency, target);
+      buckets.push({ bucket: key, count: cell.count, totalBilled: conv.total });
+    }
 
     return {
       from,
@@ -340,6 +455,7 @@ export class ReportsService {
       timezone: tz,
       bucket,
       branchId: branchId ?? null,
+      currency: target,
       buckets,
     };
   }
@@ -363,8 +479,11 @@ export class ReportsService {
     const branchObj = branchId ? new Types.ObjectId(branchId) : undefined;
     const branchFilter = branchObj ? { branchId: branchObj } : {};
 
+    // Two-key group: (time bucket, bill currency). Payments inherit
+    // their currency from the bill via $lookup so cross-currency
+    // payments collapse correctly into per-bucket totals later.
     const paid = await this.paymentModel.aggregate<{
-      _id: Date;
+      _id: { bucket: Date; currency: string };
       totalPaid: number;
       count: number;
     }>([
@@ -376,20 +495,36 @@ export class ReportsService {
         },
       },
       {
+        $lookup: {
+          from: 'bills',
+          localField: 'billId',
+          foreignField: '_id',
+          as: 'bill',
+        },
+      },
+      {
+        $addFields: {
+          currency: { $ifNull: [{ $arrayElemAt: ['$bill.currency', 0] }, 'INR'] },
+        },
+      },
+      {
         $group: {
           _id: {
-            $dateTrunc: {
-              date: '$paidAt',
-              unit: bucket,
-              timezone: tz,
-              startOfWeek: 'monday',
+            bucket: {
+              $dateTrunc: {
+                date: '$paidAt',
+                unit: bucket,
+                timezone: tz,
+                startOfWeek: 'monday',
+              },
             },
+            currency: '$currency',
           },
           totalPaid: { $sum: '$amount' },
           count: { $sum: 1 },
         },
       },
-      { $sort: { _id: 1 } },
+      { $sort: { '_id.bucket': 1 } },
     ]);
 
     const refunded = await this.creditNotes.refundTimeseries(clinicId, {
@@ -400,9 +535,29 @@ export class ReportsService {
       branchId: branchObj,
     });
 
-    // Merge the two series by bucket key (ISO date string in clinic TZ).
+    const target = await this.resolveTargetCurrency(clinicId);
+
+    // Merge the two series by bucket key (ISO date string in clinic
+    // TZ). Per-bucket payment totals are converted from each source
+    // currency before being summed.
     const fmt = (d: Date) =>
       DateTime.fromJSDate(d, { zone: 'utc' }).setZone(tz).toISODate()!;
+
+    // First collapse the (bucket, currency) payment rows by bucket so
+    // we can convert each bucket's mixed-currency total in one shot.
+    const paidByBucket = new Map<string, {
+      perCurrency: Array<{ currency: string; amount: number }>;
+      count: number;
+    }>();
+    for (const p of paid) {
+      const key = fmt(p._id.bucket);
+      const cur = String(p._id.currency || target).toUpperCase();
+      const cell = paidByBucket.get(key) ?? { perCurrency: [], count: 0 };
+      cell.perCurrency.push({ currency: cur, amount: p.totalPaid });
+      cell.count += p.count;
+      paidByBucket.set(key, cell);
+    }
+
     const map = new Map<
       string,
       {
@@ -413,18 +568,33 @@ export class ReportsService {
         refundCount: number;
       }
     >();
-    for (const p of paid) {
-      const key = fmt(p._id);
+    for (const [key, cell] of paidByBucket.entries()) {
+      const conv = await this.fx.sumInto(cell.perCurrency, target);
       map.set(key, {
         bucket: key,
-        totalPaid: p.totalPaid,
-        paidCount: p.count,
+        totalPaid: conv.total,
+        paidCount: cell.count,
         totalRefunded: 0,
         refundCount: 0,
       });
     }
+    // Refunds come back per (bucket, currency). Collapse per bucket so
+    // we can convert each bucket's mixed-currency refund total in one
+    // FX call, mirroring the payments treatment above.
+    const refundsByBucket = new Map<string, {
+      perCurrency: Array<{ currency: string; amount: number }>;
+      count: number;
+    }>();
     for (const r of refunded) {
-      const key = fmt(r._id);
+      const key = fmt(r._id.bucket);
+      const cur = String(r._id.currency || target).toUpperCase();
+      const cell = refundsByBucket.get(key) ?? { perCurrency: [], count: 0 };
+      cell.perCurrency.push({ currency: cur, amount: r.totalRefunded });
+      cell.count += r.count;
+      refundsByBucket.set(key, cell);
+    }
+    for (const [key, cell] of refundsByBucket.entries()) {
+      const conv = await this.fx.sumInto(cell.perCurrency, target);
       const row = map.get(key) ?? {
         bucket: key,
         totalPaid: 0,
@@ -432,8 +602,8 @@ export class ReportsService {
         totalRefunded: 0,
         refundCount: 0,
       };
-      row.totalRefunded = r.totalRefunded;
-      row.refundCount = r.count;
+      row.totalRefunded = conv.total;
+      row.refundCount = cell.count;
       map.set(key, row);
     }
 
@@ -450,6 +620,7 @@ export class ReportsService {
       timezone: tz,
       bucket,
       branchId: branchId ?? null,
+      currency: target,
       buckets,
     };
   }

@@ -25,6 +25,7 @@ import { ServiceCatalogItem } from './schemas/service-catalog-item.schema';
 import { Appointment } from '../appointments/schemas/appointment.schema';
 import { Encounter } from '../encounters/schemas/encounter.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
+import { mergeClinicSettings } from '../tenancy/clinic-settings.types';
 import { Prescription } from '../prescriptions/schemas/prescription.schema';
 import { Patient } from '../patients/schemas/patient.schema';
 import { InventoryItem } from '../inventory/schemas/inventory-item.schema';
@@ -853,8 +854,14 @@ export class BillingService {
         }),
       ]);
 
+      const settings = clinic ? mergeClinicSettings(clinic.settings) : null;
+      const branding = settings?.branding;
+
       const bytes = await this.pdf.billPdf({
         clinicName: clinic?.name || 'Clinic',
+        clinicDisplayName: branding?.displayName ?? undefined,
+        clinicLogoUrl: branding?.logoUrl ?? undefined,
+        primaryColor: branding?.primaryColor ?? undefined,
         branchName: branch?.name,
         clinicAddress: branch?.addressLine,
         clinicPhone: branch?.phone,
