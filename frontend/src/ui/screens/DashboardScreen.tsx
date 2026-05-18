@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiGet } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
-import { Sparkline, StatusPill, formatINR } from '../shared/primitives';
+import { Sparkline, StatusPill, formatMoney, formatMoneyCompact } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
 import { Counter } from '../shared/Counter';
 import { Skeleton } from '../shared/Skeleton';
@@ -131,20 +131,20 @@ export function DashboardScreen() {
       <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
         {canSeeRevenue && (
           <KPITile label={isToday ? "Today's revenue" : 'Revenue'}
-            value={revenue ? <Counter value={revenue.payments.totalPaid} format={(n) => formatINR(n)} /> : '—'}
+            value={revenue ? <Counter value={revenue.payments.totalPaid} format={(n) => formatMoney(n, ctx.currency)} /> : '—'}
             sub={revenue ? `${revenue.payments.count} payments · ${shortDayLabel(selectedDate)}` : 'No data'} data={fauxSpark} color="var(--brand-500)" icon="trendingUp"
             onClick={() => setOpenKpi('revenue')} />
         )}
         {canSeeBills && (
           <KPITile label={isToday ? "Today's bills" : 'Bills issued'}
             value={revenue ? <Counter value={revenue.issuedBills.count} /> : '—'}
-            sub={revenue ? `${formatINR(revenue.issuedBills.totalBilled)} billed · ${shortDayLabel(selectedDate)}` : 'No data'} data={fauxSpark.map((v) => v / 1000)} color="var(--accent-500)" icon="receipt"
+            sub={revenue ? `${formatMoney(revenue.issuedBills.totalBilled, ctx.currency)} billed · ${shortDayLabel(selectedDate)}` : 'No data'} data={fauxSpark.map((v) => v / 1000)} color="var(--accent-500)" icon="receipt"
             onClick={() => setOpenKpi('bills')} />
         )}
         {canSeePending && (
           <KPITile label="Pending payments"
             value={<Counter value={pending?.count ?? 0} />}
-            sub={`${formatINR(totalOutstanding)} outstanding`} data={fauxSpark.map((v) => v / 2)} color="var(--warning-500)" icon="clock"
+            sub={`${formatMoney(totalOutstanding, ctx.currency)} outstanding`} data={fauxSpark.map((v) => v / 2)} color="var(--warning-500)" icon="clock"
             onClick={() => setOpenKpi('pending')} />
         )}
         {canSeeAppointments && (
@@ -233,8 +233,8 @@ export function DashboardScreen() {
                     <td style={{ padding: '8px 16px', fontSize: 12, color: 'var(--text)' }}>
                       {b.patient?.fullName ?? (b.patient?.mrn ?? `#${b.patientId.slice(-6)}`)}
                     </td>
-                    <td style={{ padding: '8px 16px', fontSize: 12, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatINR(b.total)}</td>
-                    <td style={{ padding: '8px 16px', fontSize: 12, color: 'var(--danger-500)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{formatINR(b.outstanding)}</td>
+                    <td style={{ padding: '8px 16px', fontSize: 12, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatMoney(b.total, ctx.currency)}</td>
+                    <td style={{ padding: '8px 16px', fontSize: 12, color: 'var(--danger-500)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{formatMoney(b.outstanding, ctx.currency)}</td>
                     <td style={{ padding: '8px 16px' }}><StatusPill status={(b.status || '').toLowerCase()} small /></td>
                   </tr>
                 ))}
@@ -407,10 +407,10 @@ function RevenueDetail({ onClose, selectedDate }: { onClose: () => void; selecte
       <RangePicker from={from} to={to} onChangeFrom={setFrom} onChangeTo={setTo} />
       {error && <KpiError msg={error} />}
       <StatGrid>
-        <StatCard label="Total paid" value={formatINR(totalPaid)} sub={`${totalPayments} payments`} accent="var(--brand-500)" />
-        <StatCard label="Refunded" value={formatINR(totalRefunded)} sub="Via credit notes" accent="var(--danger-500)" />
-        <StatCard label="Net revenue" value={formatINR(netRevenue)} sub="Paid − refunded" accent="var(--success-500)" />
-        <StatCard label="Avg / day" value={formatINR(Math.round(avgDaily))} sub={`${buckets.length} day window`} />
+        <StatCard label="Total paid" value={formatMoney(totalPaid, ctx.currency)} sub={`${totalPayments} payments`} accent="var(--brand-500)" />
+        <StatCard label="Refunded" value={formatMoney(totalRefunded, ctx.currency)} sub="Via credit notes" accent="var(--danger-500)" />
+        <StatCard label="Net revenue" value={formatMoney(netRevenue, ctx.currency)} sub="Paid − refunded" accent="var(--success-500)" />
+        <StatCard label="Avg / day" value={formatMoney(Math.round(avgDaily), ctx.currency)} sub={`${buckets.length} day window`} />
       </StatGrid>
 
       <SectionHeader>Daily payments</SectionHeader>
@@ -425,7 +425,7 @@ function RevenueDetail({ onClose, selectedDate }: { onClose: () => void; selecte
             labels={buckets.map((b) => shortDate(b.bucket))}
             color="var(--brand-500)"
             height={240}
-            yFormat={(v) => (v >= 1000 ? `₹${(v / 1000).toFixed(0)}k` : `₹${v}`)}
+            yFormat={(v) => formatMoneyCompact(v, ctx.currency)}
           />
         </div>
       )}
@@ -458,8 +458,8 @@ function BillsIssuedDetail({ onClose, selectedDate }: { onClose: () => void; sel
       {error && <KpiError msg={error} />}
       <StatGrid>
         <StatCard label="Bills issued" value={totalCount} sub={`${buckets.length} day window`} accent="var(--accent-500)" />
-        <StatCard label="Total billed" value={formatINR(totalBilled)} sub="Across all bills" />
-        <StatCard label="Avg bill" value={formatINR(Math.round(avgValue))} sub="Per issued bill" />
+        <StatCard label="Total billed" value={formatMoney(totalBilled, ctx.currency)} sub="Across all bills" />
+        <StatCard label="Avg bill" value={formatMoney(Math.round(avgValue), ctx.currency)} sub="Per issued bill" />
         <StatCard label="Avg / day" value={avgPerDay.toFixed(1)} sub="Bills per day" />
       </StatGrid>
 
@@ -521,9 +521,9 @@ function PendingPaymentsDetail({ onClose }: { onClose: () => void }) {
       {error && <KpiError msg={error} />}
       <StatGrid>
         <StatCard label="Open bills" value={data?.count ?? 0} accent="var(--warning-500)" />
-        <StatCard label="Total outstanding" value={formatINR(totalOutstanding)} accent="var(--danger-500)" />
-        <StatCard label="Total billed" value={formatINR(totalBilled)} />
-        <StatCard label="Collected" value={formatINR(Math.max(0, totalBilled - totalOutstanding))} accent="var(--success-500)" />
+        <StatCard label="Total outstanding" value={formatMoney(totalOutstanding, ctx.currency)} accent="var(--danger-500)" />
+        <StatCard label="Total billed" value={formatMoney(totalBilled, ctx.currency)} />
+        <StatCard label="Collected" value={formatMoney(Math.max(0, totalBilled - totalOutstanding), ctx.currency)} accent="var(--success-500)" />
       </StatGrid>
 
       <SectionHeader>Top patients by outstanding</SectionHeader>
@@ -533,7 +533,7 @@ function PendingPaymentsDetail({ onClose }: { onClose: () => void }) {
         <KpiEmpty msg="No open bills. Nice work." />
       ) : (
         <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: 14, marginBottom: 20 }}>
-          <HBarChart rows={top} color="var(--warning-500)" formatValue={(v) => formatINR(v)} />
+          <HBarChart rows={top} color="var(--warning-500)" formatValue={(v) => formatMoney(v, ctx.currency)} />
         </div>
       )}
 
@@ -541,7 +541,7 @@ function PendingPaymentsDetail({ onClose }: { onClose: () => void }) {
         <>
           <SectionHeader>By status</SectionHeader>
           <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: 14 }}>
-            <HBarChart rows={statusRows} color="var(--warning-500)" formatValue={(v) => formatINR(v)} />
+            <HBarChart rows={statusRows} color="var(--warning-500)" formatValue={(v) => formatMoney(v, ctx.currency)} />
           </div>
         </>
       )}

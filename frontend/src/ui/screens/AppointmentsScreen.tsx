@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiGet, apiPatch, apiPost } from '../../app/api';
+import { apiGet, apiPatch, apiPost, apiPostMultipart } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { AVAILABILITY_CHANGED_EVENT } from '../../app/events';
 import { Perm, usePerm } from '../../app/permissions';
@@ -7,6 +7,7 @@ import { Avatar, EmptyState, Spinner, StatusPill, labelStyle, useToast } from '.
 import { Icon } from '../shared/Icon';
 import { DatePickerChip } from '../shared/DatePickerChip';
 import { ListItemSkeleton, Skeleton } from '../shared/Skeleton';
+import { FaceScanModal } from '../shared/FaceScanModal';
 
 type AppointmentType = 'TIME' | 'QUEUE';
 
@@ -1132,7 +1133,8 @@ function formatDrName(name: string | undefined): string {
     onClose: () => void;
     onCreated: () => void;
   }) {
-    const { ctx } = useApp();
+    const { ctx, features } = useApp();
+    const { has } = usePerm();
     // 4-step wizard: 1 Patient → 2 Details → 3 Payment → 4 Confirm.
     // Step 3 collects payment info; the appointment + bill + payment are all
     // submitted together at step 4 so an abandoned wizard never leaves a
@@ -1146,6 +1148,12 @@ function formatDrName(name: string | undefined): string {
     const [payAmount, setPayAmount] = useState('');
     const [payRef, setPayRef] = useState('');
     const [payIdempKey] = useState(() => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`));
+    // Face-recognition state for step 1. Open the scanner modal, take a
+    // shot, POST /face/recognize, then either auto-pick (high
+    // confidence) or surface candidates so the front desk can confirm.
+    const [showFaceScanner, setShowFaceScanner] = useState(false);
+    const [faceMatches, setFaceMatches] = useState<Array<{ patientId: string; fullName: string; mrn?: string; score: number; confidence: 'high' | 'low' | 'none' }>>([]);
+    const [faceScanInfo, setFaceScanInfo] = useState<string | null>(null);
 
     // Step 1
     const [patientQuery, setPatientQuery] = useState('');
@@ -1154,7 +1162,18 @@ function formatDrName(name: string | undefined): string {
     const [selectedPatient, setSelectedPatient] = useState<PatientLite | null>(null);
 
     // Step 2
-    const [apptKind, setApptKind] = useState<AppointmentType>('TIME');
+    // When the clinic locks itself to one mode, default the wizard to
+    // that mode. 'BOTH' keeps the legacy default of TIME.
+    const apptModeSetting = useMemo(() => features.appointmentMode, [features.appointmentMode]);
+    const [apptKind, setApptKind] = useState<AppointmentType>(
+      apptModeSetting === 'QUEUE' ? 'QUEUE' : 'TIME',
+    );
+    // If the clinic admin changes the mode while the wizard is open,
+    // force the local pick to stay valid.
+    useEffect(() => {
+      if (apptModeSetting === 'TIME' && apptKind !== 'TIME') setApptKind('TIME');
+      else if (apptModeSetting === 'QUEUE' && apptKind !== 'QUEUE') setApptKind('QUEUE');
+    }, [apptModeSetting, apptKind]);
     const [date, setDate] = useState(defaultDate);
     const [slotStart, setSlotStart] = useState(''); // 'HH:MM' local
     const [slots, setSlots] = useState<SlotChoice[]>([]);
@@ -1368,6 +1387,66 @@ function formatDrName(name: string | undefined): string {
       setStep(2);
     }
 
+    // Called by FaceScanModal after the user captures a frame. POSTs
+    // to /face/recognize and either auto-picks the patient (high
+    // confidence) or surfaces the candidate list inline so the front
+    // desk can confirm before locking in the wrong chart.
+    async function handleFaceScan(blob: Blob, opts?: { preDetected?: boolean }) {
+      const form = new FormData();
+      form.append('image', blob, 'scan.jpg');
+      if (opts?.preDetected) form.append('pre_detected', 'true');
+      const res = await apiPostMultipart<{
+        matches: Array<{ patientId: string; fullName: string; mrn?: string; score: number; confidence: 'high' | 'low' | 'none' }>;
+        autoMatch: { patientId: string; fullName: string; mrn?: string; score: number; confidence: 'high' | 'low' | 'none' } | null;
+        facesDetected: number;
+      }>(ctx, '/face/recognize', form);
+
+      // Always pick the top match regardless of confidence band. The
+      // BE returns `matches` sorted by score desc; matches[0] is the
+      // highest-scoring patient. Confidence-band gating (auto vs
+      // confirm-list) was removed at the operator's request — they
+      // explicitly want the front desk to skip the click.
+      const top = res.matches[0];
+      if (top) {
+        try {
+          const full = await apiGet<PatientLite>(ctx, `/patients/${top.patientId}`);
+          setSelectedPatient(full);
+          setFaceMatches([]);
+          setFaceScanInfo(null);
+          setShowFaceScanner(false);
+          setStep(2);
+          return;
+        } catch (e) {
+          // If the patient fetch itself fails (deleted? perms?), surface
+          // a hint in the existing Face row instead of crashing.
+          setShowFaceScanner(false);
+          setFaceMatches([]);
+          setFaceScanInfo(`Matched ${top.fullName} but couldn't load the patient — try searching by name. (${e instanceof Error ? e.message : String(e)})`);
+          return;
+        }
+      }
+
+      // No matches at all.
+      setFaceMatches([]);
+      setShowFaceScanner(false);
+      setFaceScanInfo('No matching patient found. Try searching by name or phone.');
+    }
+
+    async function pickFaceCandidate(patientId: string) {
+      try {
+        const full = await apiGet<PatientLite>(ctx, `/patients/${patientId}`);
+        setSelectedPatient(full);
+        setFaceMatches([]);
+        setFaceScanInfo(null);
+        // Confirming a low-confidence candidate is the same intent as
+        // the auto-match path — the operator has now committed to a
+        // patient, so push them straight to step 2.
+        setStep(2);
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+      }
+    }
+
     function continueFromStep2() {
       if (!doctorId.trim()) { setError('Doctor is required.'); return; }
       if (apptKind === 'TIME' && !slotStart) { setError('Pick a time slot.'); return; }
@@ -1517,6 +1596,12 @@ function formatDrName(name: string | undefined): string {
                 query={patientQuery} onQuery={setPatientQuery}
                 patients={patients} loading={patientsLoading}
                 selected={selectedPatient} onPick={setSelectedPatient}
+                canScanFace={features.faceRecognition && has(Perm.FaceRecognize)}
+                onScanClick={() => { setFaceScanInfo(null); setShowFaceScanner(true); }}
+                faceMatches={faceMatches}
+                faceInfo={faceScanInfo}
+                onPickFaceMatch={pickFaceCandidate}
+                onClearFace={() => { setFaceMatches([]); setFaceScanInfo(null); }}
               />
             )}
 
@@ -1525,6 +1610,7 @@ function formatDrName(name: string | undefined): string {
                 patient={selectedPatient}
                 onChangePatient={() => setStep(1)}
                 apptKind={apptKind} setApptKind={setApptKind}
+                apptModeSetting={apptModeSetting}
                 date={date} setDate={setDate}
                 slotStart={slotStart} setSlotStart={setSlotStart}
                 slots={slots} slotsLoading={slotsLoading} slotMinutes={slotMinutes}
@@ -1626,27 +1712,103 @@ function formatDrName(name: string | undefined): string {
             )}
           </div>
         </div>
+
+        {showFaceScanner && (
+          <FaceScanModal
+            title="Identify patient by face"
+            hint="Position the patient's face in the frame and capture."
+            captureLabel="Capture & match"
+            onCancel={() => setShowFaceScanner(false)}
+            onCapture={handleFaceScan}
+          />
+        )}
       </div>
     );
   }
 
   function PatientStep({
     query, onQuery, patients, loading, selected, onPick,
+    canScanFace, onScanClick,
+    faceMatches, faceInfo, onPickFaceMatch, onClearFace,
   }: {
     query: string; onQuery: (v: string) => void;
     patients: PatientLite[]; loading: boolean;
     selected: PatientLite | null; onPick: (p: PatientLite) => void;
+    canScanFace: boolean;
+    onScanClick: () => void;
+    faceMatches: Array<{ patientId: string; fullName: string; mrn?: string; score: number; confidence: 'high' | 'low' | 'none' }>;
+    faceInfo: string | null;
+    onPickFaceMatch: (patientId: string) => void;
+    onClearFace: () => void;
   }) {
     return (
       <>
-        <div style={{ position: 'relative' }}>
-          <Icon name="search" size={15} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
-          <input value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Search by name or phone…"
-            style={{
-              width: '100%', height: 44, padding: '0 14px 0 40px',
-              background: 'var(--surface-muted)', border: '1.5px solid var(--brand-500)', borderRadius: 10,
-              fontSize: 14, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
-            }} />
+        {/* Face-recognition row. Sits above the typed search so the
+            quick path is visible first. The scan button is gated on
+            face:recognize permission. */}
+        {(faceMatches.length > 0 || faceInfo) && (
+          <div style={{ background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 12, padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <Icon name="camera" size={14} style={{ color: 'var(--brand-600)' }} />
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-700)', flex: 1 }}>
+                {faceMatches.length > 0 ? 'Possible matches — confirm one' : 'Face scan'}
+              </div>
+              <button type="button" onClick={onClearFace}
+                style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 2 }}>
+                <Icon name="x" size={14} />
+              </button>
+            </div>
+            {faceInfo && <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>{faceInfo}</div>}
+            {faceMatches.map((m) => (
+              <button key={m.patientId} type="button" onClick={() => onPickFaceMatch(m.patientId)}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: 12, width: '100%',
+                  padding: '10px 12px', textAlign: 'left',
+                  background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: 10,
+                  cursor: 'pointer',
+                }}>
+                <Avatar name={m.fullName} size={36} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.fullName}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1, fontVariantNumeric: 'tabular-nums' }}>
+                    {[m.mrn ? `#${m.mrn}` : null, `match ${Math.round(m.score * 100)}%`].filter(Boolean).join(' · ')}
+                  </div>
+                </div>
+                <span style={{
+                  padding: '2px 8px', borderRadius: 100, fontSize: 10, fontWeight: 700,
+                  background: m.confidence === 'high' ? 'var(--success-bg)' : 'var(--warning-bg)',
+                  color: m.confidence === 'high' ? 'var(--success-text)' : 'var(--warning-text)',
+                  textTransform: 'uppercase', letterSpacing: '0.04em',
+                }}>
+                  {m.confidence}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        <div style={{ display: 'flex', gap: 8 }}>
+          <div style={{ position: 'relative', flex: 1 }}>
+            <Icon name="search" size={15} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
+            <input value={query} onChange={(e) => onQuery(e.target.value)} placeholder="Search by name or phone…"
+              style={{
+                width: '100%', height: 44, padding: '0 14px 0 40px',
+                background: 'var(--surface-muted)', border: '1.5px solid var(--brand-500)', borderRadius: 10,
+                fontSize: 14, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
+              }} />
+          </div>
+          {canScanFace && (
+            <button type="button" onClick={onScanClick}
+              title="Identify by face"
+              style={{
+                height: 44, padding: '0 14px', display: 'flex', alignItems: 'center', gap: 6,
+                background: 'var(--brand-500)', color: 'var(--brand-text)',
+                border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer',
+                whiteSpace: 'nowrap',
+              }}>
+              <Icon name="camera" size={14} strokeWidth={2.5} /> Scan face
+            </button>
+          )}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, maxHeight: 380, overflowY: 'auto' }}>
@@ -1698,7 +1860,7 @@ function formatDrName(name: string | undefined): string {
 
   function DetailsStep({
     patient, onChangePatient,
-    apptKind, setApptKind,
+    apptKind, setApptKind, apptModeSetting,
     date, setDate, slotStart, setSlotStart, slots, slotsLoading, slotMinutes,
     doctorId, setDoctorId, doctors, doctorName, doctorsLoading,
     apptType, setApptType,
@@ -1710,6 +1872,7 @@ function formatDrName(name: string | undefined): string {
     patient: PatientLite | null;
     onChangePatient: () => void;
     apptKind: AppointmentType; setApptKind: (v: AppointmentType) => void;
+    apptModeSetting: 'TIME' | 'QUEUE' | 'BOTH';
     date: string; setDate: (v: string) => void;
     slotStart: string; setSlotStart: (v: string) => void;
     slots: SlotChoice[]; slotsLoading: boolean; slotMinutes: number;
@@ -1756,7 +1919,11 @@ function formatDrName(name: string | undefined): string {
           />
         </div>
 
-        {/* Appointment kind toggle */}
+        {/* Appointment kind toggle — only rendered when the clinic
+            allows BOTH. When the admin has locked the clinic to one
+            mode, the toggle is pointless; we just render a read-only
+            label so the operator still sees which mode they're in. */}
+        {apptModeSetting === 'BOTH' ? (
         <div>
           <label style={labelStyle}>Appointment type</label>
           <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10 }}>
@@ -1782,6 +1949,19 @@ function formatDrName(name: string | undefined): string {
             </div>
           )}
         </div>
+        ) : (
+          // Mode is locked by the clinic admin — show a read-only
+          // indicator so the operator knows which mode is active.
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '10px 14px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10 }}>
+            <Icon name={apptModeSetting === 'QUEUE' ? 'users' : 'clock'} size={14} style={{ color: 'var(--text-muted)' }} />
+            <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>
+              {apptModeSetting === 'QUEUE' ? 'Walk-in queue' : 'Time slot'}
+            </div>
+            <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginLeft: 4 }}>
+              (clinic mode)
+            </div>
+          </div>
+        )}
 
         <div>
           <label style={labelStyle}>Date</label>

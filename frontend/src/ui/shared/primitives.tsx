@@ -164,9 +164,15 @@ export const formatMoney = (
       ? currency
       : 'INR';
   try {
+    // `narrowSymbol` forces the short currency symbol (¥, $, ₹) even
+    // when the chosen locale would otherwise disambiguate with a code
+    // prefix — e.g. en-IN renders JPY as "JP¥1,200" by default; with
+    // narrowSymbol it becomes just "¥1,200". Far cleaner across the
+    // board, no locale-juggling needed.
     return new Intl.NumberFormat(locale, {
       style: 'currency',
       currency: code,
+      currencyDisplay: 'narrowSymbol',
       maximumFractionDigits: 0,
     }).format(Number(n));
   } catch {
@@ -179,6 +185,34 @@ export const formatMoney = (
  * through. New code should call `formatMoney(n, bill.currency)`.
  */
 export const formatINR = (n: number | null | undefined) => formatMoney(n, 'INR');
+
+/**
+ * Compact money formatter for tight UI like chart axes. Uses
+ * Intl.NumberFormat's `notation: 'compact'` so 1500 → "₹1.5K", 1_200_000
+ * → "₹1.2M" in INR, with the right symbol per currency.
+ */
+export const formatMoneyCompact = (
+  n: number | null | undefined,
+  currency: string | null | undefined,
+  locale = 'en-IN',
+): string => {
+  if (n === undefined || n === null || isNaN(Number(n))) return '—';
+  const code =
+    typeof currency === 'string' && /^[A-Z]{3}$/.test(currency)
+      ? currency
+      : 'INR';
+  try {
+    return new Intl.NumberFormat(locale, {
+      style: 'currency',
+      currency: code,
+      currencyDisplay: 'narrowSymbol',
+      notation: 'compact',
+      maximumFractionDigits: 1,
+    }).format(Number(n));
+  } catch {
+    return `${code} ${Number(n).toLocaleString(locale)}`;
+  }
+};
 
 export const formatDate = (str: string | Date | null | undefined) => {
   if (!str) return '—';

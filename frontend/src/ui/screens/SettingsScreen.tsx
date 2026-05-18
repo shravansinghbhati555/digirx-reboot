@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiDelete, apiGet, apiPatch, apiPost, apiPut } from '../../app/api';
+import { apiDelete, apiGet, apiPatch, apiPost, apiPostMultipart, apiPut } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { emitAvailabilityChanged } from '../../app/events';
 import { Perm, type PermName } from '../../app/permissions';
@@ -31,6 +31,7 @@ type ClinicSettings = {
       whatsapp?: { enabled: boolean };
       quietHours?: QuietHoursSettings;
     };
+    faceRecognition?: { enabled: boolean };
   };
   branding: ClinicBranding;
 };
@@ -52,6 +53,63 @@ const COMMON_TIMEZONES = [
   'Australia/Sydney',
   'UTC',
 ];
+
+// Best-effort timezone → ISO 4217 currency lookup. Exact-zone entries
+// win first; if none match, we fall back to the region prefix
+// ('Asia/Foo' → INR is wrong, so this only kicks in for unambiguous
+// regions). The operator can always override the auto-filled value
+// manually after — we never lock the currency field.
+const TIMEZONE_TO_CURRENCY: Record<string, string> = {
+  'Asia/Kolkata': 'INR',
+  'Asia/Colombo': 'LKR',
+  'Asia/Karachi': 'PKR',
+  'Asia/Dhaka': 'BDT',
+  'Asia/Kathmandu': 'NPR',
+  'Asia/Dubai': 'AED',
+  'Asia/Riyadh': 'SAR',
+  'Asia/Qatar': 'QAR',
+  'Asia/Singapore': 'SGD',
+  'Asia/Tokyo': 'JPY',
+  'Asia/Seoul': 'KRW',
+  'Asia/Shanghai': 'CNY',
+  'Asia/Hong_Kong': 'HKD',
+  'Asia/Bangkok': 'THB',
+  'Asia/Jakarta': 'IDR',
+  'Asia/Manila': 'PHP',
+  'Asia/Kuala_Lumpur': 'MYR',
+  'Europe/London': 'GBP',
+  'Europe/Berlin': 'EUR',
+  'Europe/Paris': 'EUR',
+  'Europe/Madrid': 'EUR',
+  'Europe/Rome': 'EUR',
+  'Europe/Amsterdam': 'EUR',
+  'Europe/Dublin': 'EUR',
+  'Europe/Zurich': 'CHF',
+  'Europe/Stockholm': 'SEK',
+  'Europe/Oslo': 'NOK',
+  'Europe/Moscow': 'RUB',
+  'Europe/Istanbul': 'TRY',
+  'America/New_York': 'USD',
+  'America/Chicago': 'USD',
+  'America/Los_Angeles': 'USD',
+  'America/Toronto': 'CAD',
+  'America/Vancouver': 'CAD',
+  'America/Mexico_City': 'MXN',
+  'America/Sao_Paulo': 'BRL',
+  'America/Buenos_Aires': 'ARS',
+  'Africa/Cairo': 'EGP',
+  'Africa/Johannesburg': 'ZAR',
+  'Africa/Nairobi': 'KES',
+  'Africa/Lagos': 'NGN',
+  'Australia/Sydney': 'AUD',
+  'Australia/Melbourne': 'AUD',
+  'Pacific/Auckland': 'NZD',
+  UTC: 'USD',
+};
+
+function currencyForTimezone(tz: string): string | null {
+  return TIMEZONE_TO_CURRENCY[tz] ?? null;
+}
 
 type SettingsTab = 'clinic' | 'branches' | 'availability' | 'notif_cfg' | 'audit' | 'about';
 
@@ -135,7 +193,7 @@ export function SettingsScreen() {
 }
 
 function ClinicTab() {
-  const { ctx, permissions } = useApp();
+  const { ctx, permissions, refreshMe } = useApp();
   const toast = useToast();
   const canRead = permissions.has('clinic:read');
   const canWrite = permissions.has('clinic:write');
@@ -157,6 +215,16 @@ function ClinicTab() {
   const [logoUrl, setLogoUrl] = useState('');
   const [primaryColor, setPrimaryColor] = useState('');
 
+  // Modules
+  const [faceRecognitionEnabled, setFaceRecognitionEnabled] = useState(false);
+
+  // Logo upload state. `logoTick` is bumped after each upload/remove so
+  // the <img> preview's `?v=` query forces the browser to refetch
+  // rather than serving a stale cached copy of the previous logo.
+  const [logoUploading, setLogoUploading] = useState(false);
+  const [logoError, setLogoError] = useState<string | null>(null);
+  const [logoTick, setLogoTick] = useState(0);
+
   const [saving, setSaving] = useState(false);
 
   function settingsPath() {
@@ -173,6 +241,7 @@ function ClinicTab() {
     setDisplayName(res.settings.branding?.displayName ?? '');
     setLogoUrl(res.settings.branding?.logoUrl ?? '');
     setPrimaryColor(res.settings.branding?.primaryColor ?? '');
+    setFaceRecognitionEnabled(res.settings.modules?.faceRecognition?.enabled ?? false);
   }
 
   async function load() {
@@ -200,20 +269,103 @@ function ClinicTab() {
       slotMinutes !== String(data.settings.appointments?.slotMinutesDefault ?? 15) ||
       displayName.trim() !== (data.settings.branding?.displayName ?? '') ||
       logoUrl.trim() !== (data.settings.branding?.logoUrl ?? '') ||
-      primaryColor.trim() !== (data.settings.branding?.primaryColor ?? '')
+      primaryColor.trim() !== (data.settings.branding?.primaryColor ?? '') ||
+      faceRecognitionEnabled !== (data.settings.modules?.faceRecognition?.enabled ?? false)
     );
-  }, [data, name, timezone, currency, apptMode, slotMinutes, displayName, logoUrl, primaryColor]);
+  }, [data, name, timezone, currency, apptMode, slotMinutes, displayName, logoUrl, primaryColor, faceRecognitionEnabled]);
+
+  // Logo upload is the only field that commits immediately (multipart
+  // uploads don't queue cleanly), but we DELIBERATELY do not call full
+  // hydrate() here — that would clobber the user's pending edits to
+  // every other field, which feels like "everything got auto-saved"
+  // even when the user hasn't clicked Save. We only update the
+  // logo-related state and patch the saved-snapshot so isDirty stays
+  // correct.
+  function applyLogoResponse(next: ClinicSettingsResp) {
+    const nextLogo = next.settings.branding?.logoUrl ?? '';
+    setLogoUrl(nextLogo);
+    setData((prev) =>
+      prev
+        ? {
+            ...prev,
+            settings: {
+              ...prev.settings,
+              branding: {
+                displayName: prev.settings.branding?.displayName ?? null,
+                logoUrl: nextLogo || null,
+                primaryColor: prev.settings.branding?.primaryColor ?? null,
+              },
+            },
+          }
+        : prev,
+    );
+    setLogoTick((t) => t + 1);
+  }
+
+  async function handleLogoFile(file: File | null) {
+    if (!file || !data) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) {
+      setLogoError('Use a PNG, JPG, or WebP image.');
+      return;
+    }
+    if (file.size > 2 * 1024 * 1024) {
+      setLogoError('Logo must be 2 MB or smaller.');
+      return;
+    }
+    setLogoError(null);
+    setLogoUploading(true);
+    try {
+      const fd = new FormData();
+      fd.append('image', file);
+      const next = await apiPostMultipart<ClinicSettingsResp>(
+        ctx,
+        `/clinics/${encodeURIComponent(data.clinic._id)}/logo`,
+        fd,
+      );
+      applyLogoResponse(next);
+      toast('Logo uploaded', 'success');
+    } catch (e) {
+      setLogoError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLogoUploading(false);
+    }
+  }
+
+  async function removeLogo() {
+    if (!data) return;
+    setLogoUploading(true);
+    setLogoError(null);
+    try {
+      const next = await apiDelete<ClinicSettingsResp>(
+        ctx,
+        `/clinics/${encodeURIComponent(data.clinic._id)}/logo`,
+      );
+      applyLogoResponse(next);
+      toast('Logo removed', 'success');
+    } catch (e) {
+      setLogoError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setLogoUploading(false);
+    }
+  }
 
   async function save() {
     if (!isDirty) return;
     setSaving(true); setError(null);
     try {
+      // logoUrl is intentionally omitted here — it's managed by the
+      // dedicated POST/DELETE /clinics/:id/logo endpoints which write
+      // the S3 key straight to the clinic doc. Including it in this
+      // PATCH would hit the URL-validator and reject any uploaded-logo
+      // value ("branding.logoUrl must be a URL address").
       const body: Record<string, unknown> = {
         appointments: { mode: apptMode, slotMinutesDefault: Number(slotMinutes) || 15 },
         branding: {
           displayName: displayName.trim() || null,
-          logoUrl: logoUrl.trim() || null,
           primaryColor: primaryColor.trim() || null,
+        },
+        modules: {
+          faceRecognition: { enabled: faceRecognitionEnabled },
         },
       };
       if (name.trim() && name.trim() !== data?.clinic.name) body.name = name.trim();
@@ -222,6 +374,11 @@ function ClinicTab() {
 
       const updated = await apiPatch<ClinicSettingsResp>(ctx, settingsPath(), body);
       hydrate(updated);
+      // Refetch /me so app-wide context (ctx.currency, ctx.branding,
+      // features.appointmentMode, …) reflects the changes immediately.
+      // Without this, the Dashboard's currency symbol and any other
+      // /me-derived UI stays on the previous value until next reload.
+      void refreshMe();
       toast('Clinic settings saved', 'success');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -248,7 +405,19 @@ function ClinicTab() {
                 <input
                   list="tz-options"
                   value={timezone}
-                  onChange={(e) => setTimezone(e.target.value)}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setTimezone(next);
+                    // Auto-fill currency from the mapping when the picked
+                    // timezone has a known canonical currency. We only
+                    // overwrite when the lookup returns a hit, so partial
+                    // typing ("Asia/") doesn't blank out the field, and
+                    // an operator who deliberately set a different
+                    // currency for a known TZ can still re-edit it
+                    // manually after.
+                    const mapped = currencyForTimezone(next);
+                    if (mapped) setCurrency(mapped);
+                  }}
                   disabled={!canWrite}
                   placeholder="Asia/Kolkata"
                   style={{
@@ -262,7 +431,19 @@ function ClinicTab() {
                   {COMMON_TIMEZONES.map((tz) => <option key={tz} value={tz} />)}
                 </datalist>
               </div>
-              <Field label="Currency (ISO 4217)" value={currency} onChange={(v) => setCurrency(v.toUpperCase())} placeholder="INR" />
+              <div>
+                <Field label="Currency (ISO 4217)" value={currency} onChange={(v) => setCurrency(v.toUpperCase())} placeholder="INR" />
+                {currencyForTimezone(timezone) && currency !== currencyForTimezone(timezone) && (
+                  <div style={{ marginTop: 4, fontSize: 11, color: 'var(--text-subtle)' }}>
+                    Auto-suggested <code style={{ fontFamily: 'monospace' }}>{currencyForTimezone(timezone)}</code> for {timezone} —
+                    {' '}
+                    <button type="button" onClick={() => setCurrency(currencyForTimezone(timezone)!)}
+                      style={{ background: 'none', border: 'none', color: 'var(--brand-500)', fontWeight: 600, fontSize: 11, cursor: 'pointer', padding: 0 }}>
+                      use it
+                    </button>
+                  </div>
+                )}
+              </div>
               {/* <Row label="Clinic ID">
                 <code style={{ fontFamily: 'monospace', fontSize: 11 }}>{data.clinic._id}</code>
               </Row> */}
@@ -273,7 +454,82 @@ function ClinicTab() {
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Branding</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
               <Field label="Display name" value={displayName} onChange={setDisplayName} placeholder="Shown on prescriptions & receipts" />
-              <Field label="Logo URL" value={logoUrl} onChange={setLogoUrl} placeholder="https://…/logo.png" />
+              <div>
+                <label style={labelStyle}>Logo</label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10 }}>
+                  {/* Preview. When `logoUrl` is a legacy http(s) URL we
+                      use it directly; otherwise it's an S3 key and we
+                      read through the BE's /clinics/:id/logo endpoint
+                      (which is public so the <img> works without auth
+                      header juggling). */}
+                  <div style={{ width: 72, height: 72, borderRadius: 10, background: 'var(--surface)', border: '1.5px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', flexShrink: 0, position: 'relative' }}>
+                    {logoUrl && data?.clinic._id ? (
+                      <img
+                        // `logoTick` is part of the key so React tears
+                        // the <img> down + remounts on every upload,
+                        // which forces a fresh fetch even when the
+                        // URL (sans query) didn't change.
+                        key={`logo-${logoTick}`}
+                        src={
+                          /^https?:\/\//i.test(logoUrl)
+                            ? logoUrl
+                            : `${ctx.apiBaseUrl}/clinics/${data.clinic._id}/logo?v=${logoTick}`
+                        }
+                        alt="Clinic logo"
+                        style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }}
+                      />
+                    ) : (
+                      <Icon name="folder" size={22} style={{ color: 'var(--text-subtle)', opacity: 0.5 }} />
+                    )}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>
+                      PNG, JPG, or WebP — up to 2 MB. Shown on prescriptions and receipts.
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      <label style={{
+                        display: 'inline-flex', alignItems: 'center', gap: 6,
+                        height: 32, padding: '0 12px', borderRadius: 8,
+                        background: 'var(--brand-500)', color: 'var(--brand-text)',
+                        fontSize: 12, fontWeight: 600,
+                        cursor: canWrite && !logoUploading ? 'pointer' : 'not-allowed',
+                        opacity: canWrite && !logoUploading ? 1 : 0.6,
+                      }}>
+                        {logoUploading ? <Spinner /> : <Icon name="upload" size={12} strokeWidth={2.5} />}
+                        {logoUrl ? 'Replace' : 'Upload'}
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          disabled={!canWrite || logoUploading}
+                          onChange={(e) => {
+                            const f = e.target.files?.[0] ?? null;
+                            // Reset value so picking the same file
+                            // twice in a row still fires onChange.
+                            e.currentTarget.value = '';
+                            void handleLogoFile(f);
+                          }}
+                          style={{ display: 'none' }}
+                        />
+                      </label>
+                      {logoUrl && (
+                        <button type="button" onClick={() => void removeLogo()}
+                          disabled={!canWrite || logoUploading}
+                          style={{
+                            height: 32, padding: '0 12px', borderRadius: 8,
+                            background: 'none', border: '1.5px solid var(--border)',
+                            color: 'var(--text-muted)', fontSize: 12, fontWeight: 600,
+                            cursor: canWrite && !logoUploading ? 'pointer' : 'not-allowed',
+                          }}>
+                          Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                </div>
+                {logoError && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: 'var(--danger-500)' }}>{logoError}</div>
+                )}
+              </div>
               <div>
                 <label style={labelStyle}>Primary color</label>
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -294,8 +550,13 @@ function ClinicTab() {
           </div>
 
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
-            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Appointments</div>
-            <div style={{ marginBottom: 14 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>Appointments</div>
+            <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginBottom: 12 }}>
+              <strong>Time</strong> = scheduled time slots only.
+              <strong> Queue</strong> = walk-in tokens only.
+              <strong> Both</strong> = front desk picks per booking.
+            </div>
+            <div>
               <label style={labelStyle}>Mode</label>
               <div style={{ display: 'flex', gap: 8 }}>
                 {(['TIME', 'QUEUE', 'BOTH'] as const).map((m) => (
@@ -306,7 +567,22 @@ function ClinicTab() {
                 ))}
               </div>
             </div>
-            <Field label="Default slot minutes" value={slotMinutes} onChange={setSlotMinutes} placeholder="15" />
+          </div>
+
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Modules</div>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 14px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, cursor: canWrite ? 'pointer' : 'not-allowed', opacity: canWrite ? 1 : 0.7 }}>
+              <input type="checkbox" checked={faceRecognitionEnabled}
+                onChange={(e) => setFaceRecognitionEnabled(e.target.checked)}
+                disabled={!canWrite}
+                style={{ marginTop: 2, accentColor: 'var(--brand-500)' }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Face recognition</div>
+                <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 2, lineHeight: 1.45 }}>
+                  Allows the front desk to enroll a patient's face at registration and identify returning patients during booking. Requires the <code style={{ fontFamily: 'monospace' }}>face-svc</code> sidecar to be running and roles to have the <code style={{ fontFamily: 'monospace' }}>face:enroll</code> / <code style={{ fontFamily: 'monospace' }}>face:recognize</code> permissions.
+                </div>
+              </div>
+            </label>
           </div>
 
           {canWrite ? (

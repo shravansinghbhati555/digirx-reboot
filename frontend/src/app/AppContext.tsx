@@ -22,11 +22,23 @@ export type ScreenKey =
   | 'roles'
   | 'settings';
 
+// Per-clinic feature toggles returned alongside /me. Mirrors a slice of
+// the BE's `modules` settings shape — only the flags the FE actually
+// reads at render time to hide/show optional UI surfaces.
+export type Features = {
+  faceRecognition: boolean;
+  inventory: boolean;
+  // Drives the BookSheet kind selector. 'BOTH' keeps the existing
+  // TIME/QUEUE toggle; the others lock the wizard to that one mode.
+  appointmentMode: 'TIME' | 'QUEUE' | 'BOTH';
+};
+
 type AppState = {
   ctx: DevContext;
   setCtx: (next: DevContext) => void;
   loggedIn: boolean;
   permissions: Set<string>;
+  features: Features;
   loadingMe: boolean;
   meError: string | null;
   refreshMe: () => Promise<void>;
@@ -76,7 +88,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const saved = localStorage.getItem('digirx.theme');
     return saved === 'dark' ? 'dark' : 'light';
   });
-  const [meData, setMeData] = useState<{ permissions: string[]; user?: { name?: string; fullName?: string; email?: string } } | null>(null);
+  const [meData, setMeData] = useState<{ permissions: string[]; features?: Partial<Features>; user?: { name?: string; fullName?: string; email?: string } } | null>(null);
   const [loadingMe, setLoadingMe] = useState(false);
   const [meError, setMeError] = useState<string | null>(null);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | undefined>();
@@ -125,8 +137,17 @@ export function AppProvider({ children }: { children: ReactNode }) {
     try {
       const data = await apiGet<{
         permissions: string[];
+        features?: Partial<Features>;
         user?: { name?: string; fullName?: string; email?: string };
-        clinic?: { name?: string; currency?: string };
+        clinic?: {
+          name?: string;
+          currency?: string;
+          branding?: {
+            displayName?: string | null;
+            logoUrl?: string | null;
+            primaryColor?: string | null;
+          } | null;
+        };
       }>(ctx, '/me');
       setMeData(data);
       // Persist email/fullName/permissions for header display.
@@ -138,6 +159,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
         permissions: data.permissions,
         clinicName: data.clinic?.name ?? ctx.clinicName,
         currency: data.clinic?.currency ?? ctx.currency,
+        branding: data.clinic?.branding
+          ? {
+              displayName: data.clinic.branding.displayName ?? null,
+              logoUrl: data.clinic.branding.logoUrl ?? null,
+              primaryColor: data.clinic.branding.primaryColor ?? null,
+            }
+          : ctx.branding,
       };
       saveContext(next);
       setCtxState(next);
@@ -166,12 +194,26 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   const permissions = useMemo(() => new Set(meData?.permissions ?? ctx.permissions ?? []), [meData, ctx.permissions]);
+  // Feature flags default to off when /me hasn't loaded yet so optional
+  // UI surfaces stay hidden during the brief first-paint window — better
+  // than flashing them then yanking them away on resolve. appointmentMode
+  // defaults to 'BOTH' so the BookSheet stays maximally useful before the
+  // real value lands.
+  const features = useMemo<Features>(
+    () => ({
+      faceRecognition: meData?.features?.faceRecognition ?? false,
+      inventory: meData?.features?.inventory ?? false,
+      appointmentMode: meData?.features?.appointmentMode ?? 'BOTH',
+    }),
+    [meData],
+  );
 
   const value: AppState = {
     ctx,
     setCtx,
     loggedIn,
     permissions,
+    features,
     loadingMe,
     meError,
     refreshMe,

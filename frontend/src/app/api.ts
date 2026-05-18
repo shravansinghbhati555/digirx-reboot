@@ -15,6 +15,16 @@ export async function apiPost<T>(ctx: DevContext, path: string, body: unknown): 
   });
 }
 
+// Multipart upload. Don't set Content-Type — the browser appends the
+// correct multipart boundary automatically. Used by the face-recognition
+// flow (and ready for any future image / file uploads).
+export async function apiPostMultipart<T>(ctx: DevContext, path: string, form: FormData): Promise<T> {
+  return await apiFetch<T>(ctx, path, {
+    method: 'POST',
+    body: form,
+  });
+}
+
 export async function apiPut<T>(ctx: DevContext, path: string, body: unknown): Promise<T> {
   return await apiFetch<T>(ctx, path, {
     method: 'PUT',
@@ -38,7 +48,7 @@ export async function apiDelete<T>(ctx: DevContext, path: string): Promise<T> {
 async function apiFetch<T>(
   ctx: DevContext,
   path: string,
-  init: { method: string; headers?: Record<string, string>; body?: string },
+  init: { method: string; headers?: Record<string, string>; body?: BodyInit },
   attempt: number = 0,
 ): Promise<T> {
   const res = await fetch(`${ctx.apiBaseUrl}${path}`, {

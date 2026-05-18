@@ -383,28 +383,28 @@ export function EncounterScreen() {
     });
 
     return (
-      <div style={{ padding: '32px 60px', width: '100%', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 32, boxSizing: 'border-box' }}>
+      <div style={{ padding: '20px 32px', width: '100%', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 18, boxSizing: 'border-box' }}>
         <div>
-          <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 24, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.5px' }}>Clinical Encounter</h1>
-          <p style={{ fontSize: 14, color: 'var(--text-muted)', marginTop: 4 }}>Manage your active queue and start new patient sessions.</p>
+          <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.5px' }}>Clinical Encounter</h1>
+          <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>Manage your active queue and start new patient sessions.</p>
         </div>
 
         {/* Top Section: Start Session (Horizontal Bar) */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', paddingLeft: 4 }}>Start New Session</div>
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, padding: '24px 32px', display: 'flex', alignItems: 'center', gap: 40, boxShadow: '0 4px 20px rgba(15,23,42,0.04)' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', paddingLeft: 2 }}>Start New Session</div>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 20, boxShadow: '0 2px 8px rgba(15,23,42,0.03)' }}>
             {/* Patient Picker */}
-            <div style={{ flex: 1.5, minWidth: 300 }}>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>Patient</label>
+            <div style={{ flex: 1.5, minWidth: 260 }}>
+              <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Patient</label>
               {patient ? (
-                <div style={{ display: 'flex', alignItems: 'center', gap: 14, padding: '8px 12px', background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 14 }}>
-                  <Avatar name={patient.fullName} size={44} />
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '6px 10px', background: 'var(--brand-50)', border: '1.5px solid var(--brand-100)', borderRadius: 8 }}>
+                  <Avatar name={patient.fullName} size={36} />
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--brand-700)' }}>{patient.fullName}</div>
-                    <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>{meta || 'No details on file'}</div>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--brand-700)' }}>{patient.fullName}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{meta || 'No details on file'}</div>
                   </div>
                   <button onClick={clearPatient}
-                    style={{ background: 'var(--surface)', border: '1px solid var(--brand-200)', color: 'var(--brand-600)', fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: '6px 12px', borderRadius: 10, transition: 'all 0.2s' }}
+                    style={{ background: 'var(--surface)', border: '1px solid var(--brand-200)', color: 'var(--brand-600)', fontSize: 11, fontWeight: 700, cursor: 'pointer', padding: '5px 10px', borderRadius: 6, transition: 'all 0.2s' }}
                     onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--brand-100)')}
                     onMouseLeave={(e) => (e.currentTarget.style.background = 'var(--surface)')}>
                     Change
@@ -412,20 +412,20 @@ export function EncounterScreen() {
                 </div>
               ) : (
                 <div style={{ position: 'relative' }}>
-                  <Icon name="search" size={16} style={{ position: 'absolute', left: 14, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
+                  <Icon name="search" size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
                   <input value={patientQuery} onChange={(e) => setPatientQuery(e.target.value)}
                     placeholder="Search by name or phone…"
                     style={{
-                      width: '100%', height: 48, padding: '0 14px 0 44px',
-                      background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 14,
-                      fontSize: 14, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
+                      width: '100%', height: 38, padding: '0 12px 0 36px',
+                      background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 8,
+                      fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
                       transition: 'border-color 0.2s'
                     }}
                     onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--brand-400)')}
                     onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
                   />
                   {patientQuery.trim() && (
-                    <div style={{ position: 'absolute', top: '110%', left: 0, right: 0, zIndex: 100, border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden', background: 'var(--surface)', boxShadow: '0 12px 32px rgba(15,23,42,0.12)', maxHeight: 320, overflowY: 'auto' }}>
+                    <div style={{ position: 'absolute', top: '110%', left: 0, right: 0, zIndex: 100, border: '1px solid var(--border)', borderRadius: 8, overflow: 'hidden', background: 'var(--surface)', boxShadow: '0 12px 32px rgba(15,23,42,0.12)', maxHeight: 280, overflowY: 'auto' }}>
                       {searching && <div style={{ padding: 16, textAlign: 'center', fontSize: 13, color: 'var(--text-subtle)' }}>Searching patients…</div>}
                       {!searching && patientResults.length === 0 && <div style={{ padding: 16, textAlign: 'center', fontSize: 13, color: 'var(--text-subtle)' }}>No matches found.</div>}
                       {patientResults.map((p) => (
@@ -447,19 +447,19 @@ export function EncounterScreen() {
             </div>
 
             {/* Doctor Info */}
-            <div style={{ flex: 1, minWidth: 200, borderLeft: '1px solid var(--border)', paddingLeft: 40 }}>
-              <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 10 }}>Doctor</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-                <Avatar name={doctorName} size={44} />
+            <div style={{ flex: 1, minWidth: 180, borderLeft: '1px solid var(--border)', paddingLeft: 20 }}>
+              <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Doctor</label>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <Avatar name={doctorName} size={36} />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>{doctorName}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>{doctorSubtitle}</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{doctorName}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{doctorSubtitle}</div>
                 </div>
               </div>
             </div>
 
             {/* Action Buttons */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, minWidth: 320, justifyContent: 'flex-end', borderLeft: '1px solid var(--border)', paddingLeft: 40 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'flex-end', borderLeft: '1px solid var(--border)', paddingLeft: 20 }}>
               {/* <button onClick={() => setScreen('appointments')}
                 style={{ padding: '0 20px', height: 48, background: 'none', border: '1.5px solid var(--border)', borderRadius: 14, fontSize: 14, fontWeight: 600, color: 'var(--text)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.2s' }}
                 onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-muted)'; e.currentTarget.style.borderColor = 'var(--text-subtle)'; }}
@@ -468,56 +468,61 @@ export function EncounterScreen() {
               </button> */}
               <button onClick={startEncounter} disabled={creating || !patient}
                 style={{
-                  padding: '0 28px', height: 48, borderRadius: 14,
+                  padding: '0 18px', height: 38, borderRadius: 8,
                   background: (creating || !patient) ? 'var(--surface-muted)' : 'var(--brand-600)',
                   color: (creating || !patient) ? 'var(--text-muted)' : 'white',
-                  fontSize: 14, fontWeight: 700,
+                  fontSize: 13, fontWeight: 700,
                   cursor: creating ? 'wait' : (!patient ? 'not-allowed' : 'pointer'),
-                  display: 'flex', alignItems: 'center', gap: 10, boxShadow: (creating || !patient) ? 'none' : '0 4px 12px rgba(79,70,229,0.2)',
+                  display: 'flex', alignItems: 'center', gap: 8,
+                  boxShadow: (creating || !patient) ? 'none' : '0 2px 6px rgba(79,70,229,0.18)',
                   transition: 'all 0.2s',
                   border: (creating || !patient) ? '1px solid var(--border)' : 'none'
                 }}
                 onMouseEnter={(e) => { if (!creating && patient) e.currentTarget.style.background = 'var(--brand-700)'; }}
                 onMouseLeave={(e) => { if (!creating && patient) e.currentTarget.style.background = 'var(--brand-600)'; }}>
-                {creating ? <Spinner color="var(--text-subtle)" /> : <><Icon name="play" size={16} strokeWidth={2.5} /> Start session</>}
+                {creating ? <Spinner color="var(--text-subtle)" /> : <><Icon name="play" size={14} strokeWidth={2.5} /> Start session</>}
               </button>
             </div>
           </div>
         </div>
 
-        {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 14, padding: '12px 20px', fontSize: 13, color: 'var(--danger-600)', fontWeight: 500 }}>{error}</div>}
+        {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: 'var(--danger-600)', fontWeight: 500 }}>{error}</div>}
 
-        {/* Bottom Section: Side-by-Side Lists */}
-        <div style={{ display: 'flex', gap: 32, flex: 1, minHeight: 0 }}>
+        {/* Bottom Section: Side-by-Side Lists.
+            No `flex: 1` on the row — these cards size to their content
+            (plus a sensible min/max) instead of stretching to fill the
+            viewport. That kills the empty-middle look when the queue
+            is empty. */}
+        <div style={{ display: 'flex', gap: 16, height: 460 }}>
           {/* Patients Waiting */}
-          <div style={{ flex: 1, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 4px 20px rgba(15,23,42,0.02)' }}>
-            <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(248,250,252,0.5)' }}>
+          <div style={{ flex: 1, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 2px 8px rgba(15,23,42,0.02)' }}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--surface-muted)' }}>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>Patients waiting</div>
-                <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{queue.length} in current queue</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>Patients waiting</div>
+                <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1 }}>{queue.length} in current queue</div>
               </div>
-              <div style={{ padding: '6px 12px', background: 'var(--brand-100)', color: 'var(--brand-700)', borderRadius: 20, fontSize: 11, fontWeight: 700, textTransform: 'uppercase' }}>Live Queue</div>
+              <div style={{ padding: '4px 10px', background: 'var(--brand-100)', color: 'var(--brand-700)', borderRadius: 6, fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>Live Queue</div>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
               {loadingQueue ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {Array.from({ length: 4 }).map((_, i) => <ListItemSkeleton key={i} />)}
                 </div>
               ) : queue.length === 0 ? (
-                <div style={{ padding: 80, textAlign: 'center' }}>
-                  <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'var(--surface-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
-                    <Icon name="users" size={20} color="var(--text-subtle)" />
+                <div style={{ padding: '32px 16px', textAlign: 'center' }}>
+                  <div style={{ width: 36, height: 36, borderRadius: 8, background: 'var(--surface-muted)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 10px' }}>
+                    <Icon name="users" size={16} color="var(--text-subtle)" />
                   </div>
-                  <div style={{ fontSize: 14, color: 'var(--text-subtle)' }}>No patients in the queue.</div>
+                  <div style={{ fontSize: 13, color: 'var(--text-subtle)' }}>No patients in the queue.</div>
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
                   {queue.map((a) => (
                     <button key={a._id} onClick={() => startFromQueue(a)}
                       style={{
-                        width: '100%', display: 'flex', alignItems: 'center', gap: 14, padding: '14px 16px',
-                        textAlign: 'left', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer', borderRadius: 16,
+                        width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px',
+                        textAlign: 'left', background: 'var(--surface)', border: '1px solid var(--border)', cursor: 'pointer', borderRadius: 8,
                         transition: 'all 0.2s', position: 'relative', overflow: 'hidden'
                       }}
                       onMouseEnter={(e) => {
@@ -556,19 +561,19 @@ export function EncounterScreen() {
           </div>
 
           {/* Recent Encounters */}
-          <div style={{ flex: 1, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 4px 20px rgba(15,23,42,0.02)' }}>
-            <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(248,250,252,0.5)' }}>
+          <div style={{ flex: 1, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 2px 8px rgba(15,23,42,0.02)' }}>
+            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--surface-muted)', gap: 10 }}>
               <div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>Recent encounters</div>
-                <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>Sessions from last 30 days</div>
+                <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>Recent encounters</div>
+                <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1 }}>Sessions from last 30 days</div>
               </div>
-              <div style={{ position: 'relative', width: 180 }}>
-                <Icon name="search" size={13} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
+              <div style={{ position: 'relative', width: 170 }}>
+                <Icon name="search" size={12} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
                 <input value={recentQuery} onChange={(e) => setRecentQuery(e.target.value)}
                   placeholder="Filter sessions…"
                   style={{
-                    width: '100%', height: 32, padding: '0 10px 0 32px',
-                    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
+                    width: '100%', height: 30, padding: '0 10px 0 30px',
+                    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6,
                     fontSize: 12, color: 'var(--text)', outline: 'none', transition: 'all 0.2s'
                   }}
                   onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--brand-400)')}
@@ -577,22 +582,22 @@ export function EncounterScreen() {
               </div>
             </div>
 
-            <div style={{ flex: 1, overflowY: 'auto', padding: 12 }}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
               {loadingRecent ? (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
                   {Array.from({ length: 6 }).map((_, i) => <ListItemSkeleton key={i} />)}
                 </div>
               ) : filteredRecent.length === 0 ? (
-                <div style={{ padding: 80, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>
+                <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>
                   {recentQuery ? 'No sessions match your search.' : 'No recent clinical sessions.'}
                 </div>
               ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                   {filteredRecent.map((r) => (
                     <button key={r._id} onClick={() => loadEncounter(r._id)}
                       style={{
-                        width: '100%', display: 'flex', alignItems: 'center', gap: 14, padding: '12px 16px',
-                        textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderRadius: 14,
+                        width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px',
+                        textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderRadius: 8,
                         transition: 'background 0.2s'
                       }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-muted)')}
@@ -991,6 +996,9 @@ function EncounterEditor({
                 onClick={() => printPrescription({
                   clinic: {
                     name: ctx.clinicName ?? 'Clinic',
+                    displayName: ctx.branding?.displayName ?? undefined,
+                    logoUrl: resolveLogoSrc(ctx.branding?.logoUrl, ctx.clinicId, ctx.apiBaseUrl),
+                    primaryColor: ctx.branding?.primaryColor ?? undefined,
                     branchName: branchInfo?.name ?? ctx.branchName,
                     address: branchInfo?.addressLine,
                     fullAddress: branchInfo?.addressLine,
@@ -1101,7 +1109,7 @@ function EncounterEditor({
                 {rx.some(r => r.med.trim()) && (
                   <div style={{
                     display: 'grid',
-                    gridTemplateColumns: 'minmax(180px, 2fr) 80px 80px 80px 70px minmax(140px, 1.6fr) 40px',
+                    gridTemplateColumns: 'minmax(180px, 2fr) 80px 80px 80px minmax(140px, 1.6fr) 40px',
                     gap: 10,
                     padding: '0 12px 4px',
                     fontSize: 10,
@@ -1114,7 +1122,6 @@ function EncounterEditor({
                     <span>Dose</span>
                     <span>Freq</span>
                     <span>Duration</span>
-                    <span>Qty</span>
                     <span>Instructions</span>
                     <span />
                   </div>
@@ -1124,7 +1131,7 @@ function EncounterEditor({
                   {rx.filter(r => !signed || r.med.trim()).map((item) => (
                     <div key={item.id} style={{
                       display: 'grid',
-                      gridTemplateColumns: 'minmax(180px, 2fr) 80px 80px 80px 70px minmax(140px, 1.6fr) 40px',
+                      gridTemplateColumns: 'minmax(180px, 2fr) 80px 80px 80px minmax(140px, 1.6fr) 40px',
                       gap: 10,
                       padding: '8px 12px',
                       background: 'var(--surface-muted)',
@@ -1147,17 +1154,6 @@ function EncounterEditor({
                         <option>OD</option><option>BD</option><option>TDS</option><option>QID</option><option>SOS</option>
                       </select>
                       <input value={item.dur} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dur: e.target.value } : x))} disabled={signed} placeholder="7 days" style={rxInputStyle} />
-                      <input
-                        type="number"
-                        min={1}
-                        step={1}
-                        value={item.qty}
-                        onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, qty: e.target.value } : x))}
-                        disabled={signed}
-                        placeholder="10"
-                        title="Total units to dispense"
-                        style={rxInputStyle}
-                      />
                       <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} disabled={signed} placeholder="Instructions" style={rxInputStyle} />
 
                       {!signed ? (
@@ -1223,6 +1219,9 @@ function EncounterEditor({
             onClick={() => printPrescription({
               clinic: {
                 name: ctx.clinicName ?? 'Clinic',
+                displayName: ctx.branding?.displayName ?? undefined,
+                logoUrl: resolveLogoSrc(ctx.branding?.logoUrl, ctx.clinicId, ctx.apiBaseUrl),
+                primaryColor: ctx.branding?.primaryColor ?? undefined,
                 branchName: branchInfo?.name ?? ctx.branchName,
                 address: branchInfo?.addressLine,
                 fullAddress: branchInfo?.addressLine,
@@ -1587,9 +1586,26 @@ function escapeHtml(s: string): string {
     .replace(/'/g, '&#39;');
 }
 
+// Resolve a brand-logo value (S3 key OR full http URL) into something an
+// <img src> in a new-window print template can fetch. S3 keys are
+// rewritten to hit the BE's public /clinics/:id/logo passthrough.
+function resolveLogoSrc(
+  raw: string | null | undefined,
+  clinicId: string,
+  apiBaseUrl: string,
+): string | undefined {
+  if (!raw) return undefined;
+  if (/^https?:\/\//i.test(raw)) return raw;
+  if (!clinicId) return undefined;
+  return `${apiBaseUrl}/clinics/${encodeURIComponent(clinicId)}/logo`;
+}
+
 function printPrescription(input: {
   clinic: {
     name: string;
+    displayName?: string;
+    logoUrl?: string;
+    primaryColor?: string;
     branchName?: string;
     address?: string;
     fullAddress?: string;
@@ -1636,6 +1652,12 @@ function printPrescription(input: {
     .map((s) => s.trim())
     .filter(Boolean);
   const filledRx = rx.filter((r) => r.med.trim());
+
+  // Resolve branding inputs once. The default blue matches what the
+  // template used before the branding feature shipped — clinics that
+  // never set a color keep the historical look.
+  const brandColor = (clinic.primaryColor || '').trim() || '${brandColor}';
+  const headerName = (clinic.displayName || '').trim() || clinic.name || 'Clinic';
 
   const vitalsHtml = filledVitals.length
     ? `<section class="block">
@@ -1773,8 +1795,8 @@ function printPrescription(input: {
     font-family: inherit;
   }
   .toolbar button.primary {
-    background: #1a56db;
-    border-color: #1a56db;
+    background: ${brandColor};
+    border-color: ${brandColor};
     color: #fff;
   }
   @media print {
@@ -1792,13 +1814,13 @@ function printPrescription(input: {
     justify-content: space-between;
     align-items: flex-start;
     padding-bottom: 14px;
-    border-bottom: 2px solid #1a56db;
+    border-bottom: 2px solid ${brandColor};
     margin-bottom: 20px;
   }
   .clinic-name {
     font-size: 28px;
     font-weight: 700;
-    color: #1a56db;
+    color: ${brandColor};
     line-height: 1.1;
     margin-bottom: 6px;
   }
@@ -1828,7 +1850,7 @@ function printPrescription(input: {
   .doctor-block .dr-date {
     font-size: 12px;
     font-weight: 700;
-    color: #1a56db;
+    color: ${brandColor};
     display: block;
     margin-top: 4px;
   }
@@ -1847,12 +1869,12 @@ function printPrescription(input: {
     padding: 10px 14px;
     background: #f0f7ff;
     border: 1px solid #c7dffd;
-    border-left: 4px solid #1a56db;
+    border-left: 4px solid ${brandColor};
     border-radius: 6px;
   }
   .rx-id-label {
     font-size: 11px; font-weight: 700;
-    color: #1a56db;
+    color: ${brandColor};
     text-transform: uppercase;
     letter-spacing: 0.08em;
   }
@@ -1901,7 +1923,7 @@ function printPrescription(input: {
   .section-title {
     font-size: 11px;
     font-weight: 700;
-    color: #1a56db;
+    color: ${brandColor};
     text-transform: uppercase;
     letter-spacing: 0.1em;
     margin: 0 0 10px 0;
@@ -1944,7 +1966,7 @@ function printPrescription(input: {
     border-radius: 20px;
     background: #e8eefb;
     border: 1px solid #c3d2f5;
-    color: #1a56db;
+    color: ${brandColor};
     font-size: 12px;
     font-weight: 500;
   }
@@ -2028,11 +2050,14 @@ function printPrescription(input: {
   <main class="page">
 
     <header class="header">
-      <div>
-        <div class="clinic-name">${escapeHtml(clinic.name || 'DigiRx')}</div>
-        <div class="clinic-addr">
-          ${escapeHtml(clinic.branchName || 'Main Branch')}<br>
-          ${clinic.fullAddress || clinic.address || ''} ${clinic.phone ? ' · ' + escapeHtml(clinic.phone) : ''}
+      <div style="display:flex; align-items:center; gap:14px;">
+        ${clinic.logoUrl ? `<img src="${escapeHtml(clinic.logoUrl)}" alt="" style="max-height:60px; max-width:120px; object-fit:contain;" onerror="this.style.display='none'" />` : ''}
+        <div>
+          <div class="clinic-name">${escapeHtml(headerName)}</div>
+          <div class="clinic-addr">
+            ${escapeHtml(clinic.branchName || 'Main Branch')}<br>
+            ${clinic.fullAddress || clinic.address || ''} ${clinic.phone ? ' · ' + escapeHtml(clinic.phone) : ''}
+          </div>
         </div>
       </div>
       <div class="doctor-block">

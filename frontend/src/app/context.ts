@@ -13,6 +13,16 @@ export type DevContext = {
   /** IANA timezone string (Asia/Kolkata, …). Drives date calculations. */
   timezone?: string;
   permissions?: string[];
+  /**
+   * Clinic branding mirror, populated from /me. The prescription print
+   * template reads it for the header name / logo / primary color so a
+   * separate settings fetch isn't needed on every print.
+   */
+  branding?: {
+    displayName?: string | null;
+    logoUrl?: string | null;
+    primaryColor?: string | null;
+  };
 };
 
 const KEY = 'digirx.devContext.v1';

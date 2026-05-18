@@ -45,6 +45,12 @@ export const Perm = {
   SettingsAvailabilityRead: 'settings:availability:read',
   SettingsNotificationsRead: 'settings:notifications:read',
   SettingsAuditRead: 'settings:audit:read',
+  // Face recognition. Enroll captures a face for a patient; Recognize
+  // searches enrolled faces from a webcam frame. Independently granted
+  // so a clinic can have front-desk scanning without giving them the
+  // ability to permanently store new templates, or vice versa.
+  FaceEnroll: 'face:enroll',
+  FaceRecognize: 'face:recognize',
 } as const;
 
 export type PermName = typeof Perm[keyof typeof Perm];

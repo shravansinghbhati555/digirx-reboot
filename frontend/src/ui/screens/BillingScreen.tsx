@@ -1092,7 +1092,7 @@ function CreateBillSheet({
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 100px 30px', gap: 8, padding: '0 4px 6px', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               <span>Description</span>
               <span style={{ textAlign: 'center' }}>Qty</span>
-              <span style={{ textAlign: 'right' }}>Rate (₹)</span>
+              <span style={{ textAlign: 'right' }}>Rate ({ctx.currency || 'INR'})</span>
               <span />
             </div>
 

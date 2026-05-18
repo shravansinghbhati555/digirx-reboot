@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiGet, apiPatch, apiPost } from '../../app/api';
+import { apiGet, apiPatch, apiPost, apiPostMultipart } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
 import { isValidEmail, normalizeIndianMobile } from '../../app/validators';
@@ -8,6 +8,7 @@ import { Icon } from '../shared/Icon';
 import { AnimatedTabs } from '../shared/AnimatedTabs';
 import { Skeleton, ListItemSkeleton } from '../shared/Skeleton';
 import { useShake } from '../shared/useShake';
+import { FaceScanModal } from '../shared/FaceScanModal';
 import { DocumentsScreen } from './DocumentsScreen';
 
 type Patient = {
@@ -24,6 +25,9 @@ type Patient = {
   tags?: string[];
   notes?: string;
   createdAt?: string;
+  faceConsent?: boolean;
+  faceConsentAt?: string;
+  faceEnrolledAt?: string;
 };
 
 // Single source of truth for patient-ref display. Prefer the MRN; fall
@@ -470,7 +474,13 @@ function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => vo
 }
 
 function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Patient) => void }) {
-  const { ctx } = useApp();
+  const { ctx, features } = useApp();
+  const { has } = usePerm();
+  const toast = useToast();
+  // Face step appears only when (a) the clinic has the feature enabled
+  // AND (b) the actor has face:enroll. Either condition off → legacy
+  // 3-step wizard.
+  const canEnrollFace = features.faceRecognition && has(Perm.FaceEnroll);
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({
     fullName: '', dob: '', gender: '', phone: '', email: '', tags: '', notes: '',
@@ -478,13 +488,26 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [duplicate, setDuplicate] = useState<Patient | null>(null);
+  // After /patients POST succeeds we move to the face-enrollment step
+  // with the new patient cached. The wizard stays open until the user
+  // either scans + uploads OR clicks "Skip & finish."
+  const [createdPatient, setCreatedPatient] = useState<Patient | null>(null);
+  const [faceConsent, setFaceConsent] = useState(false);
+  const [showFaceScanner, setShowFaceScanner] = useState(false);
+  const [faceEnrolled, setFaceEnrolled] = useState(false);
   const { shakeProps, shake } = useShake();
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const handlePhoneChange = (v: string) => {
     const digits = v.replace(/\D/g, '').slice(0, 10);
     set('phone', digits);
   };
-  const steps = ['Identity', 'Contact', 'Tags & Notes'];
+  // Face step is conditional on the role having `face:enroll`.
+  // Clinics that don't use face recognition (or the front-desk role
+  // that hasn't been granted the perm) see the old 3-step wizard
+  // unchanged.
+  const steps = canEnrollFace
+    ? ['Identity', 'Contact', 'Tags & Notes', 'Face (optional)']
+    : ['Identity', 'Contact', 'Tags & Notes'];
 
   // Debounced duplicate-phone check on contact step. The `cancelled`
   // flag guards against the user typing "9876" → "98765" → "987654"
@@ -543,13 +566,50 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
         setError('A similar patient already exists.');
         return;
       }
-      onCreated(res.created);
+      // With the face-enroll step active, hold the modal open and
+      // advance to step 3 with the newly created patient. Without it,
+      // close immediately (legacy behavior).
+      if (canEnrollFace) {
+        setCreatedPatient(res.created);
+        setStep(3);
+      } else {
+        onCreated(res.created);
+      }
     } catch (e) {
       shake();
       setError(e instanceof Error ? e.message : String(e));
     } finally {
       setSaving(false);
     }
+  }
+
+  async function handleFaceCapture(blob: Blob, opts?: { preDetected?: boolean }) {
+    if (!createdPatient) return;
+    // Two-step: PATCH consent first (BE refuses /face without it),
+    // then POST the image. If anything fails, the patient is already
+    // saved — the front desk can enroll later from the patient detail.
+    const form = new FormData();
+    form.append('image', blob, 'enroll.jpg');
+    if (opts?.preDetected) form.append('pre_detected', 'true');
+    try {
+      if (!createdPatient.faceConsent) {
+        await apiPatch(ctx, `/patients/${createdPatient._id}`, { faceConsent: true });
+      }
+      await apiPostMultipart(ctx, `/patients/${createdPatient._id}/face`, form);
+      setFaceEnrolled(true);
+      setShowFaceScanner(false);
+      toast('Face enrolled', 'success');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // Throw so FaceScanModal renders the error inline; the modal
+      // stays open and the operator can retry without re-typing
+      // anything.
+      throw new Error(msg);
+    }
+  }
+
+  function finishWithoutFace() {
+    if (createdPatient) onCreated(createdPatient);
   }
 
   return (
@@ -620,24 +680,93 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
               </div>
             </>
           )}
+          {step === 3 && (
+            <>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '12px 0 4px' }}>
+                <div style={{ width: 56, height: 56, borderRadius: 14, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Icon name={faceEnrolled ? 'checkCircle' : 'camera'} size={24} style={{ color: faceEnrolled ? 'var(--success-500)' : 'var(--brand-500)' }} />
+                </div>
+                <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
+                  {faceEnrolled ? 'Face enrolled' : 'Face recognition (optional)'}
+                </div>
+                <div style={{ fontSize: 12, color: 'var(--text-subtle)', textAlign: 'center', padding: '0 8px' }}>
+                  {faceEnrolled
+                    ? "On future visits the front desk can scan instead of typing."
+                    : "Capture the patient's face so future visits can be identified by camera. You can skip and enroll later."}
+                </div>
+              </div>
+
+              {!faceEnrolled && (
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 14px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={faceConsent} onChange={(e) => setFaceConsent(e.target.checked)}
+                    style={{ marginTop: 2, accentColor: 'var(--brand-500)' }} />
+                  <span style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                    Patient consents to face enrollment for identification. The biometric template is stored for this clinic only and can be removed on request.
+                  </span>
+                </label>
+              )}
+            </>
+          )}
           {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
         </div>
 
         <div style={{ padding: '0 24px 20px', display: 'flex', gap: 10 }}>
-          {step > 0 && (
-            <button onClick={() => setStep((s) => s - 1)}
-              style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
-              Back
-            </button>
+          {step === 3 ? (
+            // Face step has its own footer — patient is already saved,
+            // so the controls are "scan now" / "skip & finish" / "done."
+            <>
+              {faceEnrolled ? (
+                <button onClick={finishWithoutFace}
+                  style={{ flex: 1, height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                  <Icon name="check" size={14} strokeWidth={2.5} /> Finish
+                </button>
+              ) : (
+                <>
+                  <button onClick={finishWithoutFace}
+                    style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                    Skip & finish
+                  </button>
+                  <button onClick={() => setShowFaceScanner(true)} disabled={!faceConsent}
+                    style={{
+                      flex: 2, height: 42, border: 'none', borderRadius: 10,
+                      background: faceConsent ? 'var(--brand-500)' : 'rgba(99,102,241,0.4)',
+                      color: 'var(--brand-text)', fontSize: 14, fontWeight: 600,
+                      cursor: faceConsent ? 'pointer' : 'not-allowed',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    }}>
+                    <Icon name="camera" size={14} strokeWidth={2.5} /> Scan face
+                  </button>
+                </>
+              )}
+            </>
+          ) : (
+            <>
+              {step > 0 && (
+                <button onClick={() => setStep((s) => s - 1)}
+                  style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                  Back
+                </button>
+              )}
+              <button
+                onClick={step < 2 ? () => setStep((s) => s + 1) : submit}
+                disabled={saving || (step === 0 && !form.fullName.trim())}
+                style={{ flex: 2, height: 42, background: saving ? 'var(--brand-600)' : 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, opacity: (step === 0 && !form.fullName.trim()) ? 0.6 : 1 }}>
+                {saving ? <Spinner /> : (step < 2 ? <>Continue <Icon name="chevronRight" size={14} /></> : 'Register patient')}
+              </button>
+            </>
           )}
-          <button
-            onClick={step < steps.length - 1 ? () => setStep((s) => s + 1) : submit}
-            disabled={saving || (step === 0 && !form.fullName.trim())}
-            style={{ flex: 2, height: 42, background: saving ? 'var(--brand-600)' : 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, opacity: (step === 0 && !form.fullName.trim()) ? 0.6 : 1 }}>
-            {saving ? <Spinner /> : (step < steps.length - 1 ? <>Continue <Icon name="chevronRight" size={14} /></> : 'Register patient')}
-          </button>
         </div>
       </div>
+
+      {showFaceScanner && (
+        <FaceScanModal
+          title="Enroll face"
+          hint="Look at the camera. Make sure the face is well-lit and centered."
+          captureLabel="Capture & enroll"
+          onCancel={() => setShowFaceScanner(false)}
+          onCapture={handleFaceCapture}
+        />
+      )}
     </div>
   );
 }
