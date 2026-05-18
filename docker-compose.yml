@@ -46,6 +46,18 @@ services:
       mc anonymous set none digirx/digirx || true
       "
 
+  # DeepFace embedding sidecar. Internal only — the NestJS backend
+  # reaches it as http://face-svc:8000. Port 8000 IS published locally
+  # (loopback) so you can smoke-test with curl from the host; remove
+  # the `ports` block before production deploy if you don't want any
+  # host-level exposure.
+  face-svc:
+    build: ./face-svc
+    container_name: digirx_face_svc
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8000:8000"
+
 volumes:
   mongodb_data:
   redis_data:
