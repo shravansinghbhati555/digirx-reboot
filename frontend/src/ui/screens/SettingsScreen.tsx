@@ -664,12 +664,16 @@ function emptyRule(weekday: number): WeeklyRule {
 }
 
 function AvailabilityTab() {
-  const { ctx, permissions } = useApp();
+  const { ctx, permissions, roleNames } = useApp();
   const toast = useToast();
   const canRead = permissions.has('clinic:read');
   const canWrite = permissions.has('clinic:write');
-  // Non-admins can only manage their own availability — lock the picker.
-  const canEditOthers = canWrite;
+  // Doctors are locked to their own availability — they can't open
+  // the doctor dropdown or load anyone else's schedule, even if some
+  // other permission would otherwise allow it. This is a role gate
+  // on top of the permission gate.
+  const isDoctor = roleNames.has('doctor');
+  const canEditOthers = canWrite && !isDoctor;
 
   const [doctorId, setDoctorId] = useState(ctx.userId);
   // Admin can save anyone's; non-admin can save only when editing themselves.
@@ -999,10 +1003,17 @@ function AvailabilityTab() {
               </div>
             )}
           </div>
-          <button onClick={() => void load()} disabled={loading || !doctorId.trim() || !ctx.branchId}
-            style={{ height: 40, padding: '0 18px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 10, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
-            {loading ? 'Loading…' : 'Load'}
-          </button>
+          {/* Load button is redundant for doctors — their own schedule
+              auto-loads on mount and they can't switch to other
+              doctors, so there's nothing else to load. Admins / managers
+              keep the button so they can switch doctors and pull a
+              different schedule. */}
+          {!isDoctor && (
+            <button onClick={() => void load()} disabled={loading || !doctorId.trim() || !ctx.branchId}
+              style={{ height: 40, padding: '0 18px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 10, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
+              {loading ? 'Loading…' : 'Load'}
+            </button>
+          )}
         </div>
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-subtle)' }}>
           Branch: {ctx.branchName ?? (ctx.branchId ? <code style={{ fontFamily: 'monospace' }}>{ctx.branchId}</code> : '— none in context —')}
@@ -1430,7 +1441,7 @@ function AboutTab() {
     },
     {
       icon: 'stethoscope',
-      title: 'Encounters & prescriptions',
+      title: 'Consultations & prescriptions',
       body: "Capture vitals, diagnoses, and prescriptions in a single signed clinical record — shareable with patients via secure links.",
     },
     {
@@ -1503,14 +1514,6 @@ function AboutTab() {
   );
 }
 
-function Row({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', padding: '10px 0', borderBottom: '1px solid var(--border)', gap: 24 }}>
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', flex: '0 0 200px' }}>{label}</div>
-      <div style={{ fontSize: 13, color: 'var(--text)', flex: 1, textAlign: 'right' }}>{children}</div>
-    </div>
-  );
-}
 
 // ---------- Branches ----------
 

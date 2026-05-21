@@ -40,10 +40,24 @@ const PERMISSION_GROUPS: PermGroup[] = [
     ],
   },
   {
+    title: 'Consultations',
+    rows: [
+      { perm: Perm.EncounterRead, label: 'View consultations' },
+      { perm: Perm.EncounterWrite, label: 'Manage consultations & prescriptions' },
+    ],
+  },
+  {
     title: 'Billing',
     rows: [
       { perm: Perm.BillingRead, label: 'View bills' },
       { perm: Perm.BillingWrite, label: 'Manage bills & payments' },
+    ],
+  },
+  {
+    title: 'Pharmacy',
+    rows: [
+      { perm: Perm.PharmacyRead, label: 'View pharmacy' },
+      { perm: Perm.PharmacyWrite, label: 'Dispense & manage pharmacy' },
     ],
   },
   {
@@ -114,7 +128,9 @@ const ALL_PERMS: PermName[] = PERMISSION_GROUPS.flatMap((g) =>
 const WRITE_TO_READ: Partial<Record<PermName, PermName>> = {
   [Perm.PatientWrite]: Perm.PatientRead,
   [Perm.AppointmentWrite]: Perm.AppointmentRead,
+  [Perm.EncounterWrite]: Perm.EncounterRead,
   [Perm.BillingWrite]: Perm.BillingRead,
+  [Perm.PharmacyWrite]: Perm.PharmacyRead,
   [Perm.DocumentWrite]: Perm.DocumentRead,
   [Perm.InventoryWrite]: Perm.InventoryRead,
   [Perm.NotificationWrite]: Perm.NotificationRead,

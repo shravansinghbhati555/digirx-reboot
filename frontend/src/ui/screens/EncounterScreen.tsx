@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Avatar, Spinner, StatusPill, useToast } from '../shared/primitives';
@@ -63,6 +63,35 @@ type AvailabilityRow = {
   reorderLevel: number;
   status: RxStockStatus;
 };
+
+// Smart BP auto-formatter so the doctor only types digits and the
+// "/" lands in the right place.
+//   - Strip anything that isn't a digit or "/"
+//   - When the user is deleting (length shrinks), don't auto-insert
+//     anything — let them clear / fix freely
+//   - If they typed the slash themselves, keep the input as-is
+//   - Otherwise insert "/" after 2 digits when the first digit is 6-9
+//     (low / pediatric BPs like 90/60, 80/55) and after 3 digits
+//     otherwise (the typical adult 120/80, 140/90)
+function formatBp(input: string, prev: string): string {
+  // Drop everything except digits and the slash, then cap to a sane
+  // upper bound (max 3-digit systolic + slash + 3-digit diastolic =
+  // "999/999"). Trying to type past that is silently truncated so the
+  // operator can't paste a phone number into the BP field.
+  let cleaned = input.replace(/[^\d/]/g, '');
+  if (cleaned.length < prev.length) return cleaned.slice(0, 7); // deleting
+  if (cleaned.includes('/')) {
+    const [sys = '', dia = ''] = cleaned.split('/');
+    return `${sys.slice(0, 3)}/${dia.slice(0, 3)}`;
+  }
+  // All digits, no slash yet.
+  cleaned = cleaned.slice(0, 6);
+  if (cleaned.length < 2) return cleaned;
+  const first = cleaned[0];
+  const systolicLen = first === '6' || first === '7' || first === '8' || first === '9' ? 2 : 3;
+  if (cleaned.length <= systolicLen) return cleaned;
+  return `${cleaned.slice(0, systolicLen)}/${cleaned.slice(systolicLen, systolicLen + 3)}`;
+}
 
 const VITAL_FIELDS: { key: string; label: string; unit: string }[] = [
   { key: 'bp', label: 'BP', unit: 'mmHg' },
@@ -179,17 +208,14 @@ function isoToRange(start: string | undefined, end: string | undefined): string 
 }
 
 export function EncounterScreen() {
-  const { ctx, selectedAppointmentId, setSelectedAppointmentId, selectedEncounterId, setSelectedEncounterId, selectedDate } = useApp();
+  const { ctx, selectedAppointmentId, setSelectedAppointmentId, selectedEncounterId, setSelectedEncounterId } = useApp();
   const [patientId, setPatientId] = useState('');
   const [doctorId, setDoctorId] = useState(ctx.userId);
-  const [encounterId, setEncounterId] = useState<string | undefined>();
+  const [, setEncounterId] = useState<string | undefined>();
   const [encounter, setEncounter] = useState<Encounter | null>(null);
   const [patient, setPatient] = useState<Patient | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [recent, setRecent] = useState<(Encounter & { patientId: { fullName: string; mrn?: string } })[]>([]);
-  const [loadingRecent, setLoadingRecent] = useState(false);
-  const [recentQuery, setRecentQuery] = useState('');
   const [queue, setQueue] = useState<any[]>([]);
   const [loadingQueue, setLoadingQueue] = useState(false);
 
@@ -197,10 +223,6 @@ export function EncounterScreen() {
   const [patientQuery, setPatientQuery] = useState('');
   const [patientResults, setPatientResults] = useState<Patient[]>([]);
   const [searching, setSearching] = useState(false);
-
-  // Doctor display (locked to current user — backend has no /users list endpoint yet)
-  const doctorName = (ctx.fullName ?? '').toLowerCase().startsWith('dr.') ? ctx.fullName : (ctx.fullName ? `Dr. ${ctx.fullName}` : 'Doctor');
-  const doctorSubtitle = ctx.email ?? `User #${doctorId.slice(-8).toUpperCase()}`;
 
   // If we arrived from an appointment, pre-load the appointment to get patient/doctor
   useEffect(() => {
@@ -233,38 +255,58 @@ export function EncounterScreen() {
     setSelectedEncounterId(undefined);
   }, [selectedEncounterId, setSelectedEncounterId]);
 
+  // Queue loader extracted so we can call it from a poll + a tab
+  // visibility listener without duplicating the URL build.
   useEffect(() => {
     if (encounter) return;
-    setLoadingRecent(true);
-    const qs = new URLSearchParams({ limit: '50' });
-    if (selectedDate) qs.set('date', selectedDate);
-    // Scope recent encounters to the active branch so switching branches
-    // in the sidebar narrows the list to that branch's bookings.
-    if (ctx.branchId) qs.set('branchId', ctx.branchId);
-    apiGet<(Encounter & { patientId: { fullName: string; mrn?: string } })[]>(ctx, `/encounters?${qs.toString()}`)
-      .then(setRecent)
-      .catch(() => setRecent([]))
-      .finally(() => setLoadingRecent(false));
-  }, [encounter, ctx, selectedDate, ctx.branchId]);
-
-  useEffect(() => {
-    if (encounter) return;
-    setLoadingQueue(true);
-    // Use the clinic's timezone to calculate "Today"
     const tz = ctx.timezone || 'Asia/Kolkata';
-    const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
 
-    const qs = new URLSearchParams({
-      branchId: ctx.branchId || '',
-      date: today,
-    });
-    apiGet<any[]>(ctx, `/appointments?${qs.toString()}`)
-      .then((appts) => {
-        // Show both waiting (CHECKED_IN) and active (IN_PROGRESS) patients
-        setQueue(appts.filter(a => a.status === 'CHECKED_IN' || a.status === 'IN_PROGRESS'));
-      })
-      .catch(() => setQueue([]))
-      .finally(() => setLoadingQueue(false));
+    let cancelled = false;
+    async function loadQueue(initial: boolean) {
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: tz }).format(new Date());
+      const qs = new URLSearchParams({
+        branchId: ctx.branchId || '',
+        date: today,
+      });
+      // Only show the spinner on the FIRST fetch — polls / visibility
+      // refetches should refresh silently so the doctor never sees the
+      // queue flash to "Loading…" mid-shift.
+      if (initial) setLoadingQueue(true);
+      try {
+        const appts = await apiGet<any[]>(ctx, `/appointments?${qs.toString()}`);
+        if (cancelled) return;
+        setQueue(appts.filter((a) => a.status === 'CHECKED_IN' || a.status === 'IN_PROGRESS'));
+      } catch {
+        if (!cancelled && initial) setQueue([]);
+      } finally {
+        if (!cancelled && initial) setLoadingQueue(false);
+      }
+    }
+
+    void loadQueue(true);
+
+    // Poll every 20s while the queue view is open. Cheap (one GET
+    // /appointments per tick) and gives the doctor a near-live feed
+    // without needing websockets / SSE infra. Pauses when the tab is
+    // hidden so a backgrounded tab doesn't burn bandwidth.
+    const POLL_MS = 20_000;
+    const tick = setInterval(() => {
+      if (document.visibilityState === 'visible') void loadQueue(false);
+    }, POLL_MS);
+
+    // Instant refresh when the doctor switches back to this tab —
+    // covers the "front desk just checked in a patient and I want to
+    // see them now" case without waiting for the next poll tick.
+    function onVisibilityChange() {
+      if (document.visibilityState === 'visible') void loadQueue(false);
+    }
+    document.addEventListener('visibilitychange', onVisibilityChange);
+
+    return () => {
+      cancelled = true;
+      clearInterval(tick);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
   }, [encounter, ctx.branchId]);
 
   useEffect(() => {
@@ -369,23 +411,10 @@ export function EncounterScreen() {
     const phone = patient?.phones?.[0];
     const meta = [gw, age != null ? `${age}y` : null, phone].filter(Boolean).join(' · ');
 
-    const filteredRecent = recent.filter(r => {
-      const q = recentQuery.toLowerCase().trim();
-      if (!q) return true;
-      const rId = (r.readableId ?? `#${r._id.slice(-8).toUpperCase()}`).toLowerCase();
-      const patientName = typeof r.patientId === 'object' ? r.patientId.fullName : '';
-      return (
-        rId.includes(q) ||
-        patientName.toLowerCase().includes(q) ||
-        (typeof r.patientId === 'object' && (r.patientId.mrn ?? '').toLowerCase().includes(q)) ||
-        r.status.toLowerCase().includes(q)
-      );
-    });
-
     return (
       <div style={{ padding: '20px 32px', width: '100%', height: '100%', overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 18, boxSizing: 'border-box' }}>
         <div>
-          <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.5px' }}>Clinical Encounter</h1>
+          <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.5px' }}>Clinical Consultation</h1>
           <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>Manage your active queue and start new patient sessions.</p>
         </div>
 
@@ -446,20 +475,9 @@ export function EncounterScreen() {
               )}
             </div>
 
-            {/* Doctor Info */}
-            <div style={{ flex: 1, minWidth: 180, borderLeft: '1px solid var(--border)', paddingLeft: 20 }}>
-              <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Doctor</label>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <Avatar name={doctorName} size={36} />
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{doctorName}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{doctorSubtitle}</div>
-                </div>
-              </div>
-            </div>
 
             {/* Action Buttons */}
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'flex-end', borderLeft: '1px solid var(--border)', paddingLeft: 20 }}>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, justifyContent: 'flex-end' }}>
               {/* <button onClick={() => setScreen('appointments')}
                 style={{ padding: '0 20px', height: 48, background: 'none', border: '1.5px solid var(--border)', borderRadius: 14, fontSize: 14, fontWeight: 600, color: 'var(--text)', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 8, transition: 'all 0.2s' }}
                 onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--surface-muted)'; e.currentTarget.style.borderColor = 'var(--text-subtle)'; }}
@@ -488,11 +506,7 @@ export function EncounterScreen() {
 
         {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 8, padding: '10px 14px', fontSize: 12, color: 'var(--danger-600)', fontWeight: 500 }}>{error}</div>}
 
-        {/* Bottom Section: Side-by-Side Lists.
-            No `flex: 1` on the row — these cards size to their content
-            (plus a sensible min/max) instead of stretching to fill the
-            viewport. That kills the empty-middle look when the queue
-            is empty. */}
+        {/* Bottom Section: Patients Waiting */}
         <div style={{ display: 'flex', gap: 16, height: 460 }}>
           {/* Patients Waiting */}
           <div style={{ flex: 1, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 2px 8px rgba(15,23,42,0.02)' }}>
@@ -559,73 +573,6 @@ export function EncounterScreen() {
               )}
             </div>
           </div>
-
-          {/* Recent Encounters */}
-          <div style={{ flex: 1, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, display: 'flex', flexDirection: 'column', overflow: 'hidden', boxShadow: '0 2px 8px rgba(15,23,42,0.02)' }}>
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--surface-muted)', gap: 10 }}>
-              <div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>Recent encounters</div>
-                <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1 }}>Sessions from last 30 days</div>
-              </div>
-              <div style={{ position: 'relative', width: 170 }}>
-                <Icon name="search" size={12} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
-                <input value={recentQuery} onChange={(e) => setRecentQuery(e.target.value)}
-                  placeholder="Filter sessions…"
-                  style={{
-                    width: '100%', height: 30, padding: '0 10px 0 30px',
-                    background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 6,
-                    fontSize: 12, color: 'var(--text)', outline: 'none', transition: 'all 0.2s'
-                  }}
-                  onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--brand-400)')}
-                  onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
-                />
-              </div>
-            </div>
-
-            <div style={{ flex: 1, overflowY: 'auto', padding: 8 }}>
-              {loadingRecent ? (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                  {Array.from({ length: 6 }).map((_, i) => <ListItemSkeleton key={i} />)}
-                </div>
-              ) : filteredRecent.length === 0 ? (
-                <div style={{ padding: '32px 16px', textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>
-                  {recentQuery ? 'No sessions match your search.' : 'No recent clinical sessions.'}
-                </div>
-              ) : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {filteredRecent.map((r) => (
-                    <button key={r._id} onClick={() => loadEncounter(r._id)}
-                      style={{
-                        width: '100%', display: 'flex', alignItems: 'center', gap: 12, padding: '10px 12px',
-                        textAlign: 'left', background: 'none', border: 'none', cursor: 'pointer', borderRadius: 8,
-                        transition: 'background 0.2s'
-                      }}
-                      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-muted)')}
-                      onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
-                    >
-                      <Avatar name={typeof r.patientId === 'object' ? r.patientId.fullName : '?'} size={38} />
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>
-                            {typeof r.patientId === 'object' ? r.patientId.fullName : (typeof r.patientId === 'string' ? `#${r.patientId.slice(-6)}` : '—')}
-                          </span>
-                          <StatusPill status={r.status.toLowerCase()} small />
-                        </div>
-                        <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 3, display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ fontFamily: 'monospace', color: 'var(--brand-600)', background: 'var(--brand-50)', padding: '1px 4px', borderRadius: 4 }}>
-                            {r.readableId ?? `#${r._id.slice(-6).toUpperCase()}`}
-                          </span>
-                          <span style={{ width: 3, height: 3, borderRadius: '50%', background: 'var(--border)' }} />
-                          {new Date(r.visitedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                      </div>
-                      <Icon name="chevronRight" size={16} style={{ color: 'var(--text-subtle)' }} />
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
         </div>
 
         <div style={{ padding: '0 8px', fontSize: 12, color: 'var(--text-subtle)', display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'center' }}>
@@ -646,6 +593,13 @@ export function EncounterScreen() {
         setEncounterId(undefined);
         setSelectedAppointmentId(undefined);
         setSelectedEncounterId(undefined);
+        // Also clear the parent's patient state so the next view
+        // (the "start a new consultation" picker) doesn't pre-select
+        // the patient we just left.
+        setPatientId('');
+        setPatient(null);
+        setPatientQuery('');
+        setPatientResults([]);
       }}
     />
   );
@@ -672,7 +626,6 @@ function EncounterEditor({
   const diags = diagnosis.split('|').map((s) => s.trim()).filter(Boolean);
   const [rx, setRx] = useState<RxItem[]>([{ id: 1, med: '', dose: '', freq: '', dur: '', note: '', qty: '' }]);
   const nextRxId = useRef(2);
-  const [rxLoaded, setRxLoaded] = useState(false);
   const [branchInfo, setBranchInfo] = useState<any>(null);
   const [doctorInfo, setDoctorInfo] = useState<any>(null);
 
@@ -705,39 +658,56 @@ function EncounterEditor({
   const [prescriptionNo, setPrescriptionNo] = useState<string | null>(null);
   const [sharing, setSharing] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
-  const [showSign, setShowSign] = useState(false);
   const [signing, setSigning] = useState(false);
+  // View mode: signed encounters open in 'preview' (read-only printable
+  // render with Edit / Print / Share / Close buttons on top). Clicking
+  // Edit flips to 'chart' so the doctor can swap medicines, etc.
+  const [viewMode, setViewMode] = useState<'chart' | 'preview'>(signed ? 'preview' : 'chart');
+  // Whenever the encounter's signed status changes (e.g. after a sign
+  // call returns), snap to the matching default view.
+  useEffect(() => {
+    setViewMode(signed ? 'preview' : 'chart');
+  }, [signed]);
+  const previewIframeRef = useRef<HTMLIFrameElement | null>(null);
+
+  function buildPrintInput(autoPrint: boolean): PrescriptionPrintInput {
+    return {
+      clinic: {
+        name: ctx.clinicName ?? 'Clinic',
+        displayName: ctx.branding?.displayName ?? undefined,
+        logoUrl: resolveLogoSrc(ctx.branding?.logoUrl, ctx.clinicId, ctx.apiBaseUrl),
+        primaryColor: ctx.branding?.primaryColor ?? undefined,
+        branchName: branchInfo?.name ?? ctx.branchName,
+        address: branchInfo?.addressLine,
+        fullAddress: branchInfo?.addressLine,
+        phone: branchInfo?.phone,
+        doctorQuals: doctorInfo?.user?.qualifications,
+        doctorReg: doctorInfo?.user?.registrationNumber,
+      },
+      doctor: { name: ctx.fullName, email: ctx.email },
+      patient,
+      vitals,
+      complaint,
+      diagnosis: diags.join(' | '),
+      rx,
+      notes,
+      followUp,
+      encounter,
+      prescriptionId,
+      prescriptionNo,
+      autoPrint,
+    };
+  }
+
+  // HTML for the inline preview iframe. Rebuilt whenever the chart
+  // data changes so post-sign edits show up immediately.
+  const previewHtml = useMemo(
+    () => (viewMode === 'preview' ? buildPrescriptionHtml(buildPrintInput(false)) : ''),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [viewMode, encounter, patient, vitals, complaint, diagnosis, rx, notes, followUp, prescriptionId, prescriptionNo, branchInfo, doctorInfo, ctx.clinicName, ctx.branding, ctx.branchName, ctx.fullName],
+  );
   const [justSigned, setJustSigned] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [loadingRx, setLoadingRx] = useState(false);
-
-  useEffect(() => {
-    if (!encounter._id) return;
-    setLoadingRx(true);
-    apiGet<any[]>(ctx, `/encounters/${encounter._id}/prescriptions`)
-      .then((data) => {
-        if (data && data.length > 0) {
-          const firstRx = data[0];
-          if (firstRx.items && firstRx.items.length > 0) {
-            const mapped = firstRx.items.map((it: any, i: number) => ({
-              id: i + 1,
-              med: it.customName || it.medicineCatalogItemId || 'Medicine',
-              dose: it.dosage || '',
-              freq: it.frequency || '',
-              dur: it.duration || '',
-              note: it.instructions || '',
-              qty: it.quantity != null ? String(it.quantity) : '',
-              inventoryItemId: it.inventoryItemId,
-              medicineCatalogItemId: it.medicineCatalogItemId,
-            }));
-            setRx(mapped);
-            nextRxId.current = mapped.length + 1;
-          }
-        }
-      })
-      .catch(() => undefined)
-      .finally(() => setLoadingRx(false));
-  }, [encounter._id, ctx]);
 
   // Load existing prescription items when the encounter opens
   useEffect(() => {
@@ -776,8 +746,7 @@ function EncounterEditor({
           setRx(loaded);
         }
       }
-      setRxLoaded(true);
-    }).catch(() => setRxLoaded(true));
+    }).catch(() => undefined);
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [encounter._id]);
@@ -794,7 +763,15 @@ function EncounterEditor({
   }
 
   async function saveDraft() {
-    if (signed) return;
+    // Used to early-return when signed; we now allow post-sign edits
+    // so the doctor can swap a medicine after a patient says it's
+    // out of stock. The original signedAt stays put.
+    const hasSpecial = rx.some((r) => /[^a-zA-Z0-9\s\-.]/.test(r.med.trim()));
+    if (hasSpecial) {
+      toast("Please remove special characters from medicine names.", "error");
+      setError("Please remove special characters from medicine names.");
+      return;
+    }
     setSavingDraft(true); setError(null);
     try {
       const [updated] = await Promise.all([
@@ -833,7 +810,13 @@ function EncounterEditor({
         })(),
       ]);
       onChanged(updated);
-      toast('Draft saved', 'success');
+      toast(signed ? 'Changes saved' : 'Draft saved', 'success');
+      // When saving edits on an already-signed encounter, flip back to
+      // the preview so the doctor sees the updated prescription (and
+      // can print / share the new version) without manually clicking
+      // back over. Draft saves on unsigned encounters stay on the
+      // chart so the doctor can keep filling things in.
+      if (signed) setViewMode('preview');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -865,10 +848,9 @@ function EncounterEditor({
       }
       const signedEnc = await apiPost<Encounter>(ctx, `/encounters/${encounter._id}/sign`, {});
       onChanged(signedEnc);
-      setShowSign(false);
       setJustSigned(true);
       setTimeout(() => setJustSigned(false), 1200);
-      toast('Encounter signed', 'success');
+      toast('Consultation signed', 'success');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -893,79 +875,136 @@ function EncounterEditor({
     }
   }
 
-  return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-      <div style={{ width: 280, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', overflowY: 'auto', display: 'flex', flexDirection: 'column' }}>
-        <div style={{ padding: 16, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 10 }}>
-          <button onClick={onClose} style={{ background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}>
-            <Icon name="chevronLeft" size={14} />
-          </button>
-          <div style={{ fontSize: 12, color: 'var(--text-subtle)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em' }}>Encounter</div>
-          <div style={{ marginLeft: 'auto' }}><StatusPill status={signed ? 'signed' : 'draft'} small /></div>
-        </div>
+  const age = getAge(patient?.dob);
+  const gw = genderWord(patient?.gender);
+  const phone = patient?.phones?.[0];
+  const meta = [gw, age != null ? `${age}y` : null, phone].filter(Boolean).join(' · ');
 
-        <div style={{ padding: 16, borderBottom: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8 }}>
-            <Avatar name={patient?.fullName ?? '?'} size={40} />
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{patient?.fullName ?? 'Patient'}</div>
-              <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{patient?.phones?.[0] ?? '—'}</div>
-            </div>
-          </div>
-          <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-            {(patient?.tags ?? []).map((t) => (
-              <span key={t} style={{ padding: '2px 8px', borderRadius: 100, background: 'var(--brand-50)', color: 'var(--brand-600)', fontSize: 11, fontWeight: 600, border: '1px solid var(--brand-100)' }}>{t}</span>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
-            <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>Current vitals</div>
-            <span style={{ fontSize: 9, color: 'var(--text-subtle)', background: 'var(--surface-muted)', padding: '2px 6px', borderRadius: 6, fontWeight: 600 }}>READ-ONLY</span>
-          </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
-            {[
-              { l: 'BP', v: vitals.bp, u: 'mmHg' },
-              { l: 'SpO2', v: vitals.spo2, u: '%' },
-              { l: 'Temp', v: vitals.temp, u: '°F' },
-              { l: 'Pulse', v: vitals.pulse, u: 'bpm' },
-            ].map((row) => (
-              <div key={row.l} style={{ background: 'var(--surface-muted)', borderRadius: 8, padding: '7px 9px' }}>
-                <div style={{ fontSize: 9, color: 'var(--text-subtle)', textTransform: 'uppercase', fontWeight: 700 }}>{row.l}</div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
-                  {row.v || '—'} <span style={{ fontSize: 9, color: 'var(--text-subtle)', fontWeight: 400 }}>{row.u}</span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 8 }}>Prescription items</div>
-          {rx.filter((r) => r.med.trim()).length === 0 ? (
-            <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>None added yet.</div>
-          ) : rx.filter((r) => r.med.trim()).slice(0, 5).map((r) => (
-            <div key={r.id} style={{ display: 'flex', gap: 7, alignItems: 'flex-start', marginBottom: 7 }}>
-              <Icon name="pill" size={12} style={{ color: 'var(--brand-500)', marginTop: 2, flexShrink: 0 }} />
-              <span style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.4 }}>
-                {r.med}{r.freq ? ` · ${r.freq}` : ''}{r.dur ? ` · ${r.dur}` : ''}
+  // Inline prescription preview. Replaces the chart form when the
+  // encounter is signed (or after a freshly-signed transition). Top
+  // bar has Edit / Print / Share / Close — Print prints the iframe
+  // content directly so the doctor stays inside the app; Close fully
+  // exits the consultation screen back to today's queue.
+  if (viewMode === 'preview') {
+    return (
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface-muted)' }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          padding: '12px 24px', background: 'var(--surface)',
+          borderBottom: '1px solid var(--border)', flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
+            <Icon name="fileText" size={16} style={{ color: 'var(--brand-500)' }} />
+            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
+              <span style={{ fontFamily: "'Manrope',sans-serif", fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>Prescription preview</span>
+              <span style={{ fontSize: 11, color: 'var(--text-subtle)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {patient?.fullName ?? '—'}{prescriptionNo ? ` · ${prescriptionNo}` : ''}
               </span>
             </div>
-          ))}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button onClick={() => setViewMode('chart')}
+              style={{ height: 34, padding: '0 12px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <Icon name="edit" size={13} /> Edit
+            </button>
+            <button onClick={() => previewIframeRef.current?.contentWindow?.print()}
+              style={{ height: 34, padding: '0 12px', background: 'var(--brand-500)', border: '1px solid var(--brand-500)', borderRadius: 8, color: 'var(--brand-text)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <Icon name="printer" size={13} /> Print
+            </button>
+            <button onClick={shareOnWhatsApp} disabled={sharing || !prescriptionId}
+              title={prescriptionId ? 'Share via WhatsApp' : 'Save and sign first to enable sharing'}
+              style={{ height: 34, padding: '0 12px', background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)', borderRadius: 8, color: '#25D366', fontSize: 12, fontWeight: 600, cursor: (sharing || !prescriptionId) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, opacity: (sharing || !prescriptionId) ? 0.5 : 1 }}>
+              {sharing ? <Spinner size={13} /> : <><Icon name="share" size={13} /> Share</>}
+            </button>
+            <button onClick={onClose}
+              style={{ height: 34, padding: '0 12px', background: 'none', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <Icon name="x" size={13} /> Close
+            </button>
+          </div>
         </div>
-
-        <div style={{ padding: 16, fontSize: 11, color: 'var(--text-subtle)', marginTop: 'auto' }}>
-          <div style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: 6 }}>Encounter ID</div>
-          <code style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--brand-600)', background: 'var(--brand-50)', padding: '2px 6px', borderRadius: 6 }}>
-            {encounter.readableId ?? `#${encounter._id.slice(-8).toUpperCase()}`}
-          </code>
-          <div style={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.08em', marginTop: 14, marginBottom: 6 }}>Visited</div>
-          <div style={{ color: 'var(--text-muted)' }}>{new Date(encounter.visitedAt).toLocaleString('en-IN')}</div>
+        <div style={{ flex: 1, padding: 20, overflow: 'auto' }}>
+          <iframe
+            ref={previewIframeRef}
+            srcDoc={previewHtml}
+            title="Prescription preview"
+            style={{ width: '100%', height: '100%', minHeight: 600, border: '1px solid var(--border)', borderRadius: 12, background: 'white', boxShadow: '0 4px 24px rgba(15,23,42,0.08)' }}
+          />
         </div>
       </div>
+    );
+  }
 
+  return (
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, transition: 'filter 600ms var(--ease-out)', filter: signed && justSigned ? 'saturate(0.6)' : 'saturate(1)' }}>
+        {/* Patient Header Section */}
+        <div style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '14px 24px',
+          borderBottom: '1px solid var(--border)',
+          background: 'var(--surface)',
+          flexShrink: 0,
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
+            {/* Back Button */}
+            <button onClick={onClose}
+              style={{
+                background: 'none',
+                border: '1.5px solid var(--border)',
+                borderRadius: 10,
+                cursor: 'pointer',
+                color: 'var(--text-subtle)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                width: 36,
+                height: 36,
+                transition: 'all 0.2s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.borderColor = 'var(--text-subtle)')}
+              onMouseLeave={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+            >
+              <Icon name="chevronLeft" size={16} strokeWidth={2.5} />
+            </button>
+
+            {/* Profile Picture / Avatar */}
+            <Avatar name={patient?.fullName ?? '?'} size={44} />
+
+            {/* Patient Name & Details */}
+            <div style={{ minWidth: 0 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <h1 style={{
+                  fontFamily: "'Manrope',sans-serif",
+                  fontSize: 18,
+                  fontWeight: 800,
+                  color: 'var(--text)',
+                  margin: 0,
+                  letterSpacing: '-0.4px',
+                }}>
+                  {patient?.fullName ?? 'Patient'}
+                </h1>
+                <StatusPill status={signed ? 'signed' : 'draft'} small />
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
+                <span style={{ fontSize: 12, color: 'var(--text-subtle)', fontWeight: 500 }}>
+                  {meta || 'No details on file'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Encounter Details */}
+          <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+            <span style={{ fontSize: 11, color: 'var(--text-subtle)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
+              Consultation {encounter.readableId ?? `#${encounter._id.slice(-8).toUpperCase()}`}
+            </span>
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+              Visited: {new Date(encounter.visitedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+            </span>
+          </div>
+        </div>
         {signed && (
           <div style={{
             padding: '12px 24px',
@@ -985,7 +1024,7 @@ function EncounterEditor({
               )}
             </div>
             <div style={{ flex: 1 }}>
-              <div style={{ fontSize: 13, color: 'var(--success-text)', fontWeight: 700 }}>Record Signed & Locked</div>
+              <div style={{ fontSize: 13, color: 'var(--success-text)', fontWeight: 700 }}>Signed prescription</div>
               <div style={{ fontSize: 11, color: 'var(--success-text)', opacity: 0.8, marginTop: 1 }}>
                 By {signerLabel(encounter, ctx.fullName ?? ctx.email)} · {formatSignedAt(encounter.signedAt ?? encounter.updatedAt)}
               </div>
@@ -1062,8 +1101,10 @@ function EncounterEditor({
                 {VITAL_FIELDS.map((f) => (
                   <VitalInput key={f.key} label={f.label} unit={f.unit}
                     value={vitals[f.key] ?? ''}
-                    onChange={(v) => setVitals((x) => ({ ...x, [f.key]: v }))}
-                    disabled={signed} />
+                    onChange={(v) => setVitals((x) => ({
+                      ...x,
+                      [f.key]: f.key === 'bp' ? formatBp(v, x[f.key] ?? '') : v,
+                    }))} />
                 ))}
               </div>
             </Section>
@@ -1071,9 +1112,8 @@ function EncounterEditor({
 
           {(!signed || complaint.trim()) && (
             <Section title="Chief complaint" icon="stethoscope" defaultOpen={!signed}>
-              <textarea value={complaint} onChange={(e) => setComplaint(e.target.value)} disabled={signed}
-                placeholder="Describe the patient's presenting complaint…"
-                style={{ width: '100%', minHeight: 72, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box', opacity: signed ? 0.7 : 1 }} />
+              <textarea value={complaint} onChange={(e) => setComplaint(e.target.value)}                placeholder="Describe the patient's presenting complaint…"
+                style={{ width: '100%', minHeight: 72, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box'}} />
             </Section>
           )}
 
@@ -1084,22 +1124,18 @@ function EncounterEditor({
                 {diags.map((d, i) => (
                   <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 100, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', color: 'var(--brand-700)', fontSize: 12, fontWeight: 500 }}>
                     {d}
-                    {!signed && (
-                      <button onClick={() => removeDiag(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--brand-500)', display: 'flex', padding: 0 }}>
-                        <Icon name="x" size={11} strokeWidth={2.5} />
-                      </button>
-                    )}
+                    <button onClick={() => removeDiag(i)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--brand-500)', display: 'flex', padding: 0 }}>
+                      <Icon name="x" size={11} strokeWidth={2.5} />
+                    </button>
                   </span>
                 ))}
               </div>
-              {!signed && (
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <input value={diagInput} onChange={(e) => setDiagInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addDiag())}
-                    placeholder="Add ICD-10 code or diagnosis…"
-                    style={{ flex: 1, height: 36, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }} />
-                  <button onClick={addDiag} style={{ height: 36, padding: '0 14px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 9, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Add</button>
-                </div>
-              )}
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input value={diagInput} onChange={(e) => setDiagInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addDiag())}
+                  placeholder="Add ICD-10 code or diagnosis…"
+                  style={{ flex: 1, height: 36, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }} />
+                <button onClick={addDiag} style={{ height: 36, padding: '0 14px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 9, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Add</button>
+              </div>
             </Section>
           )}
 
@@ -1128,7 +1164,7 @@ function EncounterEditor({
                 )}
 
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {rx.filter(r => !signed || r.med.trim()).map((item) => (
+                  {rx.map((item) => (
                     <div key={item.id} style={{
                       display: 'grid',
                       gridTemplateColumns: 'minmax(180px, 2fr) 80px 80px 80px minmax(140px, 1.6fr) 40px',
@@ -1144,33 +1180,28 @@ function EncounterEditor({
                         branchId={ctx.branchId}
                         value={item.med}
                         onChange={(patch) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, ...patch } : x))}
-                        disabled={signed}
-                        stockStatus={item.stockStatus}
+                                               stockStatus={item.stockStatus}
                         onHand={item.onHand}
                       />
-                      <input value={item.dose} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dose: e.target.value } : x))} disabled={signed} placeholder="1 tab" style={rxInputStyle} />
-                      <select value={item.freq} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, freq: e.target.value } : x))} disabled={signed} style={{ ...rxInputStyle, cursor: 'pointer' }}>
+                      <input value={item.dose} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dose: e.target.value } : x))} placeholder="1 tab" style={rxInputStyle} />
+                      <select value={item.freq} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, freq: e.target.value } : x))} style={{ ...rxInputStyle, cursor: 'pointer' }}>
                         <option value="">Freq</option>
                         <option>OD</option><option>BD</option><option>TDS</option><option>QID</option><option>SOS</option>
                       </select>
-                      <input value={item.dur} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dur: e.target.value } : x))} disabled={signed} placeholder="7 days" style={rxInputStyle} />
-                      <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} disabled={signed} placeholder="Instructions" style={rxInputStyle} />
+                      <input value={item.dur} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dur: e.target.value } : x))} placeholder="7 days" style={rxInputStyle} />
+                      <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} placeholder="Instructions" style={rxInputStyle} />
 
-                      {!signed ? (
-                        <button onClick={() => setRx((r) => r.filter((x) => x.id !== item.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-500)', padding: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                          <Icon name="trash" size={15} />
-                        </button>
-                      ) : <span />}
+                      <button onClick={() => setRx((r) => r.filter((x) => x.id !== item.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-500)', padding: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <Icon name="trash" size={15} />
+                      </button>
                     </div>
                   ))}
                 </div>
 
-                {!signed && (
-                  <button onClick={() => setRx((r) => [...r, { id: nextRxId.current++, med: '', dose: '', freq: '', dur: '', note: '', qty: '' }])}
-                    style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 8, height: 38, padding: '0 16px', background: 'var(--surface)', border: '1.5px dashed var(--border)', borderRadius: 10, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer', marginTop: 4 }}>
-                    <Icon name="plus" size={14} strokeWidth={2.5} /> Add medicine
-                  </button>
-                )}
+                <button onClick={() => setRx((r) => [...r, { id: nextRxId.current++, med: '', dose: '', freq: '', dur: '', note: '', qty: '' }])}
+                  style={{ alignSelf: 'flex-start', display: 'flex', alignItems: 'center', gap: 8, height: 38, padding: '0 16px', background: 'var(--surface)', border: '1.5px dashed var(--border)', borderRadius: 10, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer', marginTop: 4 }}>
+                  <Icon name="plus" size={14} strokeWidth={2.5} /> Add medicine
+                </button>
               </div>
             </Section>
           )}
@@ -1181,8 +1212,7 @@ function EncounterEditor({
                 <DatePickerChip
                   value={followUp}
                   onChange={setFollowUp}
-                  disabled={signed}
-                  placeholder="No follow-up scheduled"
+                                   placeholder="No follow-up scheduled"
                   allowClear
                 />
                 {!signed && <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>Leave blank if no follow-up needed.</span>}
@@ -1192,19 +1222,31 @@ function EncounterEditor({
 
           {(!signed || notes.trim()) && (
             <Section title="Notes" icon="fileText" defaultOpen={!!notes.trim()}>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)} disabled={signed}
-                placeholder="Clinical notes, observations, or special instructions…"
-                style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box', opacity: signed ? 0.7 : 1 }} />
+              <textarea value={notes} onChange={(e) => setNotes(e.target.value)}                placeholder="Clinical notes, observations, or special instructions…"
+                style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box'}} />
             </Section>
           )}
 
-          <Section title="Documents" icon="folder">
-            {encounter ? (
-              <DocumentsScreen fixedOwnerType="ENCOUNTER" fixedOwnerId={encounter._id} />
+          <Section title="Medical reports" icon="folder" defaultOpen>
+            {/* Read-only view of the patient's previously-uploaded
+                medical reports (lab reports, imaging, prior prescriptions,
+                ID proofs, etc.). Uploads now happen at check-in
+                (TriageModal in Appointments) — the doctor sees them
+                here as reference while writing the prescription. The
+                Section is default-open: a collapsed section never
+                mounts its children (see Section component), so the
+                docs query wouldn't even fire until expanded. */}
+            {patient ? (
+              <DocumentsScreen
+                fixedOwnerType="PATIENT"
+                fixedOwnerId={patient._id}
+                readOnly
+                emptyHint="No medical reports have been uploaded for this patient yet. Upload at check-in or from the patient detail screen."
+              />
             ) : (
               <div style={{ padding: '10px 14px', background: 'var(--surface-muted)', border: '1px dotted var(--border)', borderRadius: 10, display: 'flex', alignItems: 'center', gap: 10 }}>
                 <Icon name="info" size={14} style={{ color: 'var(--brand-500)' }} />
-                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Save a draft first to enable document uploads for this record.</span>
+                <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>Loading medical reports…</span>
               </div>
             )}
           </Section>
@@ -1214,100 +1256,18 @@ function EncounterEditor({
 
         <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', gap: 10, alignItems: 'center' }}>
           <span style={{ flex: 1, fontSize: 12, color: 'var(--text-subtle)' }}>{patient?.fullName} · {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
-          <button
-            disabled={!branchInfo || !doctorInfo}
-            onClick={() => printPrescription({
-              clinic: {
-                name: ctx.clinicName ?? 'Clinic',
-                displayName: ctx.branding?.displayName ?? undefined,
-                logoUrl: resolveLogoSrc(ctx.branding?.logoUrl, ctx.clinicId, ctx.apiBaseUrl),
-                primaryColor: ctx.branding?.primaryColor ?? undefined,
-                branchName: branchInfo?.name ?? ctx.branchName,
-                address: branchInfo?.addressLine,
-                fullAddress: branchInfo?.addressLine,
-                phone: branchInfo?.phone,
-                doctorQuals: doctorInfo?.user?.qualifications,
-                doctorReg: doctorInfo?.user?.registrationNumber,
-              },
-              doctor: { name: ctx.fullName, email: ctx.email },
-              patient,
-              vitals,
-              complaint,
-              diagnosis: diags.join(' | '),
-              rx,
-              notes,
-              followUp,
-              encounter,
-              prescriptionId,
-              prescriptionNo,
-            })}
-            style={{
-              height: 40, padding: '0 18px', background: 'none',
-              border: '1.5px solid var(--border)', borderRadius: 10,
-              color: 'var(--text-muted)', fontSize: 13, fontWeight: 500,
-              cursor: (!branchInfo || !doctorInfo) ? 'wait' : 'pointer',
-              display: 'flex', alignItems: 'center', gap: 6,
-              opacity: (!branchInfo || !doctorInfo) ? 0.6 : 1
-            }}>
-            {(!branchInfo || !doctorInfo) ? <><Spinner size={14} /> Loading details...</> : <><Icon name="printer" size={14} /> Print</>}
+          <button onClick={saveDraft} disabled={savingDraft}
+            style={{ height: 40, padding: '0 20px', background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, fontWeight: 500, cursor: savingDraft ? 'wait' : 'pointer' }}>
+            {savingDraft ? 'Saving…' : (signed ? 'Save changes' : 'Save draft')}
           </button>
-          {signed && (
-            <button
-              onClick={shareOnWhatsApp}
-              disabled={sharing || !prescriptionId}
-              style={{
-                height: 40, width: 44, padding: 0,
-                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                background: 'rgba(37,211,102,0.1)',
-                border: '1.5px solid rgba(37,211,102,0.3)',
-                borderRadius: 10,
-                color: '#25D366',
-                fontSize: 13, fontWeight: 600,
-                cursor: 'pointer',
-                opacity: (sharing || !prescriptionId) ? 0.6 : 1
-              }}>
-              {sharing ? <Spinner size={14} /> : <Icon name="share" size={14} />}
-            </button>
-          )}
           {!signed && (
-            <>
-              <button onClick={saveDraft} disabled={savingDraft}
-                style={{ height: 40, padding: '0 20px', background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, fontWeight: 500, cursor: savingDraft ? 'wait' : 'pointer' }}>
-                {savingDraft ? 'Saving…' : 'Save draft'}
-              </button>
-              <button onClick={() => setShowSign(true)}
-                style={{ height: 40, padding: '0 24px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Icon name="lock" size={14} /> Sign encounter
-              </button>
-            </>
+            <button onClick={sign} disabled={signing}
+              style={{ height: 40, padding: '0 24px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: signing ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              {signing ? <><Spinner size={14} /> Signing…</> : <><Icon name="lock" size={14} /> Sign consultation</>}
+            </button>
           )}
         </div>
       </div>
-
-      {showSign && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)' }} onClick={() => setShowSign(false)}>
-          <div style={{ background: 'var(--surface)', borderRadius: 18, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: 380, padding: 28, animation: 'slideUp 200ms ease-out' }} onClick={(e) => e.stopPropagation()}>
-            <div style={{ width: 44, height: 44, borderRadius: 12, background: 'rgba(59,130,246,0.1)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-              <Icon name="lock" size={20} style={{ color: 'var(--brand-500)' }} />
-            </div>
-            <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 17, fontWeight: 700, color: 'var(--text)', marginBottom: 8 }}>Sign encounter?</div>
-            <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 24 }}>
-              Once signed, the record will be locked and cannot be edited. This action confirms the clinical details are accurate.
-            </p>
-            {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)', marginBottom: 12 }}>{error}</div>}
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button onClick={() => setShowSign(false)}
-                style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
-                Cancel
-              </button>
-              <button onClick={sign} disabled={signing}
-                style={{ flex: 2, height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: signing ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                {signing ? <Spinner /> : <><Icon name="lock" size={14} /> Sign encounter</>}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }
@@ -1341,14 +1301,24 @@ function MedicineTypeahead({
   stockStatus?: RxStockStatus;
   onHand?: number;
 }) {
+  // Inventory-driven suggestions temporarily disabled. Flip this flag
+  // back to `true` to restore the dropdown + stock chips + the
+  // `/inventory/availability` fetch below. The input still accepts
+  // free-text medicine names while disabled.
+  const SUGGESTIONS_ENABLED = false;
+
   const [open, setOpen] = useState(false);
   const [results, setResults] = useState<AvailabilityRow[]>([]);
   const [loading, setLoading] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const toast = useToast();
+
+  const hasSpecial = /[^a-zA-Z0-9\s\-.]/.test(value);
 
   // Close on outside click. Mousedown rather than click so a click on a
   // result fires before this listener strips the dropdown.
   useEffect(() => {
+    if (!SUGGESTIONS_ENABLED) return;
     if (!open) return;
     function onDocMouseDown(e: MouseEvent) {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
@@ -1357,11 +1327,12 @@ function MedicineTypeahead({
     }
     document.addEventListener('mousedown', onDocMouseDown);
     return () => document.removeEventListener('mousedown', onDocMouseDown);
-  }, [open]);
+  }, [open, SUGGESTIONS_ENABLED]);
 
   // Debounced fetch on value change. Only when input is focused/open and
   // a branch is set — without branchId the BE returns 400.
   useEffect(() => {
+    if (!SUGGESTIONS_ENABLED) return;
     if (!open || !branchId) return;
     const t = setTimeout(() => {
       const qs = new URLSearchParams({ branchId, query: value, limit: '20' });
@@ -1372,7 +1343,7 @@ function MedicineTypeahead({
         .finally(() => setLoading(false));
     }, 180);
     return () => clearTimeout(t);
-  }, [open, value, branchId, ctx]);
+  }, [open, value, branchId, ctx, SUGGESTIONS_ENABLED]);
 
   function pick(row: AvailabilityRow) {
     onChange({
@@ -1390,17 +1361,25 @@ function MedicineTypeahead({
       <div style={{ position: 'relative' }}>
         <input
           value={value}
-          onChange={(e) => onChange({
-            med: e.target.value,
-            // Typing breaks the inventory link until the doctor picks again
-            // — without this a free-text edit would still claim the old
-            // catalog ID at save time.
-            inventoryItemId: undefined,
-            medicineCatalogItemId: undefined,
-            stockStatus: undefined,
-            onHand: undefined,
-          })}
-          onFocus={() => setOpen(true)}
+          onChange={(e) => {
+            onChange({
+              med: e.target.value,
+              // Typing breaks the inventory link until the doctor picks again
+              // — without this a free-text edit would still claim the old
+              // catalog ID at save time.
+              inventoryItemId: undefined,
+              medicineCatalogItemId: undefined,
+              stockStatus: undefined,
+              onHand: undefined,
+            });
+          }}
+          onBlur={() => {
+            const currentHasSpecial = /[^a-zA-Z0-9\s\-.]/.test(value);
+            if (currentHasSpecial) {
+              toast("Special characters are not allowed in medicine name.", "error");
+            }
+          }}
+          onFocus={() => { if (SUGGESTIONS_ENABLED) setOpen(true); }}
           onKeyDown={(e) => {
             if (e.key === 'Escape') setOpen(false);
           }}
@@ -1409,6 +1388,8 @@ function MedicineTypeahead({
           style={{
             ...rxInputStyle,
             paddingRight: stockStatus ? 28 : rxInputStyle.padding,
+            border: hasSpecial ? '1.5px solid var(--danger-500)' : '1px solid var(--border)',
+            boxShadow: hasSpecial ? '0 0 0 2px rgba(239, 68, 68, 0.15)' : undefined,
           }}
         />
         {stockStatus && (
@@ -1427,7 +1408,7 @@ function MedicineTypeahead({
           </span>
         )}
       </div>
-      {open && !disabled && (
+      {SUGGESTIONS_ENABLED && open && !disabled && (
         <div style={{
           position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 4,
           background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
@@ -1600,7 +1581,7 @@ function resolveLogoSrc(
   return `${apiBaseUrl}/clinics/${encodeURIComponent(clinicId)}/logo`;
 }
 
-function printPrescription(input: {
+type PrescriptionPrintInput = {
   clinic: {
     name: string;
     displayName?: string;
@@ -1625,10 +1606,22 @@ function printPrescription(input: {
   prescriptionId?: string | null;
   /** Human-readable Rx number minted on first save (e.g. "RX-000123"). */
   prescriptionNo?: string | null;
-}) {
-  console.log("PRINT DATA", input);
+  /**
+   * When true (default), include a script that auto-fires window.print()
+   * shortly after load. The popup-window print path needs this to
+   * trigger the OS print dialog. The inline preview iframe explicitly
+   * opts out — we don't want the iframe spawning a print dialog the
+   * moment the preview opens; the doctor clicks Print themselves.
+   */
+  autoPrint?: boolean;
+};
+
+// Returns the full HTML document for a prescription. Used by both the
+// classic print path (opens a new window and calls window.print) and
+// the inline preview (renders the same HTML inside an iframe so the
+// doctor sees the printable view without leaving the app).
+function buildPrescriptionHtml(input: PrescriptionPrintInput): string {
   const { clinic, doctor, patient, vitals, complaint, diagnosis, rx, notes, followUp, encounter } = input;
-  const signed = encounter.status === 'SIGNED';
 
   const doctorName = doctor.name
     ? doctor.name.toLowerCase().startsWith('dr.')
@@ -1658,95 +1651,6 @@ function printPrescription(input: {
   // never set a color keep the historical look.
   const brandColor = (clinic.primaryColor || '').trim() || '${brandColor}';
   const headerName = (clinic.displayName || '').trim() || clinic.name || 'Clinic';
-
-  const vitalsHtml = filledVitals.length
-    ? `<section class="block">
-         <h2>Vitals</h2>
-         <div class="vitals-grid">
-           ${filledVitals
-      .map(([k, v]) => {
-        const meta = VITAL_FIELDS.find((f) => f.key === k);
-        return `<div class="vital">
-                         <div class="label">${escapeHtml(meta?.label ?? k.toUpperCase())}</div>
-                         <div class="value">${escapeHtml(v)}</div>
-                         <div class="unit">${escapeHtml(meta?.unit ?? '')}</div>
-                       </div>`;
-      })
-      .join('')}
-         </div>
-       </section>`
-    : '';
-
-  const complaintHtml = complaint.trim()
-    ? `<section class="block">
-         <h2>Chief complaint</h2>
-         <p>${escapeHtml(complaint.trim())}</p>
-       </section>`
-    : '';
-
-  const diagnosisHtml = diagnosisList.length
-    ? `<section class="block">
-         <h2>Diagnosis</h2>
-         <div class="chips">
-           ${diagnosisList.map((d) => `<span class="chip">${escapeHtml(d)}</span>`).join('')}
-         </div>
-       </section>`
-    : '';
-
-  const rxHtml = filledRx.length
-    ? `<section class="block rx-section">
-         <h2 style="color:#6366F1; font-size: 15px; margin-bottom: 16px;">℞ Prescription</h2>
-         <table class="rx-table">
-           <thead>
-             <tr>
-               <th>#</th>
-               <th>Medicine</th>
-               <th>Dose</th>
-               <th>Frequency</th>
-               <th>Duration</th>
-               <th>Instructions</th>
-             </tr>
-           </thead>
-           <tbody>
-             ${filledRx
-      .map(
-        (r, i) => `<tr>
-                   <td class="num">${i + 1}</td>
-                   <td class="med">${escapeHtml(r.med)}</td>
-                   <td>${escapeHtml(r.dose || '—')}</td>
-                   <td>${escapeHtml(r.freq || '—')}</td>
-                   <td>${escapeHtml(r.dur || '—')}</td>
-                   <td style="font-size: 12px; color: #64748b;">${escapeHtml(r.note || '—')}</td>
-                 </tr>`,
-      )
-      .join('')}
-           </tbody>
-         </table>
-       </section>`
-    : `<section class="block">
-         <h2>Prescription (℞)</h2>
-         <p class="empty">No medicines prescribed.</p>
-       </section>`;
-
-  const followUpHtml = followUp
-    ? `<section class="block">
-         <h2>Follow-up</h2>
-         <p>${escapeHtml(
-      new Date(followUp).toLocaleDateString('en-IN', {
-        day: '2-digit',
-        month: 'long',
-        year: 'numeric',
-      }),
-    )}</p>
-       </section>`
-    : '';
-
-  const notesHtml = notes.trim()
-    ? `<section class="block">
-         <h2>Notes</h2>
-         <p style="white-space: pre-wrap;">${escapeHtml(notes.trim())}</p>
-       </section>`
-    : '';
 
   const html = `<!DOCTYPE html>
 <html lang="en">
@@ -2042,10 +1946,11 @@ function printPrescription(input: {
 </style>
 </head>
 <body>
-  <div class="toolbar">
-    <button class="primary" onclick="window.print()">Print</button>
-    <button onclick="window.close()">Close</button>
-  </div>
+  <!-- Toolbar removed: the in-app preview supplies Edit / Share
+       buttons and the doctor invokes Print from there. Keeping the
+       Print / Close buttons inside the iframe was duplicative and
+       confusing. -->
+
 
   <main class="page">
 
@@ -2081,10 +1986,15 @@ function printPrescription(input: {
         <span class="ps-value">${gender ? escapeHtml(gender) : '—'} · ${age != null ? `${age} yrs` : '—'}</span>
         <span class="ps-label">Demographics</span>
       </div>
+      <!-- Blood group hidden until we collect it from the patient
+           record (currently this was hardcoded to "B+" which is wrong
+           for every patient who isn't actually B+). Re-enable once
+           Patient.bloodGroup is being captured at registration.
       <div class="ps-field">
         <span class="ps-value">B+</span>
         <span class="ps-label">Blood group</span>
       </div>
+      -->
       <div class="ps-field">
         <span class="ps-value">${escapeHtml(phone || '—')}</span>
         <span class="ps-label">Phone</span>
@@ -2178,14 +2088,23 @@ function printPrescription(input: {
       </div>
     </footer>
   </main>
-  <script>
+  ${input.autoPrint === false ? '' : `<script>
     window.addEventListener('load', function() {
       setTimeout(function() { window.print(); }, 200);
     });
-  </script>
+  </script>`}
 </body>
 </html>`;
 
+  return html;
+}
+
+// Classic print path — generate the HTML and open it in a popup so
+// the browser's auto-print fires. Kept for the doctor's "Print" button
+// inside the inline preview iframe (iframe.contentWindow.print()
+// triggers the same flow without spawning a tab).
+function printPrescription(input: PrescriptionPrintInput) {
+  const html = buildPrescriptionHtml(input);
   const w = window.open('', '_blank', 'width=900,height=1100');
   if (!w) {
     alert('Could not open print window. Please allow pop-ups for this site.');

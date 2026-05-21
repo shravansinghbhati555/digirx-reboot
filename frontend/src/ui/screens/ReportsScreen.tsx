@@ -1,11 +1,55 @@
 import { useEffect, useState } from 'react';
 import { apiGet } from '../../app/api';
 import { useApp } from '../../app/AppContext';
-import { EmptyState, Field, StatusPill, formatINR } from '../shared/primitives';
+import { EmptyState, Field, StatusPill, formatINR, labelStyle } from '../shared/primitives';
 import { AreaChart } from '../shared/AreaChart';
 import { AnimatedTabs } from '../shared/AnimatedTabs';
 import { Counter } from '../shared/Counter';
 import { Skeleton } from '../shared/Skeleton';
+
+// Branch picker for the report filter row.
+//   - Super Admin / Manager → name dropdown of all branches in the
+//     clinic. They can pivot the report between branches without
+//     leaving the screen.
+//   - Everyone else → renders nothing. Non-admin roles are scoped to
+//     their signed-in branch (ctx.branchId); the report queries already
+//     fall back to that, so hiding the field keeps the UI honest.
+function BranchPicker({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const { ctx, roleNames } = useApp();
+  const isAdminLike = roleNames.has('super admin') || roleNames.has('manager');
+  const [branches, setBranches] = useState<{ _id: string; name: string }[]>([]);
+  useEffect(() => {
+    if (!isAdminLike || !ctx.clinicId) { setBranches([]); return; }
+    apiGet<{ _id: string; name: string }[]>(ctx, `/clinics/${ctx.clinicId}/branches`)
+      .then(setBranches)
+      .catch(() => setBranches([]));
+  }, [isAdminLike, ctx.clinicId, ctx.accessToken]);
+
+  if (!isAdminLike) return null;
+
+  return (
+    <div style={{ flex: 1 }}>
+      <label style={labelStyle}>Branch</label>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        style={{
+          width: '100%', height: 40, padding: '0 12px',
+          background: 'var(--surface-muted)', border: '1.5px solid var(--border)',
+          borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none',
+          boxSizing: 'border-box', cursor: 'pointer',
+        }}
+      >
+        {branches.length === 0 && (
+          <option value={value}>{value || '— select branch —'}</option>
+        )}
+        {branches.map((b) => (
+          <option key={b._id} value={b._id}>{b.name}</option>
+        ))}
+      </select>
+    </div>
+  );
+}
 
 type RevenueResp = {
   from?: string; to?: string; timezone: string; branchId: string | null; branchName?: string | null;
@@ -242,7 +286,7 @@ function UtilizationTab() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16, display: 'flex', gap: 12, alignItems: 'flex-end' }}>
         <div style={{ flex: 1 }}><Field label="Date" value={date} onChange={setDate} placeholder="YYYY-MM-DD" /></div>
-        <div style={{ flex: 1 }}><Field label="Branch ID" value={branchId} onChange={setBranchId} placeholder="ObjectId" /></div>
+        <BranchPicker value={branchId} onChange={setBranchId} />
         <button onClick={load} disabled={loading} className="press-scale"
           style={{ height: 40, padding: '0 20px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
           {loading ? 'Loading…' : 'Reload'}
@@ -354,7 +398,7 @@ function ScheduleTab() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16, display: 'flex', gap: 12, alignItems: 'flex-end' }}>
         <div style={{ flex: 1 }}><Field label="Date" value={date} onChange={setDate} placeholder="YYYY-MM-DD" /></div>
-        <div style={{ flex: 1 }}><Field label="Branch ID" value={branchId} onChange={setBranchId} placeholder="ObjectId" /></div>
+        <BranchPicker value={branchId} onChange={setBranchId} />
         <button onClick={load} disabled={loading}
           style={{ height: 40, padding: '0 20px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
           {loading ? 'Loading…' : 'Reload'}

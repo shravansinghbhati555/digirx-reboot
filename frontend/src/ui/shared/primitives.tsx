@@ -7,9 +7,26 @@ import { DatePickerChip } from './DatePickerChip';
 // here — JS would have to read computed styles to pick a swatch.
 const AVATAR_COLORS = ['#3B82F6','#14B8A6','#8B5CF6','#EC4899','#F59E0B','#10B981','#6366F1','#EF4444'];
 
-export function Avatar({ name = '?', size = 36, style }: { name?: string; size?: number; style?: CSSProperties }) {
+export function Avatar({ name = '?', size = 36, imageUrl, style }: { name?: string; size?: number; imageUrl?: string | null; style?: CSSProperties }) {
   const initials = name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
   const color = AVATAR_COLORS[name.charCodeAt(0) % AVATAR_COLORS.length];
+  // Render the patient's photo when available (set by face enrollment).
+  // Falls back to initials if the URL fails to load.
+  if (imageUrl) {
+    return (
+      <img
+        src={imageUrl}
+        alt={name}
+        title={name}
+        style={{
+          width: size, height: size, borderRadius: '50%',
+          border: `1.5px solid ${color}44`,
+          objectFit: 'cover', flexShrink: 0, display: 'block',
+          ...style,
+        }}
+      />
+    );
+  }
   return (
     <div style={{
       width: size, height: size, borderRadius: '50%',

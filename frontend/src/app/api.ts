@@ -67,10 +67,17 @@ async function apiFetch<T>(
         return await apiFetch<T>(ctx, path, init, 1);
       }
     }
-    // Refresh failed or it was already a retry — treat as expired session for JWT.
-    if (ctx.accessToken) {
+    // Refresh failed or it was already a retry. Boot the user back to
+    // the login screen for any session — JWT or dev-headers — so a
+    // single source of truth handles the expired/revoked case. The
+    // event listener in AppContext clears the in-memory context and
+    // navigates to /login.
+    if (ctx.accessToken || ctx.userId) {
       clearContext();
       window.dispatchEvent(new CustomEvent(AUTH_EXPIRED_EVENT));
+      // Friendly message — the caller's catch will see this instead
+      // of "401 Unauthorized" so toasts read naturally.
+      throw new Error('Your session has expired. Please log in again.');
     }
   }
 

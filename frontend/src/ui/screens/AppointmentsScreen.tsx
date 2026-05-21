@@ -8,6 +8,30 @@ import { Icon } from '../shared/Icon';
 import { DatePickerChip } from '../shared/DatePickerChip';
 import { ListItemSkeleton, Skeleton } from '../shared/Skeleton';
 import { FaceScanModal } from '../shared/FaceScanModal';
+import { DocumentsScreen } from './DocumentsScreen';
+
+// Auto-format BP input so the operator only types digits and the "/"
+// lands in the right place. Mirrors the helper of the same name in
+// EncounterScreen so the triage check-in form and the doctor's
+// consultation form behave identically. Heuristic on the first digit:
+//   "1" or "2" → 3-digit systolic (120/80, 140/90)
+//   "6"–"9"    → 2-digit systolic (90/60, 80/55)
+function formatBpInput(input: string, prev: string): string {
+  // See encounter screen's formatBp — same behavior, capped to a max
+  // of "999/999" (3-digit systolic + slash + 3-digit diastolic).
+  let cleaned = input.replace(/[^\d/]/g, '');
+  if (cleaned.length < prev.length) return cleaned.slice(0, 7);
+  if (cleaned.includes('/')) {
+    const [sys = '', dia = ''] = cleaned.split('/');
+    return `${sys.slice(0, 3)}/${dia.slice(0, 3)}`;
+  }
+  cleaned = cleaned.slice(0, 6);
+  if (cleaned.length < 2) return cleaned;
+  const first = cleaned[0];
+  const systolicLen = first === '6' || first === '7' || first === '8' || first === '9' ? 2 : 3;
+  if (cleaned.length <= systolicLen) return cleaned;
+  return `${cleaned.slice(0, systolicLen)}/${cleaned.slice(systolicLen, systolicLen + 3)}`;
+}
 
 type AppointmentType = 'TIME' | 'QUEUE';
 
@@ -91,7 +115,6 @@ function formatDrName(name: string | undefined): string {
   }
 
   const HOURS = Array.from({ length: 12 }, (_, i) => i + 8);
-  const HOUR_H = 72;
   const EXPANDED_H = 300;
 
   const STATUS_COLORS: Record<string, { bg: string; border: string; text: string }> = {
@@ -118,156 +141,7 @@ function formatDrName(name: string | undefined): string {
     return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
   }
 
-  function WeekView({
-    date, weekItems, loading, getName, onSelect, onPickDay, showCancelled,
-  }: {
-    date: string;
-    weekItems: Map<string, Appointment[]>;
-    loading: boolean;
-    getName: (id: string) => string;
-    onSelect: (a: Appointment) => void;
-    onPickDay: (iso: string) => void;
-    showCancelled: boolean;
-  }) {
-    const days = weekDates(date);
-    const todayIso = new Date().toISOString().slice(0, 10);
-    const COL_W = 120;
 
-    return (
-      <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
-        <div style={{ width: 60, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', paddingTop: 40 }}>
-          {HOURS.map((h) => (
-            <div key={h} style={{ height: HOUR_H, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', paddingRight: 10, paddingTop: 6, fontSize: 11, color: 'var(--text-subtle)', fontVariantNumeric: 'tabular-nums', borderBottom: '1px solid var(--border)', boxSizing: 'border-box' }}>
-              {String(h).padStart(2, '0')}:00
-            </div>
-          ))}
-        </div>
-
-        <div style={{ flex: 1, overflowX: 'auto', overflowY: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--surface)', flexShrink: 0, height: 40, minWidth: COL_W * 7 }}>
-            {days.map((d) => {
-              const [, mm, dd] = d.split('-');
-              const dt = new Date(Number(d.slice(0, 4)), Number(mm) - 1, Number(dd));
-              const dayLabel = dt.toLocaleDateString('en-IN', { weekday: 'short' });
-              const isToday = d === todayIso;
-              return (
-                <button key={d} onClick={() => onPickDay(d)}
-                  style={{
-                    flex: 1, minWidth: COL_W, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-                    gap: 1, borderRight: '1px solid var(--border)', padding: '4px 0',
-                    background: 'none', border: 'none', cursor: 'pointer',
-                  }}>
-                  <span style={{ fontSize: 10, fontWeight: 600, color: isToday ? 'var(--brand-500)' : 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>{dayLabel}</span>
-                  <span style={{
-                    fontSize: 13, fontWeight: 700,
-                    width: 26, height: 26, borderRadius: '50%',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    background: isToday ? 'var(--brand-500)' : 'transparent',
-                    color: isToday ? 'var(--brand-text)' : 'var(--text)',
-                  }}>
-                    {dd}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-
-          <div style={{ flex: 1, overflowY: 'auto', position: 'relative', display: 'flex', minWidth: COL_W * 7 }}>
-            {days.map((d) => {
-              let dayAppts = (weekItems.get(d) ?? []).filter((a) => a.type === 'TIME');
-              if (showCancelled) {
-                dayAppts = dayAppts.filter(a => statusKey(a.status) === 'CANCELLED');
-              } else {
-                dayAppts = dayAppts.filter(a => statusKey(a.status) !== 'CANCELLED');
-              }
-              const isToday = d === todayIso;
-              return (
-                <div key={d} style={{ flex: 1, minWidth: COL_W, borderRight: '1px solid var(--border)', position: 'relative', background: isToday ? 'rgba(59,130,246,0.015)' : 'transparent' }}>
-                  {HOURS.map((h) => (
-                    <div key={h} style={{ position: 'absolute', left: 0, right: 0, top: (h - 8) * HOUR_H, height: HOUR_H, borderBottom: '1px solid var(--border)', boxSizing: 'border-box' }} />
-                  ))}
-                  {(() => {
-                    const dayLayout = computeDayLayout(dayAppts);
-                    return dayAppts.map((a) => {
-                      const startMin = isoToMin(a.startAt);
-                      const endMin = isoToMin(a.endAt);
-                      const dur = Math.max(endMin - startMin, 15);
-                      const top = ((startMin - 8 * 60) / 60) * HOUR_H;
-                      if (top < 0) return null;
-                      const height = Math.max((dur / 60) * HOUR_H - 2, 20);
-                      const col = STATUS_COLORS[statusKey(a.status)] ?? STATUS_COLORS.BOOKED;
-                      const layout = dayLayout.get(a._id) ?? { left: '2px', width: 'calc(100% - 4px)', zIndex: 1, opacity: 1 };
-                      const isCancelled = statusKey(a.status) === 'CANCELLED';
-
-                      return (
-                        <div key={a._id} onClick={() => onSelect(a)}
-                          style={{
-                            position: 'absolute',
-                            left: layout.left,
-                            width: layout.width,
-                            top,
-                            height,
-                            background: col.bg,
-                            border: `1px solid ${col.border}`,
-                            borderStyle: isCancelled ? 'dashed' : 'solid',
-                            borderRadius: 6,
-                            padding: '3px 6px',
-                            cursor: 'pointer',
-                            overflow: 'hidden',
-                            zIndex: layout.zIndex,
-                            opacity: layout.opacity,
-                          }}>
-                          <div style={{
-                            fontSize: 10,
-                            fontWeight: 700,
-                            color: col.text,
-                            whiteSpace: 'nowrap',
-                            overflow: 'hidden',
-                            textOverflow: 'ellipsis',
-                            lineHeight: 1.3,
-                            textDecoration: isCancelled ? 'line-through' : 'none',
-                          }}>
-                            {getName(a.patientId)}
-                            {isCancelled && <span style={{ marginLeft: 2, opacity: 0.6, fontSize: 8 }}>[C]</span>}
-                          </div>
-                          {height > 28 && <div style={{ fontSize: 9, color: col.text, opacity: 0.8 }}>{isoToTime(a.startAt)}</div>}
-                        </div>
-                      );
-                    });
-                  })()}
-                  {loading && (weekItems.get(d) ?? []).length === 0 && (
-                    <>
-                      <Skeleton style={{ position: 'absolute', top: 1 * HOUR_H + 4, left: 3, right: 3, height: HOUR_H * 0.5 - 4 }} radius={6} />
-                      <Skeleton style={{ position: 'absolute', top: 3 * HOUR_H + 8, left: 3, right: 3, height: HOUR_H * 0.75 - 4 }} radius={6} />
-                      <Skeleton style={{ position: 'absolute', top: 5 * HOUR_H + 12, left: 3, right: 3, height: HOUR_H * 0.5 - 4 }} radius={6} />
-                    </>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  function weekDates(centerIso: string): string[] {
-    const [y, m, d] = centerIso.split('-').map(Number);
-    const center = new Date(y, (m ?? 1) - 1, d ?? 1);
-    // Start week on Monday
-    const dayOfWeek = center.getDay(); // 0 Sun..6 Sat
-    const offsetToMon = (dayOfWeek + 6) % 7;
-    const start = new Date(center);
-    start.setDate(start.getDate() - offsetToMon);
-    return Array.from({ length: 7 }, (_, i) => {
-      const d = new Date(start);
-      d.setDate(d.getDate() + i);
-      const yy = d.getFullYear();
-      const mm = String(d.getMonth() + 1).padStart(2, '0');
-      const dd = String(d.getDate()).padStart(2, '0');
-      return `${yy}-${mm}-${dd}`;
-    });
-  }
 
   function isoToMin(iso: string | undefined): number {
     if (!iso) return 0;
@@ -349,9 +223,6 @@ function formatDrName(name: string | undefined): string {
     const toast = useToast();
     const date = selectedDate;
     const setDate = setSelectedDate;
-    const [view, setView] = useState<'day' | 'week' | 'queue'>('queue');
-    const [weekItems, setWeekItems] = useState<Map<string, Appointment[]>>(new Map());
-    const [weekLoading, setWeekLoading] = useState(false);
     const [showCancelled, setShowCancelled] = useState(false);
     const [items, setItems] = useState<Appointment[]>([]);
     const [loading, setLoading] = useState(false);
@@ -450,55 +321,6 @@ function formatDrName(name: string | undefined): string {
         .catch(() => undefined);
     }, [ctx.clinicId, ctx.accessToken]);
 
-    useEffect(() => {
-      if (view !== 'week') return;
-      if (!ctx.branchId) return;
-      setWeekLoading(true);
-      const days = weekDates(date);
-      Promise.all(days.map(async (d) => {
-        try {
-          const qs = new URLSearchParams({ branchId: ctx.branchId!, date: d });
-          const data = await apiGet<Appointment[]>(ctx, `/appointments?${qs.toString()}`);
-          return [d, data] as const;
-        } catch {
-          return [d, [] as Appointment[]] as const;
-        }
-      }))
-        .then(async (results) => {
-          const map = new Map<string, Appointment[]>();
-          results.forEach(([d, items]) => map.set(d, items));
-          setWeekItems(map);
-          // Also pull in patient names from week data
-          const next = new Map(patients);
-          const missingIds: string[] = [];
-
-          results.flatMap(([, items]) => items).forEach(a => {
-            if (!a.patientId) return;
-            if (typeof a.patientId === 'object' && a.patientId._id) {
-              next.set(a.patientId._id, a.patientId);
-            } else if (typeof a.patientId === 'string' && !next.has(a.patientId)) {
-              missingIds.push(a.patientId);
-            }
-          });
-
-          if (missingIds.length > 0) {
-            await Promise.all(
-              Array.from(new Set(missingIds)).map(async (id) => {
-                try {
-                  const p = await apiGet<PatientLite>(ctx, `/patients/${id}`);
-                  next.set(id, p);
-                } catch {
-                  next.set(id, { _id: id, fullName: id.slice(-6) });
-                }
-              })
-            );
-          }
-          setPatients(next);
-        })
-        .finally(() => setWeekLoading(false));
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [view, date, ctx.branchId, ctx.clinicId]);
-
     // Auto-open booking sheet when patient is referred from another screen
     useEffect(() => {
       if (selectedPatientId) setShowBook(true);
@@ -538,14 +360,14 @@ function formatDrName(name: string | undefined): string {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
         <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '12px 24px', display: 'flex', alignItems: 'center', gap: 12 }}>
-          <button onClick={() => shiftDate(view === 'week' ? -7 : -1)}
-            aria-label={view === 'week' ? 'Previous week' : 'Previous day'}
+          <button onClick={() => shiftDate(-1)}
+            aria-label="Previous day"
             style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
             <Icon name="chevronLeft" size={16} />
           </button>
           <DatePickerChip value={date} onChange={setDate} size="sm" />
-          <button onClick={() => shiftDate(view === 'week' ? 7 : 1)}
-            aria-label={view === 'week' ? 'Next week' : 'Next day'}
+          <button onClick={() => shiftDate(1)}
+            aria-label="Next day"
             style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
             <Icon name="chevronRight" size={16} />
           </button>
@@ -563,15 +385,6 @@ function formatDrName(name: string | undefined): string {
               <Icon name={showCancelled ? 'eye' : 'eyeOff'} size={14} />
               {showCancelled ? 'Showing Cancelled' : 'Show Cancelled'}
             </button>
-
-            <div style={{ display: 'flex', gap: 2, background: 'var(--surface-muted)', borderRadius: 10, padding: 3, border: '1px solid var(--border)' }}>
-              {(['queue', 'day', 'week'] as const).map((v) => (
-                <button key={v} onClick={() => setView(v)}
-                  style={{ padding: '5px 14px', borderRadius: 8, border: 'none', background: view === v ? 'var(--surface)' : 'transparent', color: view === v ? 'var(--text)' : 'var(--text-muted)', fontSize: 12, fontWeight: view === v ? 600 : 400, cursor: 'pointer', textTransform: 'capitalize' }}>
-                  {v}
-                </button>
-              ))}
-            </div>
 
             <button onClick={() => void load()}
               disabled={loading}
@@ -596,9 +409,52 @@ function formatDrName(name: string | undefined): string {
           </div>
         )}
 
-        <div style={{ flex: 1, overflow: 'hidden', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>
-          {view === 'day' && (
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', background: 'var(--bg)', position: 'relative' }}>
+        <div style={{ flex: 1, overflow: 'hidden', background: 'var(--bg)', display: 'flex', flexDirection: 'row' }}>
+          {/* Left Column: Walk-in Queue */}
+          <div style={{ flex: 1, display: 'flex', flexDirection: 'column', borderRight: '1px solid var(--border)', overflow: 'hidden' }}>
+            <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
+                <div>
+                  <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Walk-in queue</h2>
+                  <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{loading ? '—' : queueAppts.filter((a) => statusKey(a.status) === 'BOOKED').length} waiting</p>
+                </div>
+              </div>
+              {loading ? (
+                <div style={{ background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+                  {Array.from({ length: 5 }).map((_, i) => <ListItemSkeleton key={i} />)}
+                </div>
+              ) : queueAppts.length === 0 ? <EmptyState icon="users" title="No queue tokens for this date" /> : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                  {queueAppts.map((a) => (
+                    <div key={a._id} onClick={() => setSelected(a)}
+                      style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 16px', background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: 14, cursor: 'pointer' }}>
+                      <div style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 800, color: 'var(--text-muted)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                        {a.queueNumber ?? '—'}
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{getName(a.patientId)}</div>
+                        <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>
+                          {doctors.get(a.doctorId) ? formatDrName(doctors.get(a.doctorId)) : `Doctor #${a.doctorId.slice(-8).toUpperCase()}`}
+                        </div>
+                      </div>
+                      <PaymentChip appt={a} onOpen={(billId) => { setSelectedBillId(billId); setScreen('billing'); }} />
+                      <StatusPill status={statusToken(a.status)} small />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Right Column: Day Grid (Time-based appointments) */}
+          <div style={{ flex: 1.2, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            <div style={{ padding: '24px 24px 0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+              <div>
+                <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Time-based appointments</h2>
+                <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{loading ? '—' : dayAppts.filter((a) => statusKey(a.status) === 'BOOKED').length} scheduled</p>
+              </div>
+            </div>
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', background: 'var(--bg)', position: 'relative', marginTop: 16, borderTop: '1px solid var(--border)' }}>
               {/* Labels column */}
               <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', position: 'relative', minHeight: getHourTop(20) }}>
                 {HOURS.map((h) => (
@@ -686,54 +542,7 @@ function formatDrName(name: string | undefined): string {
                 })()}
               </div>
             </div>
-          )}
-
-          {view === 'week' && (
-            <WeekView
-              date={date}
-              weekItems={weekItems}
-              loading={weekLoading}
-              getName={getName}
-              onSelect={setSelected}
-              onPickDay={(d) => { setDate(d); setView('day'); }}
-              showCancelled={showCancelled}
-            />
-          )}
-
-          {view === 'queue' && (
-            <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16, maxWidth: 720 }}>
-                <div>
-                  <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Walk-in queue</h2>
-                  <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{loading ? '—' : queueAppts.filter((a) => statusKey(a.status) === 'BOOKED').length} waiting</p>
-                </div>
-              </div>
-              {loading ? (
-                <div style={{ maxWidth: 720, background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
-                  {Array.from({ length: 5 }).map((_, i) => <ListItemSkeleton key={i} />)}
-                </div>
-              ) : queueAppts.length === 0 ? <EmptyState icon="users" title="No queue tokens for this date" /> : (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 10, maxWidth: 720 }}>
-                  {queueAppts.map((a) => (
-                    <div key={a._id} onClick={() => setSelected(a)}
-                      style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 16px', background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: 14, cursor: 'pointer' }}>
-                      <div style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 800, color: 'var(--text-muted)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
-                        {a.queueNumber ?? '—'}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text)' }}>{getName(a.patientId)}</div>
-                        <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>
-                          {doctors.get(a.doctorId) ? formatDrName(doctors.get(a.doctorId)) : `Doctor #${a.doctorId.slice(-8).toUpperCase()}`}
-                        </div>
-                      </div>
-                      <PaymentChip appt={a} onOpen={(billId) => { setSelectedBillId(billId); setScreen('billing'); }} />
-                      <StatusPill status={statusToken(a.status)} small />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
+          </div>
         </div>
 
         {selected && (
@@ -924,12 +733,22 @@ function formatDrName(name: string | undefined): string {
     appt: Appointment; patientName: string; onClose: () => void; onSaved: () => void;
   }) {
     const { ctx } = useApp();
+    const { has } = usePerm();
     const toast = useToast();
     const [busy, setBusy] = useState(false);
     const [complaint, setComplaint] = useState('');
     const [vitals, setVitals] = useState<Record<string, string>>({
       bp: '', spo2: '', temp: '', pulse: '', rr: '', weight: '', height: ''
     });
+    // Documents moved here from patient registration: most patients
+    // bring paperwork (lab reports, ID, referrals) on the visit day,
+    // not when their chart is first created. Scoped to the patient so
+    // the doctor sees them on every future visit too.
+    const patientIdForDocs: string | null =
+      typeof appt.patientId === 'string'
+        ? appt.patientId
+        : appt.patientId?._id ?? null;
+    const canUploadDocs = has(Perm.DocumentWrite);
 
     async function save() {
       setBusy(true);
@@ -1004,9 +823,30 @@ function formatDrName(name: string | undefined): string {
       }
     }
 
+    // Two-column body when documents are shown so the modal stays
+    // within viewport height. `auto-fit / minmax(320px, 1fr)`
+    // collapses the columns into a single stack on narrow viewports
+    // (≤~700px wide) so the layout is still usable on a phone.
+    const showDocsColumn = canUploadDocs && !!patientIdForDocs;
+
     return (
-      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000 }}>
-        <div className="modal-content" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, width: '100%', maxWidth: 440, padding: 24, boxShadow: 'var(--e4)' }}>
+      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 16 }}>
+        <div
+          className="modal-content"
+          style={{
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: 16,
+            width: '100%',
+            maxWidth: showDocsColumn ? 860 : 440,
+            maxHeight: 'calc(100vh - 32px)',
+            padding: 24,
+            boxShadow: 'var(--e4)',
+            display: 'flex',
+            flexDirection: 'column',
+            overflow: 'hidden',
+          }}
+        >
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
             <div>
               <h3 style={{ fontSize: 18, fontWeight: 700, margin: 0 }}>Patient Triage</h3>
@@ -1015,27 +855,58 @@ function formatDrName(name: string | undefined): string {
             <button onClick={onClose} style={{ background: 'none', border: 'none', color: 'var(--text-subtle)', cursor: 'pointer' }}><Icon name="x" size={20} /></button>
           </div>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <ModalInput label="Weight (kg)" value={vitals.weight} onChange={v => setVitals({ ...vitals, weight: v })} type="number" />
-              <ModalInput label="Height (cm)" value={vitals.height} onChange={v => setVitals({ ...vitals, height: v })} type="number" />
-              <ModalInput label="Temp (°F)" value={vitals.temp} onChange={v => setVitals({ ...vitals, temp: v })} type="number" />
-              <ModalInput label="Pulse (bpm)" value={vitals.pulse} onChange={v => setVitals({ ...vitals, pulse: v })} type="number" />
-              <ModalInput label="SpO2 (%)" value={vitals.spo2} onChange={v => setVitals({ ...vitals, spo2: v })} type="number" />
-              <ModalInput label="RR (/min)" value={vitals.rr} onChange={v => setVitals({ ...vitals, rr: v })} type="number" />
-              <ModalInput label="BP (mmHg)" value={vitals.bp} onChange={v => setVitals({ ...vitals, bp: v })} placeholder="120/80" />
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: showDocsColumn
+                ? 'repeat(auto-fit, minmax(320px, 1fr))'
+                : '1fr',
+              gap: 20,
+              flex: 1,
+              minHeight: 0,
+              overflowY: 'auto',
+              paddingRight: 4,
+            }}
+          >
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <ModalInput label="Weight (kg)" value={vitals.weight} onChange={v => setVitals({ ...vitals, weight: v })} type="number" />
+                <ModalInput label="Height (cm)" value={vitals.height} onChange={v => setVitals({ ...vitals, height: v })} type="number" />
+                <ModalInput label="Temp (°F)" value={vitals.temp} onChange={v => setVitals({ ...vitals, temp: v })} type="number" />
+                <ModalInput label="Pulse (bpm)" value={vitals.pulse} onChange={v => setVitals({ ...vitals, pulse: v })} type="number" />
+                <ModalInput label="SpO2 (%)" value={vitals.spo2} onChange={v => setVitals({ ...vitals, spo2: v })} type="number" />
+                <ModalInput label="RR (/min)" value={vitals.rr} onChange={v => setVitals({ ...vitals, rr: v })} type="number" />
+                <ModalInput label="BP (mmHg)" value={vitals.bp} onChange={v => setVitals({ ...vitals, bp: formatBpInput(v, vitals.bp) })} placeholder="120/80" />
+              </div>
+              <div>
+                <label style={labelStyle}>Chief Complaint</label>
+                <textarea
+                  value={complaint} onChange={e => setComplaint(e.target.value)}
+                  placeholder="Optional notes..."
+                  style={{ width: '100%', height: 80, padding: 10, borderRadius: 10, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', fontSize: 13, outline: 'none', resize: 'none' }}
+                />
+              </div>
             </div>
-            <div>
-              <label style={labelStyle}>Chief Complaint</label>
-              <textarea
-                value={complaint} onChange={e => setComplaint(e.target.value)}
-                placeholder="Optional notes..."
-                style={{ width: '100%', height: 80, padding: 10, borderRadius: 10, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', fontSize: 13, outline: 'none', resize: 'none' }}
-              />
-            </div>
+
+            {showDocsColumn && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6, minHeight: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <Icon name="folder" size={14} style={{ color: 'var(--brand-500)' }} />
+                  <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
+                    Documents (optional)
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
+                  Upload lab reports, ID proofs, referrals — anything the doctor should see this visit.
+                </div>
+                <div style={{ marginTop: 4, flex: 1, minHeight: 200, maxHeight: 420, overflowY: 'auto', border: '1px solid var(--border)', borderRadius: 10, padding: 8 }}>
+                  <DocumentsScreen fixedOwnerType="PATIENT" fixedOwnerId={patientIdForDocs} hideAccessLevel />
+                </div>
+              </div>
+            )}
           </div>
 
-          <div style={{ display: 'flex', gap: 10, marginTop: 24 }}>
+          <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
             <button onClick={save} disabled={busy} style={{ flex: 1, height: 44, background: 'var(--brand-500)', color: 'white', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
               {busy ? <Spinner size={16} /> : <><Icon name="check" size={16} /> Check In & Save</>}
             </button>
@@ -1401,13 +1272,14 @@ function formatDrName(name: string | undefined): string {
         facesDetected: number;
       }>(ctx, '/face/recognize', form);
 
-      // Always pick the top match regardless of confidence band. The
-      // BE returns `matches` sorted by score desc; matches[0] is the
-      // highest-scoring patient. Confidence-band gating (auto vs
-      // confirm-list) was removed at the operator's request — they
-      // explicitly want the front desk to skip the click.
+      // Pick the top match ONLY when the BE flagged it as `high`
+      // confidence. Below that band the cosine score is in the "could
+      // be anyone" zone (0.40–HIGH_THRESHOLD on the BE) — auto-picking
+      // those produces false positives on non-face inputs and on
+      // lookalikes. We'd rather make the operator type than load the
+      // wrong patient chart.
       const top = res.matches[0];
-      if (top) {
+      if (top && top.confidence === 'high') {
         try {
           const full = await apiGet<PatientLite>(ctx, `/patients/${top.patientId}`);
           setSelectedPatient(full);
@@ -1417,8 +1289,6 @@ function formatDrName(name: string | undefined): string {
           setStep(2);
           return;
         } catch (e) {
-          // If the patient fetch itself fails (deleted? perms?), surface
-          // a hint in the existing Face row instead of crashing.
           setShowFaceScanner(false);
           setFaceMatches([]);
           setFaceScanInfo(`Matched ${top.fullName} but couldn't load the patient — try searching by name. (${e instanceof Error ? e.message : String(e)})`);
@@ -1426,10 +1296,11 @@ function formatDrName(name: string | undefined): string {
         }
       }
 
-      // No matches at all.
+      // No face / no confident match — same message either way so the
+      // operator doesn't get confused by a "low confidence" mid-state.
       setFaceMatches([]);
       setShowFaceScanner(false);
-      setFaceScanInfo('No matching patient found. Try searching by name or phone.');
+      setFaceScanInfo('Face not recognized. Try a different angle, better lighting, or search by name.');
     }
 
     async function pickFaceCandidate(patientId: string) {
@@ -1826,7 +1697,6 @@ function formatDrName(name: string | undefined): string {
           {patients.map((p) => {
             const age = getAge(p.dob);
             const phone = p.phones?.[0] ?? '';
-            const tag = p.tags?.[0];
             const isSel = selected?._id === p._id;
             return (
               <button key={p._id} onClick={() => onPick(p)}
@@ -1837,18 +1707,13 @@ function formatDrName(name: string | undefined): string {
                   border: `1.5px solid ${isSel ? 'var(--brand-500)' : 'var(--border)'}`,
                   borderRadius: 12, cursor: 'pointer', transition: 'all 120ms',
                 }}>
-                <Avatar name={p.fullName} size={40} />
+                <Avatar name={p.fullName} size={40} imageUrl={(p as { profileImageUrl?: string }).profileImageUrl} />
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.fullName}</div>
                   <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>
                     {[genderInitial(p.gender), age != null ? `${age}y` : null, phone].filter(Boolean).join(' · ')}
                   </div>
                 </div>
-                {tag && (
-                  <span style={{ padding: '3px 10px', borderRadius: 100, fontSize: 11, fontWeight: 600, background: 'var(--warning-bg)', color: 'var(--warning-text)' }}>
-                    {tag}
-                  </span>
-                )}
                 <Icon name="chevronRight" size={16} style={{ color: 'var(--text-subtle)', flexShrink: 0 }} />
               </button>
             );
@@ -1990,6 +1855,7 @@ function formatDrName(name: string | undefined): string {
                 available={slots}
                 value={slotStart}
                 onChange={setSlotStart}
+                date={date}
               />
             </div >
 
@@ -2057,17 +1923,23 @@ function formatDrName(name: string | undefined): string {
               fontFamily: 'inherit',
             }} />
         </div>
+
       </>
     );
   }
 
   function TimeSlotGrid({
-    slotMinutes, available, value, onChange,
+    slotMinutes, available, value, onChange, date,
   }: {
     slotMinutes: number;
     available: SlotChoice[];
     value: string;
     onChange: (v: string) => void;
+    // YYYY-MM-DD of the currently picked booking date. Drives the
+    // "hide past slots" cutoff: when date === today we skip every
+    // label before the current minute; future dates show the full
+    // grid; past dates show nothing.
+    date: string;
   }) {
     // Day window: 08:00–20:00 in `slotMinutes` increments. Wide enough for
     // typical clinic hours; slots the doctor's rules don't cover render as
@@ -2076,20 +1948,35 @@ function formatDrName(name: string | undefined): string {
     // O(1) lookup from grid label → slot status / metadata.
     const slotByLabel = new Map(available.map((s) => [s.label, s]));
 
+    // Single per-slot rule: a label is hidden when (picked-date + time)
+    // is earlier than the current moment. No day-level branching —
+    // future dates show everything, today shows from-now-onward, past
+    // dates naturally render nothing because all their slots are
+    // earlier than now.
+    const nowMs = Date.now();
+    function labelIsPast(hhmm: string): boolean {
+      const [h, m] = hhmm.split(':').map((x) => parseInt(x, 10));
+      if (!Number.isFinite(h) || !Number.isFinite(m)) return false;
+      const dt = new Date(`${date}T00:00:00`);
+      dt.setHours(h, m, 0, 0);
+      return dt.getTime() < nowMs;
+    }
+
     const startMin = 8 * 60;
     const endMin = 20 * 60;
     const step = Math.max(5, Math.min(180, slotMinutes || 15));
     const grid: string[] = [];
     for (let m = startMin; m + step <= endMin; m += step) {
       const label = `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`;
-      // Past slots are already filtered out of the 'available' prop by the parent.
-      // If a grid label is not in 'available', it's an 'off-hours' slot.
-      // We only hide it if it's actually in the past (based on current time).
+      if (labelIsPast(label)) continue;
       grid.push(label);
     }
-    // Also add any special slots from backend that might be outside our 08:00–20:00 grid
+    // Add any backend-returned slots that fall outside our 08:00–20:00
+    // window — still subject to the past-time cutoff.
     for (const s of available) {
-      if (!grid.includes(s.label)) grid.push(s.label);
+      if (grid.includes(s.label)) continue;
+      if (labelIsPast(s.label)) continue;
+      grid.push(s.label);
     }
     grid.sort();
 

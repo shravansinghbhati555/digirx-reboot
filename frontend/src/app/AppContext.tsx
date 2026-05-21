@@ -38,6 +38,11 @@ type AppState = {
   setCtx: (next: DevContext) => void;
   loggedIn: boolean;
   permissions: Set<string>;
+  // Lowercased role names assigned to the current user. Used by the
+  // shell to gate admin UI by role (not just by permission) — e.g.
+  // doctors never see the Users/Roles tabs even if an admin grants
+  // them the underlying `user:read` permission.
+  roleNames: Set<string>;
   features: Features;
   loadingMe: boolean;
   meError: string | null;
@@ -88,7 +93,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
     const saved = localStorage.getItem('digirx.theme');
     return saved === 'dark' ? 'dark' : 'light';
   });
-  const [meData, setMeData] = useState<{ permissions: string[]; features?: Partial<Features>; user?: { name?: string; fullName?: string; email?: string } } | null>(null);
+  const [meData, setMeData] = useState<{
+    permissions: string[];
+    features?: Partial<Features>;
+    user?: { name?: string; fullName?: string; email?: string };
+    roles?: Array<{ name?: string }>;
+  } | null>(null);
   const [loadingMe, setLoadingMe] = useState(false);
   const [meError, setMeError] = useState<string | null>(null);
   const [selectedAppointmentId, setSelectedAppointmentId] = useState<string | undefined>();
@@ -119,7 +129,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
       setCtxState(loadContext());
       setMeData(null);
       setMeError(null);
-      navigate('/');
+      // Go straight to /login so there's no visible bounce through the
+      // dashboard. `state.reason` lets the login screen surface a
+      // "Session expired" banner so users understand why they were
+      // booted instead of seeing a generic auth error.
+      navigate('/login', { replace: true, state: { reason: 'session-expired' } });
     }
     window.addEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
     return () => window.removeEventListener(AUTH_EXPIRED_EVENT, onAuthExpired);
@@ -139,6 +153,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         permissions: string[];
         features?: Partial<Features>;
         user?: { name?: string; fullName?: string; email?: string };
+        roles?: Array<{ name?: string }>;
         clinic?: {
           name?: string;
           currency?: string;
@@ -194,6 +209,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   const permissions = useMemo(() => new Set(meData?.permissions ?? ctx.permissions ?? []), [meData, ctx.permissions]);
+  const roleNames = useMemo(
+    () =>
+      new Set(
+        (meData?.roles ?? [])
+          .map((r) => (r?.name ?? '').toLowerCase())
+          .filter(Boolean),
+      ),
+    [meData],
+  );
   // Feature flags default to off when /me hasn't loaded yet so optional
   // UI surfaces stay hidden during the brief first-paint window — better
   // than flashing them then yanking them away on resolve. appointmentMode
@@ -213,6 +237,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setCtx,
     loggedIn,
     permissions,
+    roleNames,
     features,
     loadingMe,
     meError,

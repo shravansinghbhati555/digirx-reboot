@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useApp, type ScreenKey } from '../app/AppContext';
-import { canAccessScreen, Perm } from '../app/permissions';
+import { canAccessScreen, isScreenAllowedForRoles, Perm } from '../app/permissions';
 import { apiGet, apiPost } from '../app/api';
 import { Avatar } from './shared/primitives';
 import { Icon, type IconName } from './shared/Icon';
@@ -12,7 +12,7 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
   { id: 'patients', label: 'Patients', icon: 'users' },
   { id: 'appointments', label: 'Appointments', icon: 'calendar' },
-  { id: 'encounters', label: 'Encounters', icon: 'clipboard' },
+  { id: 'encounters', label: 'Consultations', icon: 'clipboard' },
   { id: 'billing', label: 'Billing', icon: 'receipt' },
   { id: 'documents', label: 'Documents', icon: 'folder' },
   { id: 'inventory', label: 'Inventory', icon: 'pill' },
@@ -31,7 +31,7 @@ const ALL_CMD: { label: string; action: ScreenKey; icon: IconName }[] = [
   { label: 'Go to Dashboard', action: 'dashboard', icon: 'dashboard' },
   { label: 'Go to Patients', action: 'patients', icon: 'users' },
   { label: 'Go to Appointments', action: 'appointments', icon: 'calendar' },
-  { label: 'Go to Encounters', action: 'encounters', icon: 'clipboard' },
+  { label: 'Go to Consultations', action: 'encounters', icon: 'clipboard' },
   { label: 'Go to Billing', action: 'billing', icon: 'receipt' },
   { label: 'New patient', action: 'patients', icon: 'plus' },
   { label: 'Book appointment', action: 'appointments', icon: 'plus' },
@@ -93,7 +93,7 @@ function CommandPalette({ commands, onNavigate, onClose }: { commands: typeof AL
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { screen, setScreen, theme, toggleTheme, ctx, setCtx, logout, selectedDate, setSelectedDate, permissions } = useApp();
+  const { screen, setScreen, theme, toggleTheme, ctx, setCtx, logout, selectedDate, setSelectedDate, permissions, roleNames } = useApp();
   const [collapsed, setCollapsed] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
@@ -115,26 +115,40 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [canSwitchBranch, ctx.clinicId, ctx.accessToken]);
 
   const visibleNav = useMemo(
-    () => NAV_ITEMS.filter((i) => canAccessScreen(permissions, i.id)),
-    [permissions],
+    () => NAV_ITEMS.filter((i) => canAccessScreen(permissions, i.id) && isScreenAllowedForRoles(roleNames, i.id)),
+    [permissions, roleNames],
   );
   const visibleAdmin = useMemo(
-    () => ADMIN_ITEMS.filter((i) => canAccessScreen(permissions, i.id)),
-    [permissions],
+    () => ADMIN_ITEMS.filter((i) => canAccessScreen(permissions, i.id) && isScreenAllowedForRoles(roleNames, i.id)),
+    [permissions, roleNames],
   );
   const visibleCmd = useMemo(
-    () => ALL_CMD.filter((c) => canAccessScreen(permissions, c.action)),
-    [permissions],
+    () => ALL_CMD.filter((c) => canAccessScreen(permissions, c.action) && isScreenAllowedForRoles(roleNames, c.action)),
+    [permissions, roleNames],
   );
-  const canCreatePatient = permissions.has(Perm.PatientWrite);
+  const isDoctor = roleNames.has('doctor');
+  // Header "+ New" creates a patient — show only if the user has
+  // patient-write AND isn't a doctor. Doctors create patients inside
+  // their consultation flow, not from the global header.
+  const canCreatePatient = permissions.has(Perm.PatientWrite) && !isDoctor;
+  // Header bell shadows the Notifications tab — show only if the user
+  // has the underlying notification permission AND isn't a doctor.
+  // Doctors keep notifications:read for in-app alerts but the global
+  // bell is a clinic-admin affordance.
+  const canShowNotificationBell = permissions.has(Perm.NotificationRead) && !isDoctor;
 
   // If the current screen is no longer accessible (e.g. permissions changed,
   // or restored from a previous session), bounce to the first allowed screen.
+  // Role blocklist (e.g. doctors on /users) is also enforced here so a
+  // deep-linked URL doesn't slip past the sidebar gate.
   useEffect(() => {
-    if (canAccessScreen(permissions, screen)) return;
+    const allowed =
+      canAccessScreen(permissions, screen) &&
+      isScreenAllowedForRoles(roleNames, screen);
+    if (allowed) return;
     const fallback = [...visibleNav, ...visibleAdmin][0];
     if (fallback) setScreen(fallback.id);
-  }, [permissions, screen, visibleNav, visibleAdmin, setScreen]);
+  }, [permissions, roleNames, screen, visibleNav, visibleAdmin, setScreen]);
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
@@ -236,7 +250,6 @@ export function AppShell({ children }: { children: ReactNode }) {
           {visibleAdmin.length > 0 && (
             <>
               {!collapsed && <div style={{ height: 1, background: 'var(--border)', margin: '8px 4px' }} />}
-              {!collapsed && <div style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', padding: '4px 8px 2px' }}>Admin</div>}
               {visibleAdmin.map((item) => <NavItemBtn key={item.id} item={item} />)}
             </>
           )}
@@ -303,17 +316,15 @@ export function AppShell({ children }: { children: ReactNode }) {
             </button>
           )}
 
-          <button onClick={() => setScreen('notifications')}
-            style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
-            <Icon name="bell" size={14} />
-          </button>
+          {canShowNotificationBell && (
+            <button onClick={() => setScreen('notifications')}
+              style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
+              <Icon name="bell" size={14} />
+            </button>
+          )}
           <button onClick={toggleTheme} className="press-scale" title="Toggle theme"
             style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
             <Icon name={theme === 'light' ? 'moon' : 'sun'} size={14} />
-          </button>
-          <button onClick={() => setHelpOpen(true)} className="press-scale" title="Keyboard shortcuts (⌘/)"
-            style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
-            <Icon name="help" size={14} />
           </button>
         </div>
 

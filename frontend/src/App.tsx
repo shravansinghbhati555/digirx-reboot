@@ -1,6 +1,6 @@
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom';
 import { AppProvider, useApp } from './app/AppContext';
-import { canAccessScreen } from './app/permissions';
+import { canAccessScreen, isScreenAllowedForRoles } from './app/permissions';
 import { ToastProvider } from './ui/shared/primitives';
 import { AppShell } from './ui/AppShell';
 import { LoginScreen } from './ui/screens/LoginScreen';
@@ -31,8 +31,11 @@ function Guarded({
   screenKey: Parameters<typeof canAccessScreen>[1];
   children: React.ReactNode;
 }) {
-  const { permissions } = useApp();
-  return canAccessScreen(permissions, screenKey) ? <>{children}</> : null;
+  const { permissions, roleNames } = useApp();
+  const allowed =
+    canAccessScreen(permissions, screenKey) &&
+    isScreenAllowedForRoles(roleNames, screenKey);
+  return allowed ? <>{children}</> : null;
 }
 
 function AuthedShell() {

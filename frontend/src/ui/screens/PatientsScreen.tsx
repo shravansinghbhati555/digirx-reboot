@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiGet, apiPatch, apiPost, apiPostMultipart } from '../../app/api';
+import { apiDelete, apiGet, apiPatch, apiPost, apiPostMultipart } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
 import { isValidEmail, normalizeIndianMobile } from '../../app/validators';
@@ -28,6 +28,11 @@ type Patient = {
   faceConsent?: boolean;
   faceConsentAt?: string;
   faceEnrolledAt?: string;
+  // Presigned S3 URL (~15 min TTL) for the patient's profile photo —
+  // captured during face enrollment. Backend mints this on GET
+  // /patients/:id; the list endpoint doesn't include it. The Avatar
+  // component falls back to initials when this is absent.
+  profileImageUrl?: string;
 };
 
 // Single source of truth for patient-ref display. Prefer the MRN; fall
@@ -143,7 +148,6 @@ export function PatientsScreen() {
   const [editing, setEditing] = useState<Patient | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
   const [genderFilter, setGenderFilter] = useState<'ALL' | 'MALE' | 'FEMALE' | 'OTHER'>('ALL');
-  const [tagFilter, setTagFilter] = useState<string>('');
 
   useEffect(() => {
     let cancelled = false;
@@ -177,22 +181,15 @@ export function PatientsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, refreshKey, ctx.branchId]);
 
-  const tagOptions = useMemo(() => {
-    const set = new Set<string>();
-    items.forEach((p) => (p.tags ?? []).forEach((t) => set.add(t)));
-    return Array.from(set).sort();
-  }, [items]);
-
   const visibleItems = useMemo(() => {
     return items.filter((p) => {
       if (genderFilter !== 'ALL') {
         const g = (p.gender || '').toUpperCase();
         if (g !== genderFilter && !(genderFilter === 'OTHER' && g !== 'MALE' && g !== 'FEMALE')) return false;
       }
-      if (tagFilter && !(p.tags ?? []).includes(tagFilter)) return false;
       return true;
     });
-  }, [items, genderFilter, tagFilter]);
+  }, [items, genderFilter]);
 
   const groups = useMemo(() => alphaGroups(visibleItems), [visibleItems]);
 
@@ -226,20 +223,6 @@ export function PatientsScreen() {
               </button>
             ))}
           </div>
-          {tagOptions.length > 0 && (
-            <div style={{ display: 'flex', gap: 4, flexWrap: 'wrap' }}>
-              <button onClick={() => setTagFilter('')} className="press-scale"
-                style={{ padding: '3px 9px', fontSize: 10, fontWeight: tagFilter === '' ? 600 : 500, color: tagFilter === '' ? 'var(--brand-700)' : 'var(--text-subtle)', background: tagFilter === '' ? 'var(--brand-50)' : 'var(--surface-muted)', border: `1px solid ${tagFilter === '' ? 'var(--brand-100)' : 'var(--border)'}`, borderRadius: 100, cursor: 'pointer' }}>
-                Any tag
-              </button>
-              {tagOptions.slice(0, 8).map((t) => (
-                <button key={t} onClick={() => setTagFilter(tagFilter === t ? '' : t)} className="press-scale"
-                  style={{ padding: '3px 9px', fontSize: 10, fontWeight: tagFilter === t ? 600 : 500, color: tagFilter === t ? 'var(--brand-700)' : 'var(--text-subtle)', background: tagFilter === t ? 'var(--brand-50)' : 'var(--surface-muted)', border: `1px solid ${tagFilter === t ? 'var(--brand-100)' : 'var(--border)'}`, borderRadius: 100, cursor: 'pointer' }}>
-                  {t}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
         <div className="scroll-y" style={{ flex: 1 }}>
@@ -251,7 +234,7 @@ export function PatientsScreen() {
             <>
               {error && <div style={{ padding: 16, color: 'var(--danger-500)', fontSize: 12 }}>{error}</div>}
               {!error && visibleItems.length === 0 && (
-                <EmptyState illustration="patients" title="No patients found" hint={query || genderFilter !== 'ALL' || tagFilter ? 'Try clearing the filters.' : 'Register a new patient to get started.'} />
+                <EmptyState illustration="patients" title="No patients found" hint={query || genderFilter !== 'ALL' ? 'Try clearing the filters.' : 'Register a new patient to get started.'} />
               )}
               {groups.map(([letter, patients]) => (
                 <div key={letter}>
@@ -259,7 +242,7 @@ export function PatientsScreen() {
                   {patients.map((p) => (
                     <div key={p._id} onClick={() => setSelected(p)}
                       style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', cursor: 'pointer', background: selected?._id === p._id ? 'var(--brand-50)' : 'transparent', borderLeft: selected?._id === p._id ? '3px solid var(--brand-500)' : '3px solid transparent', transition: 'background 80ms' }}>
-                      <Avatar name={p.fullName} size={32} />
+                      <Avatar name={p.fullName} size={32} imageUrl={p.profileImageUrl} />
                       <div style={{ flex: 1, minWidth: 0 }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 }}>
                           <div style={{ fontSize: 13, fontWeight: 600, color: selected?._id === p._id ? 'var(--brand-700)' : 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{p.fullName}</div>
@@ -319,6 +302,34 @@ function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => vo
   const [tab, setTab] = useState<'overview' | 'history' | 'documents' | 'bills'>('overview');
   const [bills, setBills] = useState<Bill[] | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
+  // Fetch the full patient (including presigned profileImageUrl) on
+  // mount and whenever the selected patient changes. The list endpoint
+  // doesn't include `profileImageUrl` (we'd be presigning every row);
+  // only `GET /patients/:id` mints it. `refreshTick` bumps when the
+  // EditPatientModal saves a face — re-fetch so the avatar updates.
+  const [full, setFull] = useState<Patient | null>(null);
+  const [refreshTick, setRefreshTick] = useState(0);
+  useEffect(() => {
+    apiGet<Patient>(ctx, `/patients/${patient._id}`)
+      .then(setFull)
+      .catch(() => setFull(null));
+  }, [ctx, patient._id, refreshTick]);
+  // Prefer the full doc; fall back to the lite list row while it loads.
+  const view: Patient = full ?? patient;
+  const refreshDetail = () => setRefreshTick((t) => t + 1);
+
+  // EditPatientModal dispatches `patient:face-changed` after a face
+  // enroll/remove so we re-fetch the patient (and thus the fresh
+  // `profileImageUrl`) without prop drilling a callback through the
+  // parent's modal mount.
+  useEffect(() => {
+    function onFaceChanged(e: Event) {
+      const ce = e as CustomEvent<{ patientId: string }>;
+      if (ce.detail?.patientId === patient._id) refreshDetail();
+    }
+    window.addEventListener('patient:face-changed', onFaceChanged);
+    return () => window.removeEventListener('patient:face-changed', onFaceChanged);
+  }, [patient._id]);
 
   useEffect(() => {
     if (tab !== 'history' || history) return;
@@ -341,7 +352,7 @@ function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => vo
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--bg)' }}>
       <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '16px 20px' }}>
         <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
-          <Avatar name={patient.fullName} size={52} />
+          <Avatar name={view.fullName} size={52} imageUrl={view.profileImageUrl} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>{patient.fullName}</div>
             <div style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 2 }}>
@@ -355,9 +366,6 @@ function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => vo
                 <span key={e} style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, color: 'var(--text-muted)' }}>
                   <Icon name="mail" size={12} /> {e}
                 </span>
-              ))}
-              {(patient.tags ?? []).map((t) => (
-                <span key={t} style={{ padding: '2px 8px', borderRadius: 100, background: 'var(--brand-50)', color: 'var(--brand-600)', fontSize: 11, fontWeight: 600, border: '1px solid var(--brand-100)' }}>{t}</span>
               ))}
             </div>
           </div>
@@ -394,7 +402,6 @@ function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => vo
               { label: 'Registered', value: formatDate(patient.createdAt), icon: 'calendar' as const },
               { label: 'DOB', value: patient.dob ? formatDate(patient.dob) : '—', icon: 'clock' as const },
               { label: 'Primary phone', value: patient.phones?.[0] ?? '—', icon: 'phone' as const },
-              { label: 'Tags', value: (patient.tags ?? []).join(', ') || '—', icon: 'tag' as const },
             ].map(({ label, value, icon }) => (
               <div key={label} style={{ flex: '1 1 200px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
@@ -477,13 +484,14 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const { ctx, features } = useApp();
   const { has } = usePerm();
   const toast = useToast();
-  // Face step appears only when (a) the clinic has the feature enabled
-  // AND (b) the actor has face:enroll. Either condition off → legacy
-  // 3-step wizard.
+  // Face enrollment step shows only when (a) the clinic has face
+  // recognition enabled in settings AND (b) the actor has face:enroll.
+  // Document uploads have been moved out of registration — uploaded
+  // later from the patient detail screen.
   const canEnrollFace = features.faceRecognition && has(Perm.FaceEnroll);
   const [step, setStep] = useState(0);
   const [form, setForm] = useState({
-    fullName: '', dob: '', gender: '', phone: '', email: '', tags: '', notes: '',
+    firstName: '', lastName: '', dob: '', gender: '', phone: '', email: '', notes: '',
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -501,13 +509,18 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
     const digits = v.replace(/\D/g, '').slice(0, 10);
     set('phone', digits);
   };
-  // Face step is conditional on the role having `face:enroll`.
-  // Clinics that don't use face recognition (or the front-desk role
-  // that hasn't been granted the perm) see the old 3-step wizard
-  // unchanged.
-  const steps = canEnrollFace
-    ? ['Identity', 'Contact', 'Tags & Notes', 'Face (optional)']
-    : ['Identity', 'Contact', 'Tags & Notes'];
+  const isContinueDisabled =
+    (step === 0 && (!form.firstName.trim() || !form.lastName.trim() || !form.dob.trim() || !form.gender)) ||
+    (step === 1 && (!form.phone.trim() || form.phone.trim().length !== 10));
+  // 3-step wizard. Tags have been removed from the product entirely;
+  // Notes were dropped from registration (the operator edits notes
+  // from the patient detail screen if needed). Documents now upload
+  // at check-in (TriageModal in AppointmentsScreen) since most
+  // patients arrive with paperwork on the visit day, not at
+  // registration time. Step 3 is face enrollment only — it still needs
+  // the patient ID, so submit fires at the end of step 2 (Contact) and
+  // the wizard advances with the freshly-created patient cached.
+  const steps = ['Identity', 'Contact', 'Face enrollment'];
 
   // Debounced duplicate-phone check on contact step. The `cancelled`
   // flag guards against the user typing "9876" → "98765" → "987654"
@@ -534,7 +547,10 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
   }, [form.phone, step, ctx]);
 
   async function submit() {
-    if (!form.fullName.trim()) { shake(); setError('Full name is required.'); return; }
+    if (!form.firstName.trim()) { shake(); setError('First name is required.'); return; }
+    if (!form.lastName.trim()) { shake(); setError('Last name is required.'); return; }
+    if (!form.dob.trim()) { shake(); setError('Date of birth is required.'); return; }
+    if (!form.gender) { shake(); setError('Gender is required.'); return; }
     if (!form.phone.trim()) { shake(); setError('Phone number is required.'); return; }
     const phoneNormalized = normalizeIndianMobile(form.phone);
     if (!phoneNormalized) { shake(); setError('Enter a valid 10-digit Indian mobile number.'); return; }
@@ -542,39 +558,34 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
     setSaving(true);
     setError(null);
     try {
+      // Combine first + last for the BE — the Patient schema stores
+      // a single `fullName` for backward compatibility with search,
+      // duplicate detection, and PDF rendering.
+      const fullName = `${form.firstName.trim()} ${form.lastName.trim()}`.replace(/\s+/g, ' ').trim();
       const body: Record<string, unknown> = {
-        fullName: form.fullName.trim(),
-        // Always persist the canonical 10-digit form so duplicate
-        // detection and normalisation on the BE see the same shape
-        // regardless of how the operator typed it.
+        fullName,
+        gender: form.gender.toUpperCase(),
+        dob: form.dob,
         phones: [phoneNormalized],
       };
-      if (form.dob) body.dob = form.dob;
-      if (form.gender) body.gender = form.gender.toUpperCase();
       if (form.phone.trim()) {
         const p = form.phone.trim();
         if (p.length !== 10) { shake(); setError('Phone number must be exactly 10 digits.'); setSaving(false); return; }
         body.phones = [p];
       }
       if (form.email.trim()) body.emails = [form.email.trim()];
-      const tagList = form.tags.split(',').map((t) => t.trim()).filter(Boolean);
-      if (tagList.length) body.tags = tagList;
-      if (form.notes.trim()) body.notes = form.notes.trim();
       const res = await apiPost<any>(ctx, '/patients', body);
       if (res.duplicateCandidate) {
         setDuplicate(res.existing?.[0] ?? null);
         setError('A similar patient already exists.');
         return;
       }
-      // With the face-enroll step active, hold the modal open and
-      // advance to step 3 with the newly created patient. Without it,
-      // close immediately (legacy behavior).
-      if (canEnrollFace) {
-        setCreatedPatient(res.created);
-        setStep(3);
-      } else {
-        onCreated(res.created);
-      }
+      // Always advance to step 3 with the newly created patient so
+      // the operator can attach documents and/or run face enrollment.
+      // The step-3 footer offers a one-click "Finish" if they want to
+      // skip both.
+      setCreatedPatient(res.created);
+      setStep(2);
     } catch (e) {
       shake();
       setError(e instanceof Error ? e.message : String(e));
@@ -596,9 +607,12 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
         await apiPatch(ctx, `/patients/${createdPatient._id}`, { faceConsent: true });
       }
       await apiPostMultipart(ctx, `/patients/${createdPatient._id}/face`, form);
-      setFaceEnrolled(true);
       setShowFaceScanner(false);
+      setFaceEnrolled(true);
       toast('Face enrolled', 'success');
+      // If the user opens this patient's detail next, the avatar should
+      // already show their photo (PatientDetail listens for this event).
+      window.dispatchEvent(new CustomEvent('patient:face-changed', { detail: { patientId: createdPatient._id } }));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       // Throw so FaceScanModal renders the error inline; the modal
@@ -632,12 +646,14 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
         <div style={{ padding: '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
           {step === 0 && (
             <>
-              <Field label="Full name" value={form.fullName} onChange={(v) => set('fullName', v)} placeholder="e.g. Anjali Mehta" />
-              <Field label="Date of birth" value={form.dob} onChange={(v) => set('dob', v)} placeholder="Enter date of birth" type="date" optional />
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                <Field label="First name" value={form.firstName} onChange={(v) => set('firstName', v)} placeholder="e.g. Anjali" />
+                <Field label="Last name" value={form.lastName} onChange={(v) => set('lastName', v)} placeholder="e.g. Mehta" />
+              </div>
+              <Field label="Date of birth" value={form.dob} onChange={(v) => set('dob', v)} placeholder="Enter date of birth" type="date" />
               <div>
                 <label style={labelStyle}>
                   Gender
-                  <span style={{ color: 'var(--text-subtle)', fontWeight: 400, marginLeft: 4 }}>(optional)</span>
                 </label>
                 <div style={{ display: 'flex', gap: 8 }}>
                   {['MALE', 'FEMALE', 'OTHER'].map((g) => (
@@ -669,41 +685,37 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
               <Field label="Email address" value={form.email} onChange={(v) => set('email', v)} placeholder="patient@email.com" optional />
             </>
           )}
-          {step === 2 && (
+          {step === 2 && createdPatient && (
             <>
-              <Field label="Tags" value={form.tags} onChange={(v) => set('tags', v)} placeholder="Diabetic, Hypertensive (comma-separated)" optional />
-              <div>
-                <label style={labelStyle}>Notes <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>(optional)</span></label>
-                <textarea value={form.notes} onChange={(e) => set('notes', e.target.value)} placeholder="Any relevant background or chief complaint…"
-                  style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box' }}
-                />
-              </div>
-            </>
-          )}
-          {step === 3 && (
-            <>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '12px 0 4px' }}>
-                <div style={{ width: 56, height: 56, borderRadius: 14, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                  <Icon name={faceEnrolled ? 'checkCircle' : 'camera'} size={24} style={{ color: faceEnrolled ? 'var(--success-500)' : 'var(--brand-500)' }} />
-                </div>
-                <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
-                  {faceEnrolled ? 'Face enrolled' : 'Face recognition (optional)'}
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text-subtle)', textAlign: 'center', padding: '0 8px' }}>
-                  {faceEnrolled
-                    ? "On future visits the front desk can scan instead of typing."
-                    : "Capture the patient's face so future visits can be identified by camera. You can skip and enroll later."}
-                </div>
-              </div>
+              {/* Face card — only when the clinic has face recognition
+                  enabled and the actor has face:enroll. Documents have
+                  moved to check-in (TriageModal in Appointments). */}
+              {canEnrollFace && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6, padding: '8px 0 4px' }}>
+                    <div style={{ width: 48, height: 48, borderRadius: 12, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                      <Icon name={faceEnrolled ? 'checkCircle' : 'camera'} size={22} style={{ color: faceEnrolled ? 'var(--success-500)' : 'var(--brand-500)' }} />
+                    </div>
+                    <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
+                      {faceEnrolled ? 'Face enrolled' : 'Face recognition (optional)'}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text-subtle)', textAlign: 'center', padding: '0 8px' }}>
+                      {faceEnrolled
+                        ? 'On future visits the front desk can scan instead of typing.'
+                        : 'We\'ll take one photo to enable face matching at future check-ins.'}
+                    </div>
+                  </div>
 
-              {!faceEnrolled && (
-                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 14px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, cursor: 'pointer' }}>
-                  <input type="checkbox" checked={faceConsent} onChange={(e) => setFaceConsent(e.target.checked)}
-                    style={{ marginTop: 2, accentColor: 'var(--brand-500)' }} />
-                  <span style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>
-                    Patient consents to face enrollment for identification. The biometric template is stored for this clinic only and can be removed on request.
-                  </span>
-                </label>
+                  {!faceEnrolled && (
+                    <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 14px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, cursor: 'pointer' }}>
+                      <input type="checkbox" checked={faceConsent} onChange={(e) => setFaceConsent(e.target.checked)}
+                        style={{ marginTop: 2, accentColor: 'var(--brand-500)' }} />
+                      <span style={{ fontSize: 12, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                        Patient consents to face enrollment for identification. The biometric template is stored for this clinic only and can be removed on request.
+                      </span>
+                    </label>
+                  )}
+                </div>
               )}
             </>
           )}
@@ -711,16 +723,13 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
         </div>
 
         <div style={{ padding: '0 24px 20px', display: 'flex', gap: 10 }}>
-          {step === 3 ? (
-            // Face step has its own footer — patient is already saved,
-            // so the controls are "scan now" / "skip & finish" / "done."
+          {step === 2 ? (
+            // Step 3 (index 2) footer — patient is already saved.
+            // Controls gate the optional extras: docs are uploaded
+            // inside the embedded DocumentsScreen card; face flow
+            // shows scan / skip controls until enrolled.
             <>
-              {faceEnrolled ? (
-                <button onClick={finishWithoutFace}
-                  style={{ flex: 1, height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
-                  <Icon name="check" size={14} strokeWidth={2.5} /> Finish
-                </button>
-              ) : (
+              {canEnrollFace && !faceEnrolled ? (
                 <>
                   <button onClick={finishWithoutFace}
                     style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
@@ -734,9 +743,15 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
                       cursor: faceConsent ? 'pointer' : 'not-allowed',
                       display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
                     }}>
-                    <Icon name="camera" size={14} strokeWidth={2.5} /> Scan face
+                    <Icon name="camera" size={14} strokeWidth={2.5} />
+                    Scan face
                   </button>
                 </>
+              ) : (
+                <button onClick={finishWithoutFace}
+                  style={{ flex: 1, height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                  <Icon name="check" size={14} strokeWidth={2.5} /> Finish
+                </button>
               )}
             </>
           ) : (
@@ -748,10 +763,13 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
                 </button>
               )}
               <button
-                onClick={step < 2 ? () => setStep((s) => s + 1) : submit}
-                disabled={saving || (step === 0 && !form.fullName.trim())}
-                style={{ flex: 2, height: 42, background: saving ? 'var(--brand-600)' : 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: saving ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, opacity: (step === 0 && !form.fullName.trim()) ? 0.6 : 1 }}>
-                {saving ? <Spinner /> : (step < 2 ? <>Continue <Icon name="chevronRight" size={14} /></> : 'Register patient')}
+                // Steps 0 and 1 are pre-submit. Step 0 → advance to 1.
+                // Step 1 (Contact) → submit, which creates the patient
+                // and advances to step 2 (Documents & Face).
+                onClick={step < 1 ? () => setStep((s) => s + 1) : submit}
+                disabled={saving || isContinueDisabled}
+                style={{ flex: 2, height: 42, background: saving ? 'var(--brand-600)' : 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: saving ? 'wait' : (isContinueDisabled ? 'not-allowed' : 'pointer'), display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, opacity: isContinueDisabled ? 0.6 : 1 }}>
+                {saving ? <Spinner /> : (step < 1 ? <>Continue <Icon name="chevronRight" size={14} /></> : 'Register patient')}
               </button>
             </>
           )}
@@ -771,14 +789,16 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
   );
 }
 function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; onClose: () => void; onUpdated: (p: Patient) => void }) {
-  const { ctx } = useApp();
+  const { ctx, features } = useApp();
+  const { has } = usePerm();
+  const toast = useToast();
+  const canEnrollFace = features.faceRecognition && has(Perm.FaceEnroll);
   const [form, setForm] = useState({
     fullName: patient.fullName,
     dob: patient.dob ? patient.dob.slice(0, 10) : '',
     gender: patient.gender ?? '',
     phone: patient.phones?.[0] ?? '',
     email: patient.emails?.[0] ?? '',
-    tags: (patient.tags ?? []).join(', '),
     notes: patient.notes ?? '',
   });
   const [saving, setSaving] = useState(false);
@@ -789,6 +809,53 @@ function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; o
     const digits = v.replace(/\D/g, '').slice(0, 10);
     set('phone', digits);
   };
+
+  // ---- Face enrollment state (mirrors NewPatientModal) ----
+  const [faceConsent, setFaceConsent] = useState(!!patient.faceConsent);
+  const [showFaceScanner, setShowFaceScanner] = useState(false);
+  const [faceEnrolledNow, setFaceEnrolledNow] = useState(false);
+  const wasEnrolledBefore = !!patient.faceEnrolledAt;
+
+  async function handleFaceCapture(blob: Blob, opts?: { preDetected?: boolean }) {
+    const fd = new FormData();
+    fd.append('image', blob, 'enroll.jpg');
+    if (opts?.preDetected) fd.append('pre_detected', 'true');
+    try {
+      if (!patient.faceConsent && !faceConsent) {
+        throw new Error('Patient consent is required before enrollment.');
+      }
+      if (!patient.faceConsent && faceConsent) {
+        await apiPatch(ctx, `/patients/${patient._id}`, { faceConsent: true });
+      }
+      await apiPostMultipart(ctx, `/patients/${patient._id}/face`, fd);
+      setShowFaceScanner(false);
+      setFaceEnrolledNow(true);
+      toast('Face enrolled', 'success');
+      // Tell PatientDetail to re-fetch so the freshly-saved
+      // profile image (presigned URL from GET /patients/:id) flows
+      // through to the Avatar.
+      window.dispatchEvent(new CustomEvent('patient:face-changed', { detail: { patientId: patient._id } }));
+    } catch (e) {
+      throw e instanceof Error ? e : new Error(String(e));
+    }
+  }
+
+  async function removeFaceEnrollment() {
+    if (!window.confirm('Remove this patient\'s face enrollment? They will need to re-enroll before face scanning works again.')) return;
+    try {
+      await apiDelete(ctx, `/patients/${patient._id}/face`);
+      setFaceEnrolledNow(false);
+      toast('Face enrollment removed', 'success');
+      // Patch the local patient ref so the badge reflects reality
+      // without needing the parent to re-fetch.
+      (patient as Patient).faceEnrolledAt = undefined;
+      // Avatar in PatientDetail also needs to revert from photo to
+      // initials — refresh it.
+      window.dispatchEvent(new CustomEvent('patient:face-changed', { detail: { patientId: patient._id } }));
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'error');
+    }
+  }
 
   async function submit() {
     if (!form.fullName.trim()) { shake(); setError('Full name is required.'); return; }
@@ -810,7 +877,6 @@ function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; o
         body.phones = [];
       }
       body.emails = form.email.trim() ? [form.email.trim()] : [];
-      body.tags = form.tags.split(',').map((t) => t.trim()).filter(Boolean);
       body.notes = form.notes.trim() || null;
 
       const updated = await apiPatch<Patient>(ctx, `/patients/${patient._id}`, body);
@@ -860,9 +926,6 @@ function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; o
             <Field label="Phone number" value={form.phone} onChange={handlePhoneChange} prefix="+91" />
             <Field label="Email address" value={form.email} onChange={(v) => set('email', v)} />
             <div style={{ gridColumn: 'span 2' }}>
-              <Field label="Tags" value={form.tags} onChange={(v) => set('tags', v)} placeholder="comma-separated" optional />
-            </div>
-            <div style={{ gridColumn: 'span 2' }}>
               <label style={labelStyle}>
                 Notes
                 <span style={{ color: 'var(--text-subtle)', fontWeight: 400, marginLeft: 4 }}>(optional)</span>
@@ -872,6 +935,70 @@ function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; o
               />
             </div>
           </div>
+
+          {/* Face enrollment — runs independently of the form save.
+              Captures commit straight to /patients/:id/face the moment
+              the operator finishes a shot. Hidden when the clinic
+              hasn't enabled face recognition or the actor lacks the
+              face:enroll permission. */}
+          {canEnrollFace && (
+            <div style={{ paddingTop: 16, marginTop: 4, borderTop: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <div style={{ width: 38, height: 38, borderRadius: 10, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  <Icon
+                    name={(faceEnrolledNow || wasEnrolledBefore) ? 'checkCircle' : 'camera'}
+                    size={18}
+                    style={{ color: (faceEnrolledNow || wasEnrolledBefore) ? 'var(--success-500)' : 'var(--brand-500)' }}
+                  />
+                </div>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+                    Face recognition
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1 }}>
+                    {faceEnrolledNow
+                      ? 'Re-enrolled with a fresh photo.'
+                      : wasEnrolledBefore
+                        ? 'Already enrolled. Re-enroll to refresh the photo (e.g. patient looks very different).'
+                        : 'Not enrolled yet. Capture a photo so the front desk can scan the patient on future visits.'}
+                  </div>
+                </div>
+                {(wasEnrolledBefore || faceEnrolledNow) && (
+                  <button type="button" onClick={() => void removeFaceEnrollment()}
+                    style={{ height: 30, padding: '0 10px', background: 'none', border: '1px solid var(--border)', borderRadius: 7, fontSize: 11, fontWeight: 600, color: 'var(--danger-500)', cursor: 'pointer' }}>
+                    Remove
+                  </button>
+                )}
+              </div>
+
+              {/* Consent — only ask when not already on file */}
+              {!patient.faceConsent && (
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={faceConsent} onChange={(e) => setFaceConsent(e.target.checked)}
+                    style={{ marginTop: 2, accentColor: 'var(--brand-500)' }} />
+                  <span style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.45 }}>
+                    Patient consents to face enrollment for identification. The biometric template is stored for this clinic only and can be removed on request.
+                  </span>
+                </label>
+              )}
+
+              <button type="button"
+                onClick={() => { setError(null); setShowFaceScanner(true); }}
+                disabled={!faceConsent}
+                style={{
+                  alignSelf: 'flex-start',
+                  height: 36, padding: '0 14px', borderRadius: 8, border: 'none',
+                  background: faceConsent ? 'var(--brand-500)' : 'rgba(99,102,241,0.4)',
+                  color: 'var(--brand-text)', fontSize: 12, fontWeight: 600,
+                  cursor: faceConsent ? 'pointer' : 'not-allowed',
+                  display: 'flex', alignItems: 'center', gap: 6,
+                }}>
+                <Icon name="camera" size={13} strokeWidth={2.5} />
+                {wasEnrolledBefore || faceEnrolledNow ? 'Re-enroll face' : 'Scan face'}
+              </button>
+            </div>
+          )}
+
           {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
         </div>
 
@@ -886,6 +1013,16 @@ function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; o
           </button>
         </div>
       </div>
+
+      {showFaceScanner && (
+        <FaceScanModal
+          title={wasEnrolledBefore ? 'Re-enroll face' : 'Enroll face'}
+          hint="Look at the camera. Well-lit, face centered, no mask."
+          captureLabel="Capture & enroll"
+          onCancel={() => setShowFaceScanner(false)}
+          onCapture={handleFaceCapture}
+        />
+      )}
     </div>
   );
 }

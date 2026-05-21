@@ -46,20 +46,23 @@ function isoToTime(iso?: string) {
 type KpiKey = 'revenue' | 'bills' | 'pending' | 'appointments';
 
 export function DashboardScreen() {
-  const { ctx, setScreen, selectedDate } = useApp();
+  const { ctx, setScreen, selectedDate, setSelectedEncounterId } = useApp();
   const { has } = usePerm();
   // Per-tile visibility. Mapping per role:
   //   Super Admin → all four (has every permission)
   //   Manager     → Revenue + Bills + Pending (ReportsRead + BillingRead, no ClinicWrite)
   //   Front Desk  → Bills + Pending (BillingRead only)
   //   Pharmacist  → Bills + Pending (BillingRead only)
-  //   Doctor      → does not have DashboardRead at all; the screen-level
-  //                 gate in SCREEN_REQUIRED blocks them, so they never
-  //                 reach this code path.
+  //   Doctor      → PatientRead + ClinicWrite but NOT ReportsRead → sees
+  //                 encounter-oriented dashboard (recent encounters widget).
   const canSeeRevenue      = has(Perm.ReportsRead);
   const canSeeBills        = has(Perm.BillingRead);
   const canSeePending      = has(Perm.BillingRead);
   const canSeeAppointments = has(Perm.ClinicWrite);
+  // Doctors have patient:read (clinical access) but not reports:read
+  // (financial/analytics access). This flag drives the encounter-focused
+  // dashboard layout: recent encounters widget + no pending payments table.
+  const isDoctor = has(Perm.PatientRead) && !has(Perm.ReportsRead);
   const [revenue, setRevenue] = useState<RevenueResp | null>(null);
   const [schedule, setSchedule] = useState<ScheduleResp | null>(null);
   const [pending, setPending] = useState<PendingResp | null>(null);
@@ -211,89 +214,107 @@ export function DashboardScreen() {
             )}
           </div>
 
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>Pending payments</span>
-              <button onClick={() => setScreen('billing')} style={{ background: 'none', border: 'none', fontSize: 12, color: 'var(--brand-500)', cursor: 'pointer', fontWeight: 500 }}>View billing →</button>
-            </div>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr style={{ background: 'var(--surface-muted)' }}>
-                  {['Bill no', 'Patient', 'Total', 'Outstanding', 'Status'].map((h, i) => (
-                    <th key={h} style={{ padding: '8px 16px', textAlign: i >= 2 && i <= 3 ? 'right' : 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {!pending && <tr><td colSpan={5} style={{ padding: 12, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 12 }}>Loading…</td></tr>}
-                {pending && pending.rows.length === 0 && <tr><td colSpan={5} style={{ padding: 12, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 12 }}>All bills are paid.</td></tr>}
-                {pending?.rows.slice(0, 8).map((b) => (
-                  <tr key={b._id} style={{ borderTop: '1px solid var(--border)' }}>
-                    <td style={{ padding: '8px 16px', fontSize: 11, color: 'var(--text-subtle)', fontFamily: 'monospace' }}>{b.billNo ?? b._id.slice(-6)}</td>
-                    <td style={{ padding: '8px 16px', fontSize: 12, color: 'var(--text)' }}>
-                      {b.patient?.fullName ?? (b.patient?.mrn ?? `#${b.patientId.slice(-6)}`)}
-                    </td>
-                    <td style={{ padding: '8px 16px', fontSize: 12, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatMoney(b.total, ctx.currency)}</td>
-                    <td style={{ padding: '8px 16px', fontSize: 12, color: 'var(--danger-500)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{formatMoney(b.outstanding, ctx.currency)}</td>
-                    <td style={{ padding: '8px 16px' }}><StatusPill status={(b.status || '').toLowerCase()} small /></td>
+          {!isDoctor && (
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>Pending payments</span>
+                <button onClick={() => setScreen('billing')} style={{ background: 'none', border: 'none', fontSize: 12, color: 'var(--brand-500)', cursor: 'pointer', fontWeight: 500 }}>View billing →</button>
+              </div>
+              <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <thead>
+                  <tr style={{ background: 'var(--surface-muted)' }}>
+                    {['Bill no', 'Patient', 'Total', 'Outstanding', 'Status'].map((h, i) => (
+                      <th key={h} style={{ padding: '8px 16px', textAlign: i >= 2 && i <= 3 ? 'right' : 'left', fontSize: 10, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>{h}</th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {!pending && <tr><td colSpan={5} style={{ padding: 12, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 12 }}>Loading…</td></tr>}
+                  {pending && pending.rows.length === 0 && <tr><td colSpan={5} style={{ padding: 12, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 12 }}>All bills are paid.</td></tr>}
+                  {pending?.rows.slice(0, 8).map((b) => (
+                    <tr key={b._id} style={{ borderTop: '1px solid var(--border)' }}>
+                      <td style={{ padding: '8px 16px', fontSize: 11, color: 'var(--text-subtle)', fontFamily: 'monospace' }}>{b.billNo ?? b._id.slice(-6)}</td>
+                      <td style={{ padding: '8px 16px', fontSize: 12, color: 'var(--text)' }}>
+                        {b.patient?.fullName ?? (b.patient?.mrn ?? `#${b.patientId.slice(-6)}`)}
+                      </td>
+                      <td style={{ padding: '8px 16px', fontSize: 12, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{formatMoney(b.total, ctx.currency)}</td>
+                      <td style={{ padding: '8px 16px', fontSize: 12, color: 'var(--danger-500)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{formatMoney(b.outstanding, ctx.currency)}</td>
+                      <td style={{ padding: '8px 16px' }}><StatusPill status={(b.status || '').toLowerCase()} small /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         <div style={{ flex: '1 1 280px', minWidth: 240, display: 'flex', flexDirection: 'column', gap: 12 }}>
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
-            <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
-              <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>Quick actions</span>
+          {/* Quick actions card — hidden for doctors. Clinicians work
+              inside their consultation flow and don't need the
+              admin-style register/book/bill shortcuts on the dashboard. */}
+          {!isDoctor && (
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden' }}>
+              <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>Quick actions</span>
+              </div>
+              <div style={{ padding: '6px 0' }}>
+                {([
+                  { id: 'patients', label: 'Register patient', icon: 'users' as const },
+                  { id: 'appointments', label: 'Book appointment', icon: 'calendar' as const },
+                  { id: 'billing', label: 'New bill', icon: 'receipt' as const },
+                  { id: 'documents', label: 'Upload document', icon: 'upload' as const },
+                ] as const).map((a) => (
+                  <button key={a.id} onClick={() => setScreen(a.id)}
+                    style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', background: 'none', border: 'none', borderRadius: 0, cursor: 'pointer', color: 'var(--text)', fontSize: 12, fontWeight: 500, textAlign: 'left', width: '100%', transition: 'background 80ms' }}
+                    onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-muted)')}
+                    onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}>
+                    <Icon name={a.icon} size={14} style={{ color: 'var(--brand-500)' }} />
+                    {a.label}
+                    <Icon name="chevronRight" size={12} style={{ marginLeft: 'auto', color: 'var(--text-subtle)' }} />
+                  </button>
+                ))}
+              </div>
             </div>
-            <div style={{ padding: '6px 0' }}>
-              {([
-                { id: 'patients', label: 'Register patient', icon: 'users' as const },
-                { id: 'appointments', label: 'Book appointment', icon: 'calendar' as const },
-                { id: 'billing', label: 'New bill', icon: 'receipt' as const },
-                { id: 'documents', label: 'Upload document', icon: 'upload' as const },
-              ] as const).map((a) => (
-                <button key={a.id} onClick={() => setScreen(a.id)}
-                  style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 16px', background: 'none', border: 'none', borderRadius: 0, cursor: 'pointer', color: 'var(--text)', fontSize: 12, fontWeight: 500, textAlign: 'left', width: '100%', transition: 'background 80ms' }}
-                  onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-muted)')}
-                  onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}>
-                  <Icon name={a.icon} size={14} style={{ color: 'var(--brand-500)' }} />
-                  {a.label}
-                  <Icon name="chevronRight" size={12} style={{ marginLeft: 'auto', color: 'var(--text-subtle)' }} />
-                </button>
-              ))}
-            </div>
-          </div>
+          )}
 
 
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
-            <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
-              <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Recent activity</span>
-            </div>
-            <div style={{ padding: '4px 0', maxHeight: 360, overflowY: 'auto' }}>
-              {activity === null && <div style={{ padding: 16, fontSize: 12, color: 'var(--text-subtle)' }}>Loading…</div>}
-              {activity && activity.length === 0 && <div style={{ padding: 16, fontSize: 12, color: 'var(--text-subtle)' }}>No activity yet.</div>}
-              {activity?.slice(0, 12).map((log, i) => {
-                const desc = describeActivity(log);
-                return (
-                  <div key={log._id} style={{ display: 'flex', gap: 10, padding: '10px 16px', borderTop: i > 0 ? '1px solid var(--border)' : 'none' }}>
-                    <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--surface-muted)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
-                      <Icon name={desc.icon} size={12} style={{ color: 'var(--brand-500)' }} />
-                    </div>
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.4 }}>
-                        <span style={{ fontWeight: 600 }}>{desc.label}</span>
-                        {log.targetLabel && <span style={{ color: 'var(--text-muted)' }}> for {log.targetLabel}</span>}
+          {isDoctor ? (
+            <RecentEncountersWidget onOpen={(id) => {
+              // Open the specific consultation — set the encounter id
+              // first so EncounterScreen's mount effect picks it up,
+              // then navigate. Going through setSelectedEncounterId
+              // matches the same flow as opening from the queue list.
+              setSelectedEncounterId(id);
+              setScreen('encounters');
+            }} />
+          ) : (
+            <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+              <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+                <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Recent activity</span>
+              </div>
+              <div style={{ padding: '4px 0', maxHeight: 360, overflowY: 'auto' }}>
+                {activity === null && <div style={{ padding: 16, fontSize: 12, color: 'var(--text-subtle)' }}>Loading…</div>}
+                {activity && activity.length === 0 && <div style={{ padding: 16, fontSize: 12, color: 'var(--text-subtle)' }}>No activity yet.</div>}
+                {activity?.slice(0, 12).map((log, i) => {
+                  const desc = describeActivity(log);
+                  return (
+                    <div key={log._id} style={{ display: 'flex', gap: 10, padding: '10px 16px', borderTop: i > 0 ? '1px solid var(--border)' : 'none' }}>
+                      <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--surface-muted)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0, marginTop: 1 }}>
+                        <Icon name={desc.icon} size={12} style={{ color: 'var(--brand-500)' }} />
                       </div>
-                      <div style={{ fontSize: 10, color: 'var(--text-subtle)', marginTop: 2 }}>{relativeTime(log.createdAt)}</div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.4 }}>
+                          <span style={{ fontWeight: 600 }}>{desc.label}</span>
+                          {log.targetLabel && <span style={{ color: 'var(--text-muted)' }}> for {log.targetLabel}</span>}
+                        </div>
+                        <div style={{ fontSize: 10, color: 'var(--text-subtle)', marginTop: 2 }}>{relativeTime(log.createdAt)}</div>
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })}
+              </div>
             </div>
-          </div>
+          )}
         </div>
       </div>
     </div>
@@ -654,8 +675,8 @@ function describeActivity(log: AuditLog): { label: string; icon: IconName } {
     if (/^\/patients(\/.*)?$/.test(p)) return { label: 'Patient registered', icon: 'users' };
     if (/^\/appointments$/.test(p)) return { label: 'Appointment booked', icon: 'calendar' };
     if (/\/checkin$/.test(p)) return { label: 'Patient checked in', icon: 'checkCircle' };
-    if (/^\/encounters$/.test(p)) return { label: 'Encounter started', icon: 'clipboard' };
-    if (/\/sign$/.test(p)) return { label: 'Encounter signed', icon: 'lock' };
+    if (/^\/encounters$/.test(p)) return { label: 'Consultation started', icon: 'clipboard' };
+    if (/\/sign$/.test(p)) return { label: 'Consultation signed', icon: 'lock' };
     if (/^\/encounters\/[^/]+\/prescriptions$/.test(p)) return { label: 'Prescription issued', icon: 'pill' };
     if (/^\/bills\/from-prescription/.test(p)) return { label: 'Bill created', icon: 'receipt' };
     if (/^\/bills$/.test(p)) return { label: 'Bill drafted', icon: 'receipt' };
@@ -686,6 +707,114 @@ function relativeTime(iso: string): string {
   const day = Math.round(hr / 24);
   if (day < 7) return `${day} d ago`;
   return new Date(iso).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' });
+}
+
+// ── Recent Encounters widget (shown on Dashboard for doctor roles) ──────────
+
+type EncounterRow = {
+  _id: string;
+  readableId?: string;
+  status: string;
+  visitedAt: string;
+  patientId: { _id: string; fullName: string; mrn?: string } | string;
+};
+
+function RecentEncountersWidget({ onOpen }: { onOpen: (id: string) => void }) {
+  const { ctx } = useApp();
+  const [rows, setRows] = useState<EncounterRow[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [query, setQuery] = useState('');
+
+  useEffect(() => {
+    setLoading(true);
+    const qs = new URLSearchParams({ limit: '20' });
+    if (ctx.branchId) qs.set('branchId', ctx.branchId);
+    apiGet<EncounterRow[]>(ctx, `/encounters?${qs.toString()}`)
+      .then(setRows)
+      .catch(() => setRows([]))
+      .finally(() => setLoading(false));
+  }, [ctx.clinicId, ctx.branchId]);
+
+  const filtered = rows.filter((r) => {
+    const q = query.toLowerCase().trim();
+    if (!q) return true;
+    const name = typeof r.patientId === 'object' ? r.patientId.fullName : '';
+    const id = (r.readableId ?? r._id).toLowerCase();
+    return name.toLowerCase().includes(q) || id.includes(q) || r.status.toLowerCase().includes(q);
+  });
+
+  return (
+    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+      <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Recent consultations</span>
+        <div style={{ position: 'relative', width: 150 }}>
+          <Icon name="search" size={11} style={{ position: 'absolute', left: 8, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
+          <input
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Filter…"
+            style={{
+              width: '100%', height: 28, padding: '0 8px 0 26px',
+              background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 6,
+              fontSize: 11, color: 'var(--text)', outline: 'none', transition: 'border-color 0.2s', boxSizing: 'border-box',
+            }}
+            onFocus={(e) => (e.currentTarget.style.borderColor = 'var(--brand-400)')}
+            onBlur={(e) => (e.currentTarget.style.borderColor = 'var(--border)')}
+          />
+        </div>
+      </div>
+      <div style={{ padding: '4px 0', maxHeight: 360, overflowY: 'auto' }}>
+        {loading && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2, padding: '4px 8px' }}>
+            {Array.from({ length: 5 }).map((_, i) => (
+              <div key={i} style={{ height: 48, background: 'var(--surface-muted)', borderRadius: 8, marginBottom: 4, animation: 'pulse 1.5s infinite' }} />
+            ))}
+          </div>
+        )}
+        {!loading && filtered.length === 0 && (
+          <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)' }}>
+            {query ? 'No sessions match your search.' : 'No recent clinical sessions.'}
+          </div>
+        )}
+        {!loading && filtered.map((r, i) => {
+          const name = typeof r.patientId === 'object' ? r.patientId.fullName : `#${r._id.slice(-6)}`;
+          const mrn = typeof r.patientId === 'object' ? (r.patientId.mrn ?? '') : '';
+          const rid = r.readableId ?? `#${r._id.slice(-6).toUpperCase()}`;
+          const dateStr = new Date(r.visitedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+          return (
+            <button
+              key={r._id}
+              onClick={() => onOpen(r._id)}
+              style={{
+                width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '9px 14px',
+                textAlign: 'left', background: 'none', border: 'none', borderTop: i > 0 ? '1px solid var(--border)' : 'none',
+                cursor: 'pointer', transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-muted)')}
+              onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+            >
+              <div style={{ width: 32, height: 32, borderRadius: 8, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                <Icon name="clipboard" size={14} style={{ color: 'var(--brand-500)' }} />
+              </div>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{name}</span>
+                  <StatusPill status={r.status.toLowerCase()} small />
+                </div>
+                <div style={{ fontSize: 10, color: 'var(--text-subtle)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ fontFamily: 'monospace', color: 'var(--brand-600)', background: 'var(--brand-50)', padding: '0 3px', borderRadius: 3 }}>{rid}</span>
+                  {mrn && <><span>·</span><span>{mrn}</span></>}
+                  <span>·</span>
+                  <span>{dateStr}</span>
+                </div>
+              </div>
+              <Icon name="chevronRight" size={13} style={{ color: 'var(--text-subtle)', flexShrink: 0 }} />
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function KPITile({ label, value, sub, data, color, icon, onClick }: {

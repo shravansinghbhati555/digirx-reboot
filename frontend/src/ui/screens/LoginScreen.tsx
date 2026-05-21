@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { useLocation } from 'react-router-dom';
 import { apiGet, apiPost } from '../../app/api';
 import type { DevContext } from '../../app/context';
 import { useApp } from '../../app/AppContext';
@@ -21,6 +22,10 @@ type LoginResponse = {
   userId: string;
   clinicId: string;
   branchId: string | null;
+  // Role names assigned to the user, lowercased on the BE side already
+  // would be ideal but we lowercase here too for safety. Used by the
+  // FE to short-circuit branch selection for super admins.
+  roles?: string[];
 };
 
 type SignupResponse = {
@@ -37,22 +42,52 @@ type PendingAuth = {
   accessToken: string;
   userId: string;
   email: string;
+  roles?: string[];
 };
 
 export function LoginScreen() {
   const { ctx, setCtx } = useApp();
   const toast = useToast();
+  const location = useLocation();
+  // `state.reason === 'session-expired'` is set by AppContext when a
+  // 401 (after a failed refresh) boots the user back here. We surface a
+  // one-line banner + a one-shot toast so they know it was an expiry,
+  // not a credential problem.
+  const expiredReason = (location.state as { reason?: string } | null)?.reason === 'session-expired';
+  const sessionExpiredToastedRef = useRef(false);
+  useEffect(() => {
+    if (expiredReason && !sessionExpiredToastedRef.current) {
+      sessionExpiredToastedRef.current = true;
+      toast('Your session has expired. Please sign in again.', 'error');
+    }
+  }, [expiredReason, toast]);
 
   // 'signin' uses the 3-step wizard (sign in → pick branch → welcome).
   // 'signup' uses a single bootstrap form that creates the clinic + admin
   // + default branch in one shot, then jumps straight to welcome (step 2).
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [step, setStep] = useState<0 | 1 | 2>(0);
-  const [apiBaseUrl, setApiBaseUrl] = useState(ctx.apiBaseUrl);
+  const [apiBaseUrl] = useState(ctx.apiBaseUrl);
   const [pendingAuth, setPendingAuth] = useState<PendingAuth | null>(null);
   const [pendingBranch, setPendingBranch] = useState<BranchResult | null>(null);
 
-  const goNext = (auth: PendingAuth) => { setPendingAuth(auth); setStep(1); };
+  const goNext = (auth: PendingAuth) => {
+    setPendingAuth(auth);
+    // Admins (any role named "Super Admin" or "Admin", case-insensitive)
+    // have cross-branch access — skip the branch picker entirely and
+    // land on the welcome step. Matches the BE's existing admin
+    // detection in auth.service.ts (~line 415).
+    const isAdminLike = (auth.roles ?? []).some((r) => {
+      const n = r.toLowerCase();
+      return n === 'super admin' || n === 'admin';
+    });
+    if (isAdminLike) {
+      setPendingBranch(null);
+      setStep(2);
+    } else {
+      setStep(1);
+    }
+  };
   const finishBranch = (branch: BranchResult | null) => { setPendingBranch(branch); setStep(2); };
 
   // Signup short-circuits the branch picker — the freshly created clinic
@@ -91,10 +126,31 @@ export function LoginScreen() {
         <div style={{ width: '100%', maxWidth: 420, animation: 'slideUp 320ms var(--ease-out)' }}>
           <StepDots current={step} total={3} />
 
+          {expiredReason && step === 0 && (
+            <div
+              role="status"
+              style={{
+                marginTop: 12,
+                marginBottom: 16,
+                padding: '10px 14px',
+                background: 'var(--warning-bg-soft)',
+                border: '1px solid var(--warning-border-soft)',
+                borderRadius: 10,
+                fontSize: 12,
+                color: 'var(--warning-text)',
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 10,
+              }}
+            >
+              <Icon name="alertTriangle" size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>Your session has expired. Please sign in again to continue.</span>
+            </div>
+          )}
+
           {step === 0 && mode === 'signin' && (
             <SignInStep
               apiBaseUrl={apiBaseUrl}
-              setApiBaseUrl={setApiBaseUrl}
               onSuccess={goNext}
               onSwitchToSignup={() => setMode('signup')}
             />
@@ -193,14 +249,13 @@ function StepDots({ current, total }: { current: number; total: number }) {
 /* ── Step 0: Sign In ──────────────────────────────────────── */
 
 function SignInStep({
-  apiBaseUrl, setApiBaseUrl, onSuccess, onSwitchToSignup,
+  apiBaseUrl, onSuccess, onSwitchToSignup,
 }: {
   apiBaseUrl: string;
-  setApiBaseUrl: (v: string) => void;
   onSuccess: (auth: PendingAuth) => void;
   onSwitchToSignup: () => void;
 }) {
-  const { ctx, setCtx } = useApp();
+  const { ctx } = useApp();
   const toast = useToast();
   const [clinic, setClinic] = useState<ClinicResult | null>(null);
   const [email, setEmail] = useState('admin@digirx.local');
@@ -232,7 +287,7 @@ function SignInStep({
         password,
       });
       setBtnState('success');
-      setTimeout(() => onSuccess({ clinic: clinic!, accessToken: res.accessToken, userId: res.userId, email }), 600);
+      setTimeout(() => onSuccess({ clinic: clinic!, accessToken: res.accessToken, userId: res.userId, email, roles: res.roles }), 600);
     } catch (err) {
       setBtnState('error');
       setShakeKey((k) => k + 1);
@@ -984,12 +1039,3 @@ function inputStyle(hasError: boolean): React.CSSProperties {
   };
 }
 
-function SmallField({ label, value, onChange, placeholder }: { label: string; value: string; onChange: (v: string) => void; placeholder?: string }) {
-  return (
-    <div>
-      <label style={labelStyle}>{label}</label>
-      <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder}
-        style={{ width: '100%', height: 36, padding: '0 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 12, color: 'var(--text)', outline: 'none', boxSizing: 'border-box', fontFamily: 'monospace' }} />
-    </div>
-  );
-}

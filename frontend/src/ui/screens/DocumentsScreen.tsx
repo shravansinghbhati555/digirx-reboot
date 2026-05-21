@@ -36,7 +36,34 @@ type ServerDoc = {
   createdAt: string;
 };
 
-export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerType?: OwnerType; fixedOwnerId?: string }) {
+export function DocumentsScreen({
+  fixedOwnerType,
+  fixedOwnerId,
+  readOnly = false,
+  hideAccessLevel = false,
+  emptyHint,
+}: {
+  fixedOwnerType?: OwnerType;
+  fixedOwnerId?: string;
+  /**
+   * Hide upload / delete / share controls. Use when embedding the
+   * documents list as a reference panel (e.g. doctor reviewing
+   * patient-scoped docs inside the encounter screen). Preview &
+   * download remain available.
+   */
+  readOnly?: boolean;
+  /**
+   * Hide the access-level picker (Internal vs Shareable) in the
+   * uploader. Uploads default to INTERNAL_ONLY; the operator can
+   * still flip a doc to shareable later from the global Documents
+   * tab or via the share button on each row. Used for inline
+   * embedded uploaders (check-in, etc.) where the access level is
+   * a distracting detail at that moment.
+   */
+  hideAccessLevel?: boolean;
+  /** Optional override for the empty-state hint when readOnly. */
+  emptyHint?: string;
+}) {
   const { ctx } = useApp();
   const toast = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -179,7 +206,9 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
         </div>
       )}
 
-      {/* Uploader Section */}
+      {/* Uploader Section — hidden in readOnly mode so callers can
+          embed the list as a reference panel. */}
+      {!readOnly && (
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 24, boxShadow: 'var(--shadow-sm)' }}>
         <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap', alignItems: 'flex-end' }}>
           {!isEmbedded && (
@@ -214,7 +243,7 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
                 />
               ) : ownerType === 'ENCOUNTER' ? (
                 <EncounterSearch
-                  onSelect={(e) => { setOwnerId(e._id); setOwnerName(e.readableId || `Encounter ${e._id.slice(-6).toUpperCase()}`); }}
+                  onSelect={(e) => { setOwnerId(e._id); setOwnerName(e.readableId || `Consultation ${e._id.slice(-6).toUpperCase()}`); }}
                   selectedId={ownerId}
                   onClear={() => { setOwnerId(''); setOwnerName(''); }}
                 />
@@ -232,14 +261,16 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
             </select>
           </div>
 
-          <div style={{ flex: '1 1 200px' }}>
-            <label style={labelStyle}>Access Level</label>
-            <select value={access} onChange={(e) => setAccess(e.target.value as any)}
-              style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, color: 'var(--text)', outline: 'none', cursor: 'pointer' }}>
-              <option value="INTERNAL_ONLY">Internal Clinic Use</option>
-              <option value="SHAREABLE_WITH_TOKEN">Patient Shareable</option>
-            </select>
-          </div>
+          {!hideAccessLevel && (
+            <div style={{ flex: '1 1 200px' }}>
+              <label style={labelStyle}>Access Level</label>
+              <select value={access} onChange={(e) => setAccess(e.target.value as any)}
+                style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, color: 'var(--text)', outline: 'none', cursor: 'pointer' }}>
+                <option value="INTERNAL_ONLY">Internal Clinic Use</option>
+                <option value="SHAREABLE_WITH_TOKEN">Patient Shareable</option>
+              </select>
+            </div>
+          )}
         </div>
 
         <div
@@ -280,6 +311,7 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
         </div>
         {error && <div style={{ marginTop: 12, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: 'var(--danger-600)', fontWeight: 500 }}>{error}</div>}
       </div>
+      )}
 
       {/* List Section */}
       <div>
@@ -301,11 +333,28 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
         </div>
 
         {!loadingDocs && documents.length === 0 ? (
-          <EmptyState illustration="documents" title="No documents found" hint={searchQuery ? "Try a different search term." : "Upload clinical records to see them here."} />
+          <EmptyState
+            illustration="documents"
+            title={readOnly ? 'No documents' : 'No documents found'}
+            hint={
+              readOnly
+                ? (emptyHint || 'No documents have been uploaded for this patient yet.')
+                : (searchQuery ? 'Try a different search term.' : 'Upload clinical records to see them here.')
+            }
+          />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
             {documents.map((doc) => (
-              <DocCard key={doc._id} doc={doc} onPreview={() => setPreviewing(doc)} onDownload={() => downloadDoc(doc)} onShare={() => setSharing(doc)} onDelete={() => deleteDoc(doc)} showOwner={!isEmbedded} downloading={downloadingId === doc._id} />
+              <DocCard
+                key={doc._id}
+                doc={doc}
+                onPreview={() => setPreviewing(doc)}
+                onDownload={() => downloadDoc(doc)}
+                onShare={readOnly ? undefined : () => setSharing(doc)}
+                onDelete={readOnly ? undefined : () => deleteDoc(doc)}
+                showOwner={!isEmbedded}
+                downloading={downloadingId === doc._id}
+              />
             ))}
           </div>
         )}
@@ -317,7 +366,7 @@ export function DocumentsScreen({ fixedOwnerType, fixedOwnerId }: { fixedOwnerTy
   );
 }
 
-function DocCard({ doc, onPreview, onDownload, onShare, onDelete, showOwner, downloading }: { doc: ServerDoc; onPreview: () => void; onDownload: () => void; onShare: () => void; onDelete: () => void; showOwner?: boolean; downloading?: boolean }) {
+function DocCard({ doc, onPreview, onDownload, onShare, onDelete, showOwner, downloading }: { doc: ServerDoc; onPreview: () => void; onDownload: () => void; onShare?: () => void; onDelete?: () => void; showOwner?: boolean; downloading?: boolean }) {
   const cat = DOCUMENT_CATEGORIES.find(c => c.value === doc.category) || DOCUMENT_CATEGORIES[5];
 
   return (
@@ -349,8 +398,8 @@ function DocCard({ doc, onPreview, onDownload, onShare, onDelete, showOwner, dow
         <button onClick={onDownload} disabled={downloading} style={{ ...actionButtonStyle, cursor: downloading ? 'wait' : 'pointer', opacity: downloading ? 0.6 : 1 }} title="Download">
           {downloading ? <Spinner size={12} /> : <Icon name="download" size={14} />}
         </button>
-        {doc.access !== 'INTERNAL_ONLY' && <button onClick={onShare} style={actionButtonStyle} title="Share"><Icon name="send" size={14} /></button>}
-        <button onClick={onDelete} style={{ ...actionButtonStyle, color: 'var(--danger-500)' }} title="Delete"><Icon name="trash" size={14} /></button>
+        {onShare && doc.access !== 'INTERNAL_ONLY' && <button onClick={onShare} style={actionButtonStyle} title="Share"><Icon name="send" size={14} /></button>}
+        {onDelete && <button onClick={onDelete} style={{ ...actionButtonStyle, color: 'var(--danger-500)' }} title="Delete"><Icon name="trash" size={14} /></button>}
       </div>
     </div>
   );
@@ -640,7 +689,7 @@ function EncounterSearch({ onSelect, selectedId, onClear }: { onSelect: (e: any)
           </div>
           <select onChange={(e) => { const enc = encounters.find(x => x._id === e.target.value); if (enc) onSelect(enc); }}
             style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none' }}>
-            <option value="">{loading ? 'Loading encounters...' : encounters.length === 0 ? 'No encounters found' : 'Pick an encounter...'}</option>
+            <option value="">{loading ? 'Loading consultations...' : encounters.length === 0 ? 'No consultations found' : 'Pick a consultation...'}</option>
             {encounters.map(enc => (
               <option key={enc._id} value={enc._id}>
                 {enc.readableId || enc._id.slice(-6).toUpperCase()} — {formatDateTime(enc.visitedAt)} ({enc.status})

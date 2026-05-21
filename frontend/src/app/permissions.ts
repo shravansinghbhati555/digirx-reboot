@@ -22,6 +22,10 @@ export const Perm = {
   AccessLogRead: 'accesslog:read',
   InventoryRead: 'inventory:read',
   InventoryWrite: 'inventory:write',
+  PharmacyRead: 'pharmacy:read',
+  PharmacyWrite: 'pharmacy:write',
+  EncounterRead: 'encounter:read',
+  EncounterWrite: 'encounter:write',
   // Reports permissions are additive: the Reports tab is granted by
   // ReportsRead/Write OR by BillingRead (unchanged) so today's roles
   // that see Reports keep seeing them. BE /reports/* routes remain
@@ -61,13 +65,13 @@ export const SCREEN_REQUIRED: Record<ScreenKey, PermName[] | null> = {
   dashboard: [Perm.ClinicWrite, Perm.DashboardRead],
   patients: [Perm.PatientRead],
   appointments: [Perm.AppointmentRead],
-  encounters: [Perm.PatientRead],
+  encounters: [Perm.EncounterRead],
   billing: [Perm.BillingRead],
   documents: [Perm.DocumentRead],
   reports: [Perm.BillingRead, Perm.ReportsRead, Perm.ReportsWrite],
   notifications: [Perm.NotificationRead],
   inventory: [Perm.InventoryRead],
-  pharmacy: [Perm.BillingRead],
+  pharmacy: [Perm.PharmacyRead],
   users: [Perm.UserRead],
   roles: [Perm.UserRead],
   settings: [Perm.ClinicRead],
@@ -85,6 +89,45 @@ export function canAccessScreen(set: Set<string>, screen: ScreenKey): boolean {
   const req = SCREEN_REQUIRED[screen];
   if (!req) return true;
   return hasAnyPerm(set, req);
+}
+
+// Role-restricted screens.
+//   ALLOWLIST → only the listed roles see it; everyone else is hidden.
+//     Used for clinic-admin screens (users, roles & permissions) that
+//     should stay with Super Admin + Manager even if other roles get
+//     `user:read` granted.
+//   BLOCKLIST → everyone EXCEPT the listed roles sees it. Used to
+//     hide a generally-available screen from one specific role —
+//     e.g. doctors don't get the global Documents tab; they see
+//     patient docs inline in the consultation screen instead.
+const ROLE_SCREEN_ALLOWLIST: Partial<Record<ScreenKey, ReadonlySet<string>>> = {
+  users: new Set(['super admin', 'manager']),
+  roles: new Set(['super admin', 'manager']),
+};
+
+const ROLE_SCREEN_BLOCKLIST: Partial<Record<ScreenKey, ReadonlySet<string>>> = {
+  documents: new Set(['doctor']),
+};
+
+export function isScreenAllowedForRoles(
+  roleNames: Set<string>,
+  screen: ScreenKey,
+): boolean {
+  // Blocklist takes priority — if any of the user's roles is blocked
+  // from this screen, deny.
+  const blocked = ROLE_SCREEN_BLOCKLIST[screen];
+  if (blocked) {
+    for (const role of roleNames) {
+      if (blocked.has(role)) return false;
+    }
+  }
+  // Allowlist (if defined) restricts to its listed roles.
+  const allowed = ROLE_SCREEN_ALLOWLIST[screen];
+  if (!allowed) return true;
+  for (const role of roleNames) {
+    if (allowed.has(role)) return true;
+  }
+  return false;
 }
 
 /**
