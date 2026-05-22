@@ -2,13 +2,9 @@
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 python-multipart==0.0.20
-deepface==0.0.93
-tensorflow-cpu==2.16.2
-# DeepFace doesn't support Keras 3 (the one bundled with TF 2.16+). The
-# `tf-keras` package is the standalone Keras 2 shim TF kept around for
-# exactly this kind of compat. Without it, DeepFace.represent() blows
-# up on import with "this requires tf-keras package".
-tf-keras==2.16.0
+# OpenCV ships the full DNN runtime AND both the YuNet face detector and
+# SFace embedder we use here — no separate ML framework needed. Headless
+# variant skips the GUI deps so the container stays small.
 opencv-python-headless==4.10.0.84
 pillow==11.1.0
 numpy==1.26.4
