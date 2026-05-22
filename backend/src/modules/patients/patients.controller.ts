@@ -45,14 +45,36 @@ export class PatientsController {
   ) {
     const clinicId = req.context!.clinicId;
     const limit = Number(limitRaw ?? 25) || 25;
-    return await this.patients.search(clinicId, { query, limit, before, branchId });
+    const rows = await this.patients.search(clinicId, { query, limit, before, branchId });
+    // Enrich each row with a presigned profile-image URL so the FE
+    // patient list / pickers can render the photo captured at face
+    // enrollment in their Avatar. S3 presigning is a local crypto op
+    // (no network) so doing it per-row up to the page limit is fine.
+    return await Promise.all(
+      rows.map(async (row) => {
+        const plain = (row as unknown as { toObject: () => Record<string, unknown> }).toObject();
+        const url = await this.patients.presignProfileImage(
+          row as unknown as { profileImageKey?: string },
+        );
+        return { ...plain, profileImageUrl: url };
+      }),
+    );
   }
 
   @Get(':id')
   @RequirePermissions(Permission.PatientRead)
   async get(@Req() req: AppRequest, @Param('id') id: string) {
     const clinicId = req.context!.clinicId;
-    return await this.patients.getById(clinicId, id);
+    const doc = await this.patients.getById(clinicId, id);
+    // Enrich with a presigned profile-image URL so the FE Avatar can
+    // render the photo captured at face enrollment. `getById` itself
+    // returns a Mongoose Document so other internal callers still get
+    // `.save()` etc; we only flatten when shipping the HTTP response.
+    const profileImageUrl = await this.patients.presignProfileImage(
+      doc as unknown as { profileImageKey?: string },
+    );
+    const plain = (doc as unknown as { toObject: () => Record<string, unknown> }).toObject();
+    return { ...plain, profileImageUrl };
   }
 
   @Get(':id/history')

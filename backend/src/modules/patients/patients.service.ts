@@ -24,6 +24,7 @@ import { User } from '../authz/schemas/user.schema';
 import { Prescription } from '../prescriptions/schemas/prescription.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
 import { mergeClinicSettings } from '../tenancy/clinic-settings.types';
+import { StorageService } from '../storage/storage.service';
 
 function dedupeTags(tags: string[] | undefined): string[] {
   if (!tags) return [];
@@ -63,6 +64,7 @@ export class PatientsService {
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(Prescription.name)
     private readonly rxModel: Model<Prescription>,
+    private readonly storage: StorageService,
   ) {}
 
   async create(
@@ -420,6 +422,24 @@ export class PatientsService {
     const doc = await this.patientModel.findOne({ _id: id, clinicId });
     if (!doc) throw new NotFoundException('Patient not found');
     return doc;
+  }
+
+  /**
+   * Mint a short-lived presigned GET URL for the patient's profile
+   * picture (captured at face enrollment). Returns `null` if no image
+   * is on file or presigning fails — the FE Avatar component falls
+   * back to initials in that case. Called from the controller layer
+   * so internal `getById` users still get a Mongoose Document they
+   * can `.save()` on.
+   */
+  async presignProfileImage(patient: { profileImageKey?: string } | null): Promise<string | null> {
+    const key = patient?.profileImageKey;
+    if (!key) return null;
+    try {
+      return await this.storage.presignGet({ key, expiresInSeconds: 900 });
+    } catch {
+      return null;
+    }
   }
 
   // --- Identifiers --------------------------------------------------------

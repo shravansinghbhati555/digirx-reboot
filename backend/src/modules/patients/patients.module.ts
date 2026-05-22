@@ -28,6 +28,7 @@ import {
   Prescription,
   PrescriptionSchema,
 } from '../prescriptions/schemas/prescription.schema';
+import { StorageModule } from '../storage/storage.module';
 
 @Module({
   imports: [
@@ -47,6 +48,8 @@ import {
       { name: User.name, schema: UserSchema },
       { name: Prescription.name, schema: PrescriptionSchema },
     ]),
+    // For presigning the profile-image URL on GET /patients/:id.
+    StorageModule,
   ],
   controllers: [PatientsController],
   providers: [PatientsService],

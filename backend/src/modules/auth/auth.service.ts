@@ -138,6 +138,10 @@ export class AuthService {
           Permission.AccessLogRead,
           Permission.ReportsRead,
           Permission.ReportsWrite,
+          Permission.PharmacyRead,
+          Permission.PharmacyWrite,
+          Permission.EncounterRead,
+          Permission.EncounterWrite,
           Permission.SettingsClinicRead,
           Permission.SettingsBranchesRead,
           Permission.SettingsAvailabilityRead,
@@ -181,6 +185,8 @@ export class AuthService {
           Permission.DocumentRead,
           Permission.DocumentWrite,
           Permission.NotificationRead,
+          Permission.EncounterRead,
+          Permission.EncounterWrite,
           Permission.ReportsRead,
           Permission.SettingsAvailabilityRead,
         ],
@@ -200,6 +206,8 @@ export class AuthService {
           Permission.DocumentRead,
           Permission.InventoryRead,
           Permission.InventoryWrite,
+          Permission.PharmacyRead,
+          Permission.PharmacyWrite,
           Permission.NotificationRead,
           Permission.ReportsRead,
         ],
@@ -305,6 +313,18 @@ export class AuthService {
       branchId: effectiveBranchId ? new Types.ObjectId(effectiveBranchId) : undefined,
     });
 
+    // Surface the user's role names so the FE can short-circuit
+    // post-login UX (e.g. super-admins skip branch selection — they
+    // have full cross-branch access already). Cheap: 1 indexed find
+    // with no payload growth (names only).
+    const roleDocs = user.roleIds?.length
+      ? await this.roleModel
+          .find({ _id: { $in: user.roleIds }, clinicId })
+          .select({ name: 1 })
+          .lean()
+      : [];
+    const roles = roleDocs.map((r) => r.name).filter(Boolean) as string[];
+
     return {
       accessToken,
       refresh: {
@@ -315,6 +335,7 @@ export class AuthService {
       userId: claims.sub,
       clinicId: claims.clinicId,
       branchId: claims.branchId ?? null,
+      roles,
     };
   }
 

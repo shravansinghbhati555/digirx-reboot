@@ -12,33 +12,26 @@ import { FaceEmbedding } from './schemas/face-embedding.schema';
 import { Patient } from '../patients/schemas/patient.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
 import { mergeClinicSettings } from '../tenancy/clinic-settings.types';
+import { StorageService } from '../storage/storage.service';
 
-/**
- * Cosine match cutoffs for Facenet512. The defaults are tuned for the
- * real-world variance you see at a front desk — same person captured
- * minutes / weeks apart under different lighting + a different webcam
- * angle. DeepFace's own published threshold for Facenet512 + cosine is
- * 0.30 distance ≈ 0.70 similarity, but that's a strict pairwise verify;
- * for "search the whole clinic" we trade a small false-positive rate
- * for many more correct hits.
- *
- * Override via env (FACE_HIGH_THRESHOLD / FACE_LOW_THRESHOLD) without
- * a code change if you find your clinic skews one way.
- *
- *  - >HIGH  → auto-pick the patient (front desk skips confirmation)
- *  - LOW..HIGH → show candidate list, ask for confirmation
- *  - <LOW   → no match, fall back to typed search
- */
+// Cosine cutoffs for the SFace (128-d) gallery search. Override via
+// env (FACE_HIGH_THRESHOLD / FACE_LOW_THRESHOLD).
+//   >HIGH  → auto-pick the patient (front desk skips confirmation)
+//   LOW..HIGH → show candidate list, ask for confirmation
+//   <LOW   → no match, fall back to typed search
+//
+// 0.65 / 0.45 reflect SFace's pairwise-verify sweet spot. At 0.55
+// we were getting false positives on same-demographic faces (same
+// gender + glasses + similar age were enough to cross the bar);
+// 0.65 keeps the auto-pick conservative. The anti-spoof gate in
+// face-svc catches photo replays before we ever get this far.
 const HIGH_CONFIDENCE_THRESHOLD = parseFloat(
-  process.env.FACE_HIGH_THRESHOLD ?? '0.55',
+  process.env.FACE_HIGH_THRESHOLD ?? '0.65',
 );
 const LOW_CONFIDENCE_THRESHOLD = parseFloat(
-  process.env.FACE_LOW_THRESHOLD ?? '0.4',
+  process.env.FACE_LOW_THRESHOLD ?? '0.45',
 );
 
-// Lower than the previous 0.85 so a slightly off-angle but otherwise
-// valid enrollment isn't rejected. The detector's own confidence rarely
-// drops below 0.9 on a well-framed face, so 0.7 still keeps junk out.
 const MIN_ENROLLMENT_FACE_CONFIDENCE = parseFloat(
   process.env.FACE_MIN_ENROLLMENT_CONFIDENCE ?? '0.7',
 );
@@ -63,13 +56,11 @@ export class FaceService {
     @InjectModel(Clinic.name)
     private readonly clinicModel: Model<Clinic>,
     private readonly faceClient: FaceClient,
+    private readonly storage: StorageService,
   ) {}
 
-  /**
-   * Refuses if the clinic has `modules.faceRecognition.enabled === false`.
-   * Returns 404 (not 403) so a probing caller can't fingerprint which
-   * features a clinic has enabled vs which they're forbidden from.
-   */
+  // Returns 404 (not 403) so a probing caller can't fingerprint which
+  // features a clinic has enabled vs which they're forbidden from.
   private async assertFeatureEnabled(clinicId: Types.ObjectId): Promise<void> {
     const clinic = await this.clinicModel.findById(clinicId).lean();
     if (!clinic) throw new NotFoundException('Clinic not found');
@@ -87,7 +78,11 @@ export class FaceService {
     actorUserId?: Types.ObjectId;
     image: { buffer: Buffer; mimeType: string; filename: string };
     preDetected?: boolean;
-  }): Promise<{ enrolled: true; faceConfidence: number; model: string }> {
+  }): Promise<{
+    enrolled: true;
+    faceConfidence: number;
+    model: string;
+  }> {
     await this.assertFeatureEnabled(input.clinicId);
     if (!Types.ObjectId.isValid(input.patientId)) {
       throw new NotFoundException('Patient not found');
@@ -110,44 +105,63 @@ export class FaceService {
       );
     }
 
-    const embed = await this.faceClient.embed({ ...input.image, preDetected: input.preDetected });
+    const embed = await this.faceClient.embed({
+      ...input.image,
+      preDetected: input.preDetected,
+    });
 
-    // Pre-detected uploads come pre-cropped from the browser, so the
-    // server detector is skipped and `faceConfidence` is whatever the
-    // browser-side MediaPipe reported (forwarded by the client) or 1.0
-    // as a placeholder. Skip the strict confidence floor in that case —
-    // the FE wouldn't have flagged the bbox if quality was poor.
     if (!input.preDetected && embed.faceConfidence < MIN_ENROLLMENT_FACE_CONFIDENCE) {
       throw new BadRequestException(
         `Face detection too weak (confidence ${embed.faceConfidence.toFixed(2)}) — retake the photo with better lighting`,
       );
     }
     if (embed.facesDetected > 1) {
-      // Multiple faces in frame are fine at recognition (we pick the
-      // biggest) but at enrollment we refuse — wrong patient locked in
-      // is a serious data-integrity bug.
       throw new BadRequestException(
         'Multiple faces detected — only one person should be in the frame at enrollment',
       );
     }
 
-    await this.embeddingModel.findOneAndUpdate(
-      { clinicId: input.clinicId, patientId: patientObjId },
-      {
-        $set: {
-          embedding: embed.embedding,
-          model: embed.model,
-          detector: embed.detector,
-          faceConfidence: embed.faceConfidence,
-          capturedBy: input.actorUserId,
-        },
-      },
-      { upsert: true, new: true },
-    );
+    // One embedding per patient. Replace any prior so re-enrollment
+    // overwrites the old vector cleanly.
+    await this.embeddingModel.deleteMany({
+      clinicId: input.clinicId,
+      patientId: patientObjId,
+    });
+    await this.embeddingModel.create({
+      clinicId: input.clinicId,
+      patientId: patientObjId,
+      embedding: embed.embedding,
+      model: embed.model,
+      detector: embed.detector,
+      faceConfidence: embed.faceConfidence,
+      capturedBy: input.actorUserId,
+    });
+
+    // Persist the captured frame as the patient's profile picture.
+    // The face-svc itself never stores the image (privacy comment in
+    // face-svc/main.py) — we keep our own copy here so the FE can
+    // render a real photo on patient detail / list views instead of
+    // initials. Re-enrollment overwrites the same key. Failures are
+    // logged but don't fail the whole enroll — the embedding is the
+    // critical artifact.
+    const profileImageKey = `clinic/${input.clinicId.toHexString()}/patient/${patientObjId.toHexString()}/profile.jpg`;
+    const setFields: Record<string, unknown> = { faceEnrolledAt: new Date() };
+    try {
+      await this.storage.putObject({
+        key: profileImageKey,
+        body: new Uint8Array(input.image.buffer),
+        contentType: input.image.mimeType,
+      });
+      setFields.profileImageKey = profileImageKey;
+    } catch (e) {
+      this.logger.warn(
+        `[enroll] failed to save profile image for ${input.patientId} (embedding kept): ${e instanceof Error ? e.message : e}`,
+      );
+    }
 
     await this.patientModel.updateOne(
       { _id: patientObjId, clinicId: input.clinicId },
-      { $set: { faceEnrolledAt: new Date() } },
+      { $set: setFields },
     );
 
     this.logger.log(
@@ -172,33 +186,43 @@ export class FaceService {
     facesDetected: number;
   }> {
     await this.assertFeatureEnabled(input.clinicId);
-    const probe = await this.faceClient.embed({ ...input.image, preDetected: input.preDetected });
-    const probeVec = probe.embedding;
 
-    // Pull every embedding for the clinic. Linear scan is fine up to
-    // ~50k patients (single-digit ms cosine over 512-dim vectors); add
-    // a vector index when we outgrow that.
+    // Honor the FE's MediaPipe pre-crop when present so the server
+    // skips its own (slower) face detector.
+    const probe = await this.faceClient.embed({
+      ...input.image,
+      preDetected: input.preDetected,
+    });
+    if (probe.facesDetected === 0) {
+      return { matches: [], autoMatch: null, facesDetected: 0 };
+    }
+
+    // Linear scan over the clinic's embeddings. Fine up to ~50k
+    // patients; revisit with a vector index when we outgrow that.
     const rows = await this.embeddingModel
       .find({ clinicId: input.clinicId })
       .select({ patientId: 1, embedding: 1 })
       .lean();
-
     if (rows.length === 0) {
       return { matches: [], autoMatch: null, facesDetected: probe.facesDetected };
     }
 
-    const scored = rows
-      .map((row) => ({
-        patientId: row.patientId,
-        score: cosineSimilarity(probeVec, row.embedding),
-      }))
-      .sort((a, b) => b.score - a.score);
+    // One embedding per patient now, but keep the per-patient max-pick
+    // in case any legacy rows from the multi-shot era are still around.
+    const bestByPatient = new Map<string, { patientId: Types.ObjectId; score: number }>();
+    for (const row of rows) {
+      const key = String(row.patientId);
+      const score = cosineSimilarity(probe.embedding, row.embedding);
+      const prev = bestByPatient.get(key);
+      if (!prev || score > prev.score) {
+        bestByPatient.set(key, { patientId: row.patientId as Types.ObjectId, score });
+      }
+    }
 
+    const scored = Array.from(bestByPatient.values()).sort((a, b) => b.score - a.score);
     const topK = Math.max(1, Math.min(input.topK ?? 3, 10));
     const top = scored.slice(0, topK);
 
-    // Hydrate patient name + MRN for the candidates only. Avoids
-    // streaming the whole patient collection.
     const patients = await this.patientModel
       .find({
         _id: { $in: top.map((t) => t.patientId) },
@@ -232,13 +256,30 @@ export class FaceService {
       throw new NotFoundException('Patient not found');
     }
     const patientObjId = new Types.ObjectId(patientId);
-    const result = await this.embeddingModel.deleteOne({
+    const result = await this.embeddingModel.deleteMany({
       clinicId,
       patientId: patientObjId,
     });
+    // Pull the existing profileImageKey so we can delete the S3
+    // object too — removing the embedding while keeping the photo
+    // would leave behind a face the operator thought they cleared.
+    const patient = await this.patientModel
+      .findOne({ _id: patientObjId, clinicId })
+      .select({ profileImageKey: 1 })
+      .lean();
+    const oldKey = (patient as { profileImageKey?: string } | null)?.profileImageKey;
+    if (oldKey) {
+      try {
+        await this.storage.deleteObject({ key: oldKey });
+      } catch (e) {
+        this.logger.warn(
+          `[unenroll] failed to delete profile image for ${patientId}: ${e instanceof Error ? e.message : e}`,
+        );
+      }
+    }
     await this.patientModel.updateOne(
       { _id: patientObjId, clinicId },
-      { $unset: { faceEnrolledAt: '' } },
+      { $unset: { faceEnrolledAt: '', profileImageKey: '' } },
     );
     return { removed: result.deletedCount ?? 0 };
   }

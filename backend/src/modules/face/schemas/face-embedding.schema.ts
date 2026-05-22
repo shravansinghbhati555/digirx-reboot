@@ -35,11 +35,13 @@ export class FaceEmbedding {
 
 export const FaceEmbeddingSchema = SchemaFactory.createForClass(FaceEmbedding);
 
-// One embedding per patient (per clinic) — re-enrolling overwrites the
-// previous row via upsert. Multi-embedding-per-patient is a future
-// extension; the unique index here protects us from silently piling up
-// duplicates if the FE retries.
+// Multi-embedding-per-patient is now the default: 3-shot enrollment
+// gives a stronger same-person signal than a single capture and
+// dramatically reduces false-positive rates against lookalike
+// strangers. The index is non-unique so a patient can hold multiple
+// rows; the service caps the count and chooses MAX score across them
+// at match time.
 FaceEmbeddingSchema.index(
   { clinicId: 1, patientId: 1 },
-  { name: 'face_embedding_unique_per_patient', unique: true },
+  { name: 'face_embedding_per_patient_idx' },
 );

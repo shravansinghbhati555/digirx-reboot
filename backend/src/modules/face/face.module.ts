@@ -10,6 +10,7 @@ import {
 import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 import { AuthzModule } from '../authz/authz.module';
+import { StorageModule } from '../storage/storage.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { AuthzModule } from '../authz/authz.module';
       { name: Clinic.name, schema: ClinicSchema },
     ]),
     AuthzModule,
+    StorageModule,
   ],
   controllers: [FaceController],
   providers: [FaceService, FaceClient],

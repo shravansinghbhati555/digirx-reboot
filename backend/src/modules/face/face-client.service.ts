@@ -44,16 +44,36 @@ export class FaceClient {
       throw new InternalServerErrorException('Face service unavailable');
     }
 
+    // Helper to extract a human-readable `detail` from face-svc's
+    // FastAPI error body so the FE can show the actual reason instead
+    // of a generic message. Falls back to plain text / status code.
+    const readDetail = async (): Promise<string> => {
+      try {
+        const ct = res.headers.get('content-type') ?? '';
+        if (ct.includes('application/json')) {
+          const body = (await res.json()) as { detail?: unknown };
+          if (typeof body.detail === 'string') return body.detail;
+        }
+        const text = await res.text();
+        return text || `HTTP ${res.status}`;
+      } catch {
+        return `HTTP ${res.status}`;
+      }
+    };
+
     if (res.status === 422) {
-      // face-svc's "no face detected" path. Propagate as 400 so the FE
-      // can show "couldn't see a face, try again" without leaking
-      // implementation details.
-      throw new BadRequestException('No face detected in the image');
+      // face-svc's "no face detected" / spoof-detected path. Propagate
+      // the actual detail so the operator sees what happened rather
+      // than a fixed string.
+      const detail = await readDetail();
+      throw new BadRequestException(detail || 'No face detected in the image');
     }
     if (!res.ok) {
-      const text = await res.text().catch(() => '');
-      this.logger.error(`face-svc /embed ${res.status}: ${text}`);
-      throw new InternalServerErrorException('Face embedding failed');
+      const detail = await readDetail();
+      this.logger.error(`face-svc /embed ${res.status}: ${detail}`);
+      throw new InternalServerErrorException(
+        `Face embedding failed (${res.status}): ${detail}`,
+      );
     }
 
     const body = (await res.json()) as {

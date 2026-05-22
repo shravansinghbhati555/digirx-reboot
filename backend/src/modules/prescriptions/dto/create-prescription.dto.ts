@@ -5,6 +5,7 @@ import {
   IsMongoId,
   IsOptional,
   IsString,
+  Matches,
   Max,
   MaxLength,
   Min,
@@ -20,6 +21,10 @@ export class CreatePrescriptionItemDto {
   @IsOptional()
   @IsString()
   @MaxLength(200)
+  @Matches(/^[a-zA-Z0-9\s\-.]*$/, {
+    message:
+      'Medicine name must not contain special characters except spaces, hyphens, and dots.',
+  })
   customName?: string;
 
   @IsOptional()

@@ -1,6 +1,5 @@
 import {
   BadRequestException,
-  ConflictException,
   Injectable,
   Logger,
   NotFoundException,
@@ -132,11 +131,11 @@ export class EncountersService implements OnModuleInit {
 
   async update(clinicId: Types.ObjectId, id: string, dto: UpdateEncounterDto) {
     const enc = await this.getById(clinicId, id);
-    if (enc.status === EncounterStatus.Signed) {
-      // 409: the resource is in a state that doesn't permit this mutation.
-      // 400 was misleading — the payload may have been perfectly valid.
-      throw new ConflictException('Encounter is signed and cannot be edited');
-    }
+    // Signed encounters used to 409 here, but the product needs doctors
+    // to be able to amend a prescription after signing (e.g. swap a
+    // stocked-out medicine for an alternative). We now allow the
+    // mutation; the original `signedAt` / `signedByUserId` stays put
+    // and the doctor can re-print / re-share the updated slip.
 
     if (dto.chiefComplaint !== undefined)
       enc.chiefComplaint = dto.chiefComplaint;

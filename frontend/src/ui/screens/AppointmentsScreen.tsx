@@ -1325,6 +1325,14 @@ function formatDrName(name: string | undefined): string {
         setError('Pick a visit type so a bill can be issued.');
         return;
       }
+      // Auto-fill the payment amount with the visit type's catalog
+      // price so the operator's default action collects the full fee.
+      // Without this, the amount field starts empty and an operator can
+      // forget to type — the appointment gets booked but the bill stays
+      // unpaid, blocking check-in later. The operator can still adjust
+      // the value before clicking through to step 4 (over-pay / etc).
+      const vt = visitTypes.find((v) => v._id === visitTypeId);
+      if (vt) setPayAmount(String(vt.price));
       setError(null);
       setStep(3);
     }
@@ -1436,8 +1444,11 @@ function formatDrName(name: string | undefined): string {
     const stepLabel = step === 1 ? 'Patient' : step === 2 ? 'Details' : step === 3 ? 'Payment' : 'Confirm';
 
     return (
-      <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
-        <div style={{ background: 'var(--surface)', borderRadius: 18, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 540, animation: 'slideUp 200ms ease-out', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)' }}>
+        {/* Backdrop has no onClick — booking is a multi-step wizard
+            with patient + payment data the operator can easily lose to
+            a stray click. Closing requires the explicit X button. */}
+        <div style={{ background: 'var(--surface)', borderRadius: 18, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 540, animation: 'slideUp 200ms ease-out', maxHeight: '92vh', display: 'flex', flexDirection: 'column' }}>
           {/* Header */}
           <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
             <div>
@@ -2209,8 +2220,13 @@ function formatDrName(name: string | undefined): string {
   }) {
     const due = visitType?.price ?? 0;
     const label = visitType?.name ?? fallbackLabel;
+    // Partial / half-payment chips are disabled for now — clinic
+    // policy is "full payment at booking" only. The check-in flow
+    // rejects unpaid bills, so under-paying just creates work later.
+    // Walk-ins (no visit type) still get quick-amount suggestions
+    // because there's no catalog price to anchor against.
     const suggestions = visitType
-      ? Array.from(new Set([due, Math.round(due / 2), 500, 1000].filter((v) => v > 0))).slice(0, 4)
+      ? [] // was: [due, Math.round(due / 2), 500, 1000]
       : [300, 500, 1000, 1500];
     return (
       <>
@@ -2253,6 +2269,11 @@ function formatDrName(name: string | undefined): string {
         <div>
           <label style={labelStyle}>
             Amount <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>({currency})</span>
+            {visitType && (
+              <span style={{ color: 'var(--brand-600)', fontWeight: 600, marginLeft: 6 }}>
+                · Full fee (no partial payment)
+              </span>
+            )}
           </label>
           <div style={{ position: 'relative' }}>
             <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 14, color: 'var(--text-muted)', fontFamily: "'Manrope',sans-serif", fontWeight: 700 }}>
@@ -2263,12 +2284,19 @@ function formatDrName(name: string | undefined): string {
               value={payAmount}
               onChange={(e) => setPayAmount(e.target.value)}
               placeholder={visitType ? undefined : 'Enter amount'}
+              // When a visit type is picked, the amount is locked to its
+              // catalog price (auto-filled in continueFromStep2). Partial
+              // payments are disabled for now per clinic policy.
+              readOnly={!!visitType}
               style={{
                 width: '100%', height: 52, padding: '0 14px 0 44px',
-                background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 12,
+                background: visitType ? 'var(--brand-50)' : 'var(--surface-muted)',
+                border: `1.5px solid ${visitType ? 'var(--brand-100)' : 'var(--border)'}`,
+                borderRadius: 12,
                 fontSize: 22, fontWeight: 700, color: 'var(--text)',
                 fontFamily: "'Manrope',sans-serif", outline: 'none', boxSizing: 'border-box',
                 fontVariantNumeric: 'tabular-nums',
+                cursor: visitType ? 'not-allowed' : 'text',
               }}
             />
           </div>

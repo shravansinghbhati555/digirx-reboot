@@ -8,13 +8,11 @@ export class CreatePatientDto {
   @MaxLength(200)
   fullName!: string;
 
-  @IsOptional()
   @IsEnum(PatientGender)
-  gender?: PatientGender;
+  gender!: PatientGender;
 
-  @IsOptional()
   @IsISO8601()
-  dob?: string;
+  dob!: string;
 
   // Phone is required for new patients — it's the primary lookup key for
   // duplicate detection, SMS reminders, and OTP-based flows. Edits (PATCH)

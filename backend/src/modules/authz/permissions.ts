@@ -34,6 +34,21 @@ export enum Permission {
   InventoryRead = 'inventory:read',
   InventoryWrite = 'inventory:write',
 
+  // Pharmacy tab — its own permission pair so the Roles & Permissions
+  // matrix can toggle the Pharmacy screen independently of BillingRead
+  // (which previously double-gated it). FE-only tab gate today; backend
+  // pharmacy endpoints are reused billing/inventory routes that keep
+  // their own existing perm gates.
+  PharmacyRead = 'pharmacy:read',
+  PharmacyWrite = 'pharmacy:write',
+
+  // Consultations (a.k.a. Encounters) tab — own permission pair so the
+  // Roles matrix toggles the tab independently of PatientRead. FE-only
+  // tab gate today; existing encounter endpoints on the backend still
+  // use PatientRead/PatientWrite as before.
+  EncounterRead = 'encounter:read',
+  EncounterWrite = 'encounter:write',
+
   // Reports — added so a Super Admin can grant the Reports tab as its
   // own toggle in the Roles matrix. The existing /reports/* API routes
   // are still gated to BillingRead / AppointmentRead (unchanged), and

@@ -27,4 +27,17 @@ describe('CreatePrescriptionDto', () => {
       'medicineCatalogItemId',
     );
   });
+
+  it('rejects special characters in customName in item', async () => {
+    await expectInvalid(
+      CreatePrescriptionDto,
+      { items: [{ customName: 'Amox@cillin!' }] },
+      'customName',
+    );
+    await expectInvalid(
+      CreatePrescriptionDto,
+      { items: [{ customName: 'Crocin %' }] },
+      'customName',
+    );
+  });
 });

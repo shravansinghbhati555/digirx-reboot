@@ -70,6 +70,13 @@ export class Patient {
   // by the FE to show "enrolled" badge without a second round-trip.
   @Prop()
   faceEnrolledAt?: Date;
+
+  // S3 key of the patient's profile image. Populated on face enrollment
+  // (the captured face frame doubles as a profile picture) and removed
+  // on unenroll. Always nested under `clinic/{clinicId}/patient/{id}/`
+  // so deleting a patient's storage tree cleans this up too.
+  @Prop()
+  profileImageKey?: string;
 }
 
 export const PatientSchema = SchemaFactory.createForClass(Patient);

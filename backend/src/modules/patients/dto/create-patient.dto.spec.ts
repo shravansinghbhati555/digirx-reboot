@@ -7,6 +7,8 @@ describe('CreatePatientDto', () => {
   it('accepts a minimal valid patient', async () => {
     await expectValid(CreatePatientDto, {
       fullName: 'Ada Lovelace',
+      gender: 'FEMALE',
+      dob: '1815-12-10',
       phones: ['+911234567890'],
     });
   });
@@ -24,22 +26,42 @@ describe('CreatePatientDto', () => {
     });
   });
 
+  it('rejects missing gender', async () => {
+    await expectInvalid(
+      CreatePatientDto,
+      { fullName: 'Ada', dob: '1815-12-10', phones: ['+911234567890'] },
+      'gender',
+    );
+  });
+
+  it('rejects missing dob', async () => {
+    await expectInvalid(
+      CreatePatientDto,
+      { fullName: 'Ada', gender: 'FEMALE', phones: ['+911234567890'] },
+      'dob',
+    );
+  });
+
   it('rejects empty fullName', async () => {
     await expectInvalid(
       CreatePatientDto,
-      { fullName: '', phones: ['+911234567890'] },
+      { fullName: '', gender: 'FEMALE', dob: '1815-12-10', phones: ['+911234567890'] },
       'fullName',
     );
   });
 
   it('rejects missing phones', async () => {
-    await expectInvalid(CreatePatientDto, { fullName: 'Ada' }, 'phones');
+    await expectInvalid(
+      CreatePatientDto,
+      { fullName: 'Ada', gender: 'FEMALE', dob: '1815-12-10' },
+      'phones',
+    );
   });
 
   it('rejects empty phones array', async () => {
     await expectInvalid(
       CreatePatientDto,
-      { fullName: 'Ada', phones: [] },
+      { fullName: 'Ada', gender: 'FEMALE', dob: '1815-12-10', phones: [] },
       'phones',
     );
   });
@@ -47,7 +69,7 @@ describe('CreatePatientDto', () => {
   it('rejects unknown gender', async () => {
     await expectInvalid(
       CreatePatientDto,
-      { fullName: 'Ada', phones: ['+911234567890'], gender: 'DRAGON' },
+      { fullName: 'Ada', gender: 'DRAGON' as any, dob: '1815-12-10', phones: ['+911234567890'] },
       'gender',
     );
   });
@@ -55,7 +77,7 @@ describe('CreatePatientDto', () => {
   it('rejects malformed email in emails[]', async () => {
     await expectInvalid(
       CreatePatientDto,
-      { fullName: 'Ada', phones: ['+911234567890'], emails: ['not-an-email'] },
+      { fullName: 'Ada', gender: 'FEMALE', dob: '1815-12-10', phones: ['+911234567890'], emails: ['not-an-email'] },
       'emails',
     );
   });
@@ -63,7 +85,7 @@ describe('CreatePatientDto', () => {
   it('rejects non-mongo primaryBranchId', async () => {
     await expectInvalid(
       CreatePatientDto,
-      { fullName: 'Ada', phones: ['+911234567890'], primaryBranchId: 'x' },
+      { fullName: 'Ada', gender: 'FEMALE', dob: '1815-12-10', phones: ['+911234567890'], primaryBranchId: 'x' },
       'primaryBranchId',
     );
   });
