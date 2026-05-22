@@ -16,6 +16,7 @@ import { AuthService } from './auth.service';
 import { ConfirmResetPasswordDto } from './dto/confirm-reset-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
+import { LoginByEmailDto } from './dto/login-by-email.dto';
 import { SignupDto } from './dto/signup.dto';
 
 const REFRESH_COOKIE = 'digirx_refresh';
@@ -42,6 +43,31 @@ export class AuthController {
       userId: out.userId,
       clinicId: out.clinicId,
       branchId: out.branchId,
+      roles: out.roles,
+    };
+  }
+
+  // Single-step login. The BE resolves clinic + branch from the
+  // user's record. Same throttle as the legacy /auth/login.
+  @Post('login-by-email')
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  async loginByEmail(
+    @Body() body: LoginByEmailDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const out = await this.auth.loginByEmail(body);
+    res.cookie(
+      REFRESH_COOKIE,
+      `${out.refresh.sessionId}.${out.refresh.refreshToken}`,
+      refreshCookieOptions(out.refresh.expiresAt),
+    );
+    return {
+      accessToken: out.accessToken,
+      userId: out.userId,
+      clinicId: out.clinicId,
+      branchId: out.branchId,
+      roles: out.roles,
     };
   }
 

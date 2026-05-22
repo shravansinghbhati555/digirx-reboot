@@ -339,6 +339,135 @@ export class AuthService {
     };
   }
 
+  /**
+   * Single-step login by email + password.
+   *
+   * Resolution rules:
+   *   - email is unique per clinic (sparse index), NOT globally — the
+   *     same admin@example.com could live in two clinics.
+   *   - if exactly one active match: log in directly, using
+   *     user.clinicId + user.defaultBranchId.
+   *   - if multiple matches: throw a 409 with the candidate clinics
+   *     so the FE can show a clinic picker (rare but possible).
+   *   - if user has no defaultBranchId AND isn't a cross-branch role
+   *     (Super Admin / Manager): refuse — admin needs to assign a
+   *     branch from Users → Edit before this account can log in.
+   */
+  async loginByEmail(input: { email: string; password: string }) {
+    const email = input.email.trim().toLowerCase();
+    const invalid = new UnauthorizedException('Invalid credentials');
+
+    // findOne candidates across all clinics. We don't filter by
+    // status yet — that check is uniform-error below so attackers
+    // can't tell "wrong password" from "account disabled".
+    const candidates = await this.userModel
+      .find({ email })
+      .select('+passwordHash');
+
+    if (candidates.length === 0) throw invalid;
+
+    // If multiple users share the email across clinics, prompt the
+    // FE to disambiguate. Returning the clinic list isn't sensitive
+    // — clinics are listed on /clinics/search already.
+    if (candidates.length > 1) {
+      // Pick the subset where the password actually matches so we
+      // don't return clinics the caller can't unlock.
+      const verified: typeof candidates = [];
+      for (const u of candidates) {
+        if (!u.passwordHash) continue;
+        if (u.status !== UserStatus.Active) continue;
+        if (await bcrypt.compare(input.password, u.passwordHash)) {
+          verified.push(u);
+        }
+      }
+      if (verified.length === 0) throw invalid;
+      if (verified.length === 1) {
+        return this.completeLoginForUser(verified[0]);
+      }
+      // Still ambiguous — return picker payload.
+      const clinics = await this.clinicModel
+        .find({ _id: { $in: verified.map((u) => u.clinicId) } })
+        .select({ _id: 1, name: 1 })
+        .lean();
+      throw new ConflictException({
+        code: 'MULTIPLE_CLINICS',
+        message: 'This email is registered with multiple clinics. Pick one to continue.',
+        clinics: clinics.map((c) => ({ id: c._id.toHexString(), name: c.name })),
+      });
+    }
+
+    const user = candidates[0];
+    if (user.status !== UserStatus.Active) throw invalid;
+    if (!user.passwordHash) throw invalid;
+    const ok = await bcrypt.compare(input.password, user.passwordHash);
+    if (!ok) throw invalid;
+
+    return this.completeLoginForUser(user);
+  }
+
+  /**
+   * Shared completion path for loginByEmail. Verifies the branch rule
+   * (clinicians must have at least one branch; admins don't), mints
+   * the access token, issues the refresh session, and returns the
+   * same shape as `login`.
+   */
+  private async completeLoginForUser(user: any) {
+    // Look up roles before issuing the token so we can apply the
+    // branch-required rule role-by-role.
+    const roleDocs = user.roleIds?.length
+      ? await this.roleModel
+          .find({ _id: { $in: user.roleIds }, clinicId: user.clinicId })
+          .select({ name: 1 })
+          .lean()
+      : [];
+    const roles = roleDocs.map((r) => r.name).filter(Boolean) as string[];
+    const lowerRoles = roles.map((r) => r.toLowerCase());
+    const isCrossBranch = lowerRoles.includes('super admin') || lowerRoles.includes('manager');
+
+    // Prefer the explicit defaultBranchId, but fall back to the first
+    // entry of branchIds when it's empty. That gracefully covers users
+    // who were assigned a branch in the access-list (branchIds) without
+    // having defaultBranchId stamped — common for accounts created or
+    // edited before the Add User form started setting it automatically.
+    let effectiveBranchId: string | undefined = user.defaultBranchId?.toHexString();
+    if (!effectiveBranchId && Array.isArray(user.branchIds) && user.branchIds.length > 0) {
+      effectiveBranchId = user.branchIds[0].toHexString();
+    }
+    if (!effectiveBranchId && !isCrossBranch) {
+      // Closed loop: the Add User form should require a branch for
+      // clinician roles. If we still hit this, the user has neither
+      // a defaultBranchId nor any branchIds — admin needs to fix it.
+      throw new BadRequestException(
+        "Your account isn't fully set up. Ask the clinic admin to assign you a branch.",
+      );
+    }
+
+    const claims: JwtClaims = {
+      sub: user._id.toHexString(),
+      clinicId: user.clinicId.toHexString(),
+      branchId: effectiveBranchId,
+    };
+    const accessToken = await this.accessToken(claims);
+    const refresh = await this.issueRefreshSession({
+      clinicId: user.clinicId,
+      userId: user._id,
+      branchId: effectiveBranchId ? new Types.ObjectId(effectiveBranchId) : undefined,
+    });
+
+    return {
+      accessToken,
+      refresh: {
+        sessionId: refresh.sessionId,
+        refreshToken: refresh.refreshToken,
+        expiresAt: refresh.expiresAt,
+      },
+      userId: claims.sub,
+      clinicId: claims.clinicId,
+      branchId: claims.branchId ?? null,
+      roles,
+    };
+  }
+
   async refresh(input: { sessionId: string; refreshToken: string }) {
     if (!Types.ObjectId.isValid(input.sessionId)) {
       throw new UnauthorizedException('Invalid session');
