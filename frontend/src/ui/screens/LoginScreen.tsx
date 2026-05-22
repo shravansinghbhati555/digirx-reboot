@@ -17,16 +17,6 @@ function formatAddress(addr: BranchResult['address']): string {
   return parts.join(', ');
 }
 
-type LoginResponse = {
-  accessToken: string;
-  userId: string;
-  clinicId: string;
-  branchId: string | null;
-  // Role names assigned to the user, lowercased on the BE side already
-  // would be ideal but we lowercase here too for safety. Used by the
-  // FE to short-circuit branch selection for super admins.
-  roles?: string[];
-};
 
 type SignupResponse = {
   accessToken: string;
@@ -71,23 +61,9 @@ export function LoginScreen() {
   const [pendingAuth, setPendingAuth] = useState<PendingAuth | null>(null);
   const [pendingBranch, setPendingBranch] = useState<BranchResult | null>(null);
 
-  const goNext = (auth: PendingAuth) => {
-    setPendingAuth(auth);
-    // Admins (any role named "Super Admin" or "Admin", case-insensitive)
-    // have cross-branch access — skip the branch picker entirely and
-    // land on the welcome step. Matches the BE's existing admin
-    // detection in auth.service.ts (~line 415).
-    const isAdminLike = (auth.roles ?? []).some((r) => {
-      const n = r.toLowerCase();
-      return n === 'super admin' || n === 'admin';
-    });
-    if (isAdminLike) {
-      setPendingBranch(null);
-      setStep(2);
-    } else {
-      setStep(1);
-    }
-  };
+  // Sign-in is now single-step (SignInStep handles login + setCtx
+  // directly via /auth/login-by-email). The signup flow still uses
+  // the 3-step wizard so finishSignup / branch picker stay below.
   const finishBranch = (branch: BranchResult | null) => { setPendingBranch(branch); setStep(2); };
 
   // Signup short-circuits the branch picker — the freshly created clinic
@@ -124,7 +100,9 @@ export function LoginScreen() {
 
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, overflowY: 'auto', position: 'relative' }}>
         <div style={{ width: '100%', maxWidth: 420, animation: 'slideUp 320ms var(--ease-out)' }}>
-          <StepDots current={step} total={3} />
+          {/* Signin is single-step now — only show the step dots for
+              the signup wizard (which still has Create / Welcome). */}
+          {mode === 'signup' && <StepDots current={step} total={3} />}
 
           {expiredReason && step === 0 && (
             <div
@@ -151,7 +129,6 @@ export function LoginScreen() {
           {step === 0 && mode === 'signin' && (
             <SignInStep
               apiBaseUrl={apiBaseUrl}
-              onSuccess={goNext}
               onSwitchToSignup={() => setMode('signup')}
             />
           )}
@@ -246,29 +223,34 @@ function StepDots({ current, total }: { current: number; total: number }) {
   );
 }
 
-/* ── Step 0: Sign In ──────────────────────────────────────── */
+/* ── Step 0: Sign In (single-step, email + password) ───────── */
+
+type LoginByEmailResponse = {
+  accessToken: string;
+  userId: string;
+  clinicId: string;
+  branchId: string | null;
+  roles?: string[];
+};
 
 function SignInStep({
-  apiBaseUrl, onSuccess, onSwitchToSignup,
+  apiBaseUrl, onSwitchToSignup,
 }: {
   apiBaseUrl: string;
-  onSuccess: (auth: PendingAuth) => void;
   onSwitchToSignup: () => void;
 }) {
-  const { ctx } = useApp();
+  const { ctx, setCtx } = useApp();
   const toast = useToast();
-  const [clinic, setClinic] = useState<ClinicResult | null>(null);
   const [email, setEmail] = useState('admin@digirx.local');
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
-  const [errors, setErrors] = useState<{ clinic?: string; email?: string; password?: string; general?: string }>({});
+  const [errors, setErrors] = useState<{ email?: string; password?: string; general?: string }>({});
   const [btnState, setBtnState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [forgotOpen, setForgotOpen] = useState(false);
   const [shakeKey, setShakeKey] = useState(0);
 
   function validate() {
     const e: typeof errors = {};
-    if (!clinic) e.clinic = 'Please select a clinic.';
     if (!email || !/\S+@\S+\.\S+/.test(email)) e.email = 'Enter a valid email address.';
     if (!password || password.length < 6) e.password = 'Password must be at least 6 characters.';
     return e;
@@ -281,13 +263,31 @@ function SignInStep({
     setErrors({});
     setBtnState('loading');
     try {
-      const res = await apiPost<LoginResponse>({ ...ctx, apiBaseUrl } as DevContext, '/auth/login', {
-        clinicId: clinic!.id,
-        email,
-        password,
-      });
+      // Single-step login. The BE resolves clinic + branch from the
+      // user's record (clinicId is required; defaultBranchId is set
+      // by the Add User form for non-admin roles). The Users-screen
+      // form enforces that branch is set so this rarely errors with
+      // the "not fully set up" message.
+      const res = await apiPost<LoginByEmailResponse>(
+        { ...ctx, apiBaseUrl } as DevContext,
+        '/auth/login-by-email',
+        { email, password },
+      );
       setBtnState('success');
-      setTimeout(() => onSuccess({ clinic: clinic!, accessToken: res.accessToken, userId: res.userId, email, roles: res.roles }), 600);
+      // Set context directly — clinicName, branchName, timezone, etc.
+      // get filled in shortly after via refreshMe() in AppContext.
+      setTimeout(() => {
+        setCtx({
+          ...ctx,
+          apiBaseUrl,
+          userId: res.userId,
+          clinicId: res.clinicId,
+          branchId: res.branchId ?? undefined,
+          accessToken: res.accessToken,
+          email,
+        });
+        toast('Signed in', 'success');
+      }, 400);
     } catch (err) {
       setBtnState('error');
       setShakeKey((k) => k + 1);
@@ -315,11 +315,6 @@ function SignInStep({
 
       <form key={shakeKey} onSubmit={handleSubmit} noValidate
         style={shakeKey ? { animation: 'shakeX 240ms var(--ease-out)' } : undefined}>
-        <FormGroup label="Clinic">
-          <ClinicCombobox apiBaseUrl={apiBaseUrl} value={clinic} onChange={(c) => { setClinic(c); setErrors((prev) => ({ ...prev, clinic: undefined })); }} error={!!errors.clinic} />
-          {errors.clinic && <FieldError>{errors.clinic}</FieldError>}
-        </FormGroup>
-
         <FormGroup label="Email address">
           <InputWrap icon="mail">
             <input type="email" placeholder="you@clinic.in" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email"
@@ -343,7 +338,10 @@ function SignInStep({
 
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: -10, marginBottom: 20 }}>
           <button type="button" onClick={() => {
-            if (!clinic) { toast('Pick your clinic first', 'info'); return; }
+            if (!email || !/\S+@\S+\.\S+/.test(email)) {
+              toast('Enter your email first', 'info');
+              return;
+            }
             setForgotOpen(true);
           }}
             style={{ background: 'none', border: 'none', cursor: 'pointer', fontSize: 13, fontWeight: 500, color: 'var(--brand-500)', padding: 0 }}>
@@ -381,10 +379,9 @@ function SignInStep({
         </button>
       </div>
 
-      {forgotOpen && clinic && (
+      {forgotOpen && (
         <ForgotPasswordModal
           apiBaseUrl={apiBaseUrl}
-          clinic={clinic}
           initialEmail={email}
           onClose={() => setForgotOpen(false)}
         />
@@ -399,7 +396,7 @@ function ForgotPasswordModal({
   apiBaseUrl, clinic, initialEmail, onClose,
 }: {
   apiBaseUrl: string;
-  clinic: ClinicResult;
+  clinic?: ClinicResult; // optional after single-step signin landed
   initialEmail: string;
   onClose: () => void;
 }) {
@@ -421,6 +418,10 @@ function ForgotPasswordModal({
     ev.preventDefault();
     setErr(null);
     if (!/\S+@\S+\.\S+/.test(email)) { setErr('Enter a valid email address.'); return; }
+    if (!clinic) {
+      setErr('Password reset from the login screen needs a clinic context. Ask your clinic admin to reset it for you, or sign in via the signup-flow path that picks the clinic first.');
+      return;
+    }
     setSubmitting(true);
     try {
       await apiPost<{ ok: boolean }>({ ...ctx, apiBaseUrl } as DevContext, '/auth/forgot-password', {
@@ -442,6 +443,11 @@ function ForgotPasswordModal({
     if (newPassword.length < 8) { setErr('Password must be at least 8 characters.'); return; }
     setSubmitting(true);
     try {
+      if (!clinic) {
+        setErr('Reset requires a clinic — ask your admin instead.');
+        setSubmitting(false);
+        return;
+      }
       await apiPost<{ ok: boolean }>({ ...ctx, apiBaseUrl } as DevContext, '/auth/reset-password', {
         clinicId: clinic.id,
         email,
@@ -484,7 +490,7 @@ function ForgotPasswordModal({
           {stage === 'request' && (
             <form onSubmit={handleRequest}>
               <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 16 }}>
-                Only admin accounts can reset their password this way. We'll generate a one-time reset token for <b>{clinic.name}</b>.
+                Only admin accounts can reset their password this way.{clinic ? <> We'll generate a one-time reset token for <b>{clinic.name}</b>.</> : ' For non-admin users, ask your clinic admin to issue a reset on your behalf.'}
               </p>
               <FormGroup label="Admin email">
                 <InputWrap icon="mail">
@@ -878,6 +884,19 @@ function WelcomeStep({ auth, branch, onFinish }: { auth: PendingAuth; branch: Br
 }
 
 /* ── Clinic Combobox ──────────────────────────────────────── */
+// Kept around for potential future MULTIPLE_CLINICS fallback (when
+// the same email is registered with more than one clinic) — the
+// /auth/login-by-email 409 response shape includes a candidate
+// clinic list and we'd reuse this widget to disambiguate. Currently
+// no callsite, so we re-export it under an unused-friendly name to
+// keep the function in the bundle without tripping noUnusedLocals.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+export function _UnusedClinicCombobox(props: {
+  apiBaseUrl: string;
+  value: ClinicResult | null;
+  onChange: (c: ClinicResult | null) => void;
+  error: boolean;
+}) { return ClinicCombobox(props); }
 
 function ClinicCombobox({
   apiBaseUrl, value, onChange, error,

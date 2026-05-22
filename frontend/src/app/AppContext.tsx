@@ -98,6 +98,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     features?: Partial<Features>;
     user?: { name?: string; fullName?: string; email?: string };
     roles?: Array<{ name?: string }>;
+    branch?: { _id?: string; name?: string } | null;
   } | null>(null);
   const [loadingMe, setLoadingMe] = useState(false);
   const [meError, setMeError] = useState<string | null>(null);
@@ -154,6 +155,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         features?: Partial<Features>;
         user?: { name?: string; fullName?: string; email?: string };
         roles?: Array<{ name?: string }>;
+        branch?: { _id?: string; name?: string } | null;
         clinic?: {
           name?: string;
           currency?: string;
@@ -173,6 +175,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         fullName: data.user?.fullName ?? data.user?.name,
         permissions: data.permissions,
         clinicName: data.clinic?.name ?? ctx.clinicName,
+        // The single-step login only ships branchId — branchName falls
+        // out of /me so the sidebar / header chip shows the readable
+        // name instead of an id-tail fallback.
+        branchName: data.branch?.name ?? ctx.branchName,
         currency: data.clinic?.currency ?? ctx.currency,
         branding: data.clinic?.branding
           ? {

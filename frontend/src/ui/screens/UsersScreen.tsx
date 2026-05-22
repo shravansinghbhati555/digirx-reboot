@@ -420,12 +420,27 @@ function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Cross-branch roles don't need a default branch — Super Admin and
+  // Manager work across all branches. Everyone else (Doctor, Front
+  // Desk, Pharmacist, custom roles) MUST have at least one branch
+  // assigned, otherwise /auth/login-by-email refuses to issue a token.
+  const ADMIN_ROLE_NAMES = new Set(['super admin', 'manager']);
+  const isAdminLike = data.roleIds.some((id) => {
+    const role = roles.find((r) => r._id === id);
+    return role ? ADMIN_ROLE_NAMES.has(role.name.toLowerCase()) : false;
+  });
+  const branchRequired = !isAdminLike;
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     if (!data.name.trim()) { setError('Full name is required.'); return; }
     if (!data.password || data.password.length < 8) { setError('Password must be at least 8 characters.'); return; }
     if (data.email.trim() && !isValidEmail(data.email)) { setError('Enter a valid email address.'); return; }
+    if (branchRequired && data.branchIds.length === 0) {
+      setError('Pick at least one branch for this user — without it they can\'t log in.');
+      return;
+    }
     let phoneNormalized: string | undefined;
     if (data.phone.trim()) {
       if (!isValidIndianMobile(data.phone)) { setError('Enter a valid 10-digit Indian mobile number.'); return; }
@@ -439,6 +454,11 @@ function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[
         // detection on (clinicId, phone) sees the same shape regardless
         // of how the operator typed it.
         phone: phoneNormalized ?? data.phone.trim() ?? '',
+        // Default branch = first picked branch (operator can edit later
+        // via Edit User). The single-step login needs this for non-admin
+        // roles, so we stamp it eagerly here instead of letting the user
+        // discover the requirement at login time.
+        defaultBranchId: data.branchIds[0],
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -513,7 +533,14 @@ function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[
               </div>
 
               <div>
-                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 10 }}>Select Branches</label>
+                <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 10 }}>
+                  Select Branches{branchRequired && <span style={{ color: 'var(--danger-500)', marginLeft: 6 }}>*</span>}
+                  {branchRequired && (
+                    <span style={{ marginLeft: 8, fontSize: 11, color: 'var(--text-subtle)', fontWeight: 500 }}>
+                      required for this role (first selection becomes the default branch)
+                    </span>
+                  )}
+                </label>
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                   {branches.map(b => (
                     <button type="button" key={b._id} onClick={() => toggleBranch(b._id)} style={{
