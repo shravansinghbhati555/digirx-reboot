@@ -10,6 +10,7 @@ import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 import { MeController } from './me.controller';
 import { RolesController } from './roles.controller';
 import { UsersController } from './users.controller';
+import { UserFaceModule } from '../user-face/user-face.module';
 
 @Module({
   imports: [
@@ -23,6 +24,8 @@ import { UsersController } from './users.controller';
       // bootstrap formatting without an extra request.
       { name: Clinic.name, schema: ClinicSchema },
     ]),
+    // UsersController enrolls / removes staff face templates.
+    UserFaceModule,
   ],
   providers: [AuthzService, RolesService, UsersService],
   controllers: [MeController, RolesController, UsersController],

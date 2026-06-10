@@ -10,6 +10,7 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtContextGuard } from './jwt.guard';
 import { Session, SessionSchema } from './schemas/session.schema';
+import { UserFaceModule } from '../user-face/user-face.module';
 
 @Module({
   imports: [
@@ -21,6 +22,7 @@ import { Session, SessionSchema } from './schemas/session.schema';
       { name: Session.name, schema: SessionSchema },
     ]),
     JwtModule.register({}),
+    UserFaceModule,
   ],
   controllers: [AuthController],
   providers: [

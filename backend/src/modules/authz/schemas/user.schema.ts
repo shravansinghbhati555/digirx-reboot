@@ -53,6 +53,12 @@ export class User {
 
   @Prop({ trim: true })
   qualifications?: string;
+
+  // Set when a face template lands in the UserFaceEmbedding collection.
+  // Lets the FE show a "face login enabled" badge and gate the
+  // re-enroll / remove actions without a second round-trip.
+  @Prop()
+  faceEnrolledAt?: Date;
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

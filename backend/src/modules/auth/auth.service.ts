@@ -122,6 +122,10 @@ export class AuthService {
           Permission.ClinicRead,
           Permission.BranchRead,
           Permission.UserRead,
+          // Managers create staff accounts and enroll/remove their face
+          // login, so they need user:write (the face endpoints are gated
+          // on it).
+          Permission.UserWrite,
           Permission.PatientRead,
           Permission.PatientWrite,
           Permission.AppointmentRead,
@@ -402,6 +406,21 @@ export class AuthService {
     const ok = await bcrypt.compare(input.password, user.passwordHash);
     if (!ok) throw invalid;
 
+    return this.completeLoginForUser(user);
+  }
+
+  /**
+   * Issue a session for an already-authenticated user id. Used by the
+   * face-login flow, where UserFaceService has already verified the
+   * person's identity from a face scan — no password to check. Applies
+   * the same branch rule + token issuance as email login.
+   */
+  async issueSessionForUser(userId: Types.ObjectId) {
+    const user = await this.userModel.findById(userId);
+    if (!user) throw new UnauthorizedException('Invalid credentials');
+    if (user.status !== UserStatus.Active) {
+      throw new UnauthorizedException('Invalid credentials');
+    }
     return this.completeLoginForUser(user);
   }
 

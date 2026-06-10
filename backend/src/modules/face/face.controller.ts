@@ -48,6 +48,7 @@ export class FaceController {
     @UploadedFile() file: Express.Multer.File,
     @Body('pre_detected') preDetected?: string,
   ) {
+    console.log(`\n>>> [FaceController] POST /patients/${id}/face called <<<\n`);
     assertImageUpload(file);
     return await this.faces.enroll({
       clinicId: req.context!.clinicId,
@@ -65,6 +66,7 @@ export class FaceController {
   @Delete('patients/:id/face')
   @RequirePermissions(Permission.FaceEnroll)
   async unenroll(@Req() req: AppRequest, @Param('id') id: string) {
+    console.log(`\n>>> [FaceController] DELETE /patients/${id}/face called <<<\n`);
     return await this.faces.unenroll(req.context!.clinicId, id);
   }
 
@@ -82,6 +84,7 @@ export class FaceController {
     @Body('topK') topK?: string,
     @Body('pre_detected') preDetected?: string,
   ) {
+    console.log(`\n>>> [FaceController] POST /face/recognize called <<<\n`);
     assertImageUpload(file);
     return await this.faces.recognize({
       clinicId: req.context!.clinicId,

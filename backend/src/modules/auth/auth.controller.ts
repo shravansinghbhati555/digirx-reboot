@@ -6,13 +6,17 @@ import {
   Req,
   Res,
   UnauthorizedException,
+  UploadedFile,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request, Response } from 'express';
 import { Throttle } from '@nestjs/throttler';
 import { Public } from '../../common/public.decorator';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { AuthService } from './auth.service';
+import { UserFaceService } from '../user-face/user-face.service';
 import { ConfirmResetPasswordDto } from './dto/confirm-reset-password.dto';
 import { ForgotPasswordDto } from './dto/forgot-password.dto';
 import { LoginDto } from './dto/login.dto';
@@ -20,10 +24,14 @@ import { LoginByEmailDto } from './dto/login-by-email.dto';
 import { SignupDto } from './dto/signup.dto';
 
 const REFRESH_COOKIE = 'digirx_refresh';
+const MAX_FACE_IMAGE_BYTES = 5 * 1024 * 1024;
 
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly auth: AuthService) {}
+  constructor(
+    private readonly auth: AuthService,
+    private readonly userFace: UserFaceService,
+  ) {}
 
   @Post('login')
   @Public()
@@ -57,6 +65,46 @@ export class AuthController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const out = await this.auth.loginByEmail(body);
+    res.cookie(
+      REFRESH_COOKIE,
+      `${out.refresh.sessionId}.${out.refresh.refreshToken}`,
+      refreshCookieOptions(out.refresh.expiresAt),
+    );
+    return {
+      accessToken: out.accessToken,
+      userId: out.userId,
+      clinicId: out.clinicId,
+      branchId: out.branchId,
+      roles: out.roles,
+    };
+  }
+
+  // Face login. The FE posts a webcam frame (multipart field `image`).
+  // UserFaceService identifies the staff member (cross-clinic scan,
+  // anti-spoof enforced in face-svc); on a confident match we issue the
+  // same session as email login. No password involved.
+  @Post('login-by-face')
+  @Public()
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @UseInterceptors(
+    FileInterceptor('image', { limits: { fileSize: MAX_FACE_IMAGE_BYTES } }),
+  )
+  async loginByFace(
+    @UploadedFile() file: Express.Multer.File,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    if (!file?.buffer?.length) {
+      throw new BadRequestException('image file is required (multipart field "image")');
+    }
+    const match = await this.userFace.identify({
+      buffer: file.buffer,
+      mimeType: file.mimetype,
+      filename: file.originalname || 'login.jpg',
+    });
+    if (!match) {
+      throw new UnauthorizedException('Face not recognized. Use email & password instead.');
+    }
+    const out = await this.auth.issueSessionForUser(match.userId);
     res.cookie(
       REFRESH_COOKIE,
       `${out.refresh.sessionId}.${out.refresh.refreshToken}`,

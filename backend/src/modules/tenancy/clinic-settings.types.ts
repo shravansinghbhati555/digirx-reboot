@@ -103,7 +103,9 @@ export const DEFAULT_CLINIC_SETTINGS: ClinicSettingsV1 = {
       whatsapp: { enabled: true },
       quietHours: { start: null, end: null },
     },
-    faceRecognition: { enabled: false },
+    // Face recognition is on by default — patient face scan + staff
+    // face login work out of the box without flipping a settings toggle.
+    faceRecognition: { enabled: true },
   },
   branding: { displayName: null, logoUrl: null, primaryColor: null },
 };

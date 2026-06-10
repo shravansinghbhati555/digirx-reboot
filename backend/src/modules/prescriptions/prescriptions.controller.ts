@@ -160,13 +160,21 @@ export class PrescriptionsController {
   @Public()
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async getSharedPdf(@Param('token') token: string, @Res() res: Response) {
-    const rx = await this.prescriptions.getByShareToken(token);
-    const docId = await this.prescriptions.ensurePdfGenerated(rx.clinicId, rx._id.toHexString());
-    const doc = await this.documents.getById(
-      rx.clinicId,
-      docId!.toHexString(),
-    );
-    const url = await this.storage.presignGet({ key: doc.storageKey });
-    return res.redirect(url);
+    // Validate the token first — throws 404 on invalid / expired /
+    // revoked so we don't spin up a browser for a bad link.
+    await this.prescriptions.getByShareToken(token);
+
+    // Render the PDF by screenshotting the SAME share page the patient
+    // sees (SharePrescriptionScreen), which mirrors the doctor's
+    // preview. This replaces the old pdf-lib layout that looked nothing
+    // like the preview. Rendered fresh on each request so post-sign
+    // edits to the prescription are always reflected (no stale cache).
+    const pdf = await this.screenshotService.capturePrescriptionAsPdf(token);
+    res.set({
+      'Content-Type': 'application/pdf',
+      'Content-Disposition': `inline; filename="prescription-${token.slice(0, 8)}.pdf"`,
+      'Cache-Control': 'no-store',
+    });
+    return res.send(pdf);
   }
 }

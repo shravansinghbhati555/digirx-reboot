@@ -30,6 +30,7 @@ export type UserListItem = {
   roles: { _id: string; name: string }[];
   registrationNumber?: string;
   qualifications?: string;
+  faceEnrolledAt?: string;
 };
 
 
@@ -318,6 +319,9 @@ export class UsersService {
         .filter((r: unknown): r is { _id: string; name: string } => !!r),
       registrationNumber: u.registrationNumber,
       qualifications: u.qualifications,
+      faceEnrolledAt: u.faceEnrolledAt
+        ? new Date(u.faceEnrolledAt).toISOString()
+        : undefined,
     };
   }
 }

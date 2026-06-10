@@ -8,7 +8,7 @@ import helmet from 'helmet';
 import { validateEnv } from './common/config';
 
 async function bootstrap() {
-  dotenv.config();
+  dotenv.config({ override: true });
   validateEnv();
 
   // bufferLogs so pino can drain queued startup messages once it's wired.

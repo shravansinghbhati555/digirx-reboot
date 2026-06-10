@@ -3,6 +3,8 @@ import { MongooseModule } from '@nestjs/mongoose';
 import { FaceController } from './face.controller';
 import { FaceService } from './face.service';
 import { FaceClient } from './face-client.service';
+import { LocalFaceProvider } from './providers/local-face.provider';
+import { AzureFaceProvider } from './providers/azure-face.provider';
 import {
   FaceEmbedding,
   FaceEmbeddingSchema,
@@ -23,7 +25,9 @@ import { StorageModule } from '../storage/storage.module';
     StorageModule,
   ],
   controllers: [FaceController],
-  providers: [FaceService, FaceClient],
+  // Both providers are always constructed; FaceService picks the
+  // active one per request via the FACE_PROVIDER env var.
+  providers: [FaceService, FaceClient, LocalFaceProvider, AzureFaceProvider],
   exports: [FaceService],
 })
 export class FaceModule {}

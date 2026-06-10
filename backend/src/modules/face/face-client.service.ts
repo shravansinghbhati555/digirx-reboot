@@ -36,11 +36,12 @@ export class FaceClient {
 
     let res: Response;
     try {
+      this.logger.log(`Connecting to local face-svc at: ${this.baseUrl}/embed`);
       res = await fetch(`${this.baseUrl}/embed`, { method: 'POST', body: form });
     } catch (e) {
       // Network-level failure — face-svc not running, DNS, etc. Surface
       // as 500 so the FE can show a generic "face service unavailable."
-      this.logger.error(`face-svc unreachable: ${e instanceof Error ? e.message : e}`);
+      this.logger.error(`face-svc unreachable at "${this.baseUrl}": ${e instanceof Error ? e.message : e}`);
       throw new InternalServerErrorException('Face service unavailable');
     }
 

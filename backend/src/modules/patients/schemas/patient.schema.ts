@@ -77,6 +77,17 @@ export class Patient {
   // so deleting a patient's storage tree cleans this up too.
   @Prop()
   profileImageKey?: string;
+
+  // Azure Face provider mapping. Only populated when FACE_PROVIDER=azure.
+  // `azurePersonId` is the Azure PersonGroup Person GUID for this patient
+  // (the clinic is the PersonGroup); `azureFaceIds` are the persistedFace
+  // GUIDs added to that person, kept so we can delete individual faces on
+  // re-enroll. The local SFace provider ignores both.
+  @Prop()
+  azurePersonId?: string;
+
+  @Prop({ type: [String], default: undefined })
+  azureFaceIds?: string[];
 }
 
 export const PatientSchema = SchemaFactory.createForClass(Patient);
