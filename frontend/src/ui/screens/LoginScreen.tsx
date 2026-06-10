@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { apiGet, apiPost } from '../../app/api';
+import { apiGet, apiPost, apiPostMultipart } from '../../app/api';
 import type { DevContext } from '../../app/context';
 import { useApp } from '../../app/AppContext';
 import { Icon } from '../shared/Icon';
 import { Spinner, useToast, labelStyle } from '../shared/primitives';
+import { FaceScanModal } from '../shared/FaceScanModal';
 
 type ClinicResult = { id: string; name: string; countryCode?: string; timezone?: string };
 type BranchAddress = { street?: string; city?: string; state?: string; zip?: string; country?: string };
@@ -248,12 +249,39 @@ function SignInStep({
   const [btnState, setBtnState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [forgotOpen, setForgotOpen] = useState(false);
   const [shakeKey, setShakeKey] = useState(0);
+  const [faceOpen, setFaceOpen] = useState(false);
 
   function validate() {
     const e: typeof errors = {};
     if (!email || !/\S+@\S+\.\S+/.test(email)) e.email = 'Enter a valid email address.';
     if (!password || password.length < 6) e.password = 'Password must be at least 6 characters.';
     return e;
+  }
+
+  // Face login. The scanner captures a frame; we POST it to
+  // /auth/login-by-face. The BE identifies the staff member (cross-
+  // clinic scan, anti-spoof in face-svc) and issues a session. Throws
+  // on no-match so the FaceScanModal shows the error inline and the
+  // user can retry or fall back to email + password.
+  async function handleFaceLogin(blob: Blob, opts?: { preDetected?: boolean }) {
+    const form = new FormData();
+    form.append('image', blob, 'login.jpg');
+    if (opts?.preDetected) form.append('pre_detected', 'true');
+    const res = await apiPostMultipart<LoginByEmailResponse>(
+      { ...ctx, apiBaseUrl } as DevContext,
+      '/auth/login-by-face',
+      form,
+    );
+    setFaceOpen(false);
+    setCtx({
+      ...ctx,
+      apiBaseUrl,
+      userId: res.userId,
+      clinicId: res.clinicId,
+      branchId: res.branchId ?? undefined,
+      accessToken: res.accessToken,
+    });
+    toast('Signed in with face', 'success');
   }
 
   async function handleSubmit(ev: React.FormEvent) {
@@ -371,6 +399,24 @@ function SignInStep({
         </button>
       </form>
 
+      {/* Divider + face login. The "or" rule mirrors common SSO login
+          patterns; face login is an alternative to email + password
+          for staff who've enrolled their face. */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, margin: '18px 0' }}>
+        <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+        <span style={{ fontSize: 12, color: 'var(--text-subtle)', fontWeight: 500 }}>or</span>
+        <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+      </div>
+      <button type="button" onClick={() => setFaceOpen(true)}
+        style={{
+          width: '100%', height: 46, background: 'var(--surface-muted)',
+          border: '1.5px solid var(--border)', borderRadius: 12,
+          fontSize: 14, fontWeight: 600, color: 'var(--text)', cursor: 'pointer',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+        }}>
+        <Icon name="camera" size={16} strokeWidth={2.2} /> Sign in with face
+      </button>
+
       <div style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
         Don't have an account?{' '}
         <button type="button" onClick={onSwitchToSignup}
@@ -378,6 +424,16 @@ function SignInStep({
           Create one
         </button>
       </div>
+
+      {faceOpen && (
+        <FaceScanModal
+          title="Sign in with face"
+          hint="Look at the camera. Make sure your face is well-lit and centered."
+          captureLabel="Scan & sign in"
+          onCancel={() => setFaceOpen(false)}
+          onCapture={handleFaceLogin}
+        />
+      )}
 
       {forgotOpen && (
         <ForgotPasswordModal
@@ -603,11 +659,113 @@ function SignUpStep({
     setErrors({});
     setBtnState('loading');
     try {
+      const localTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone || 'Asia/Kolkata';
+      const tzToCurrency: Record<string, string> = {
+        'Asia/Kolkata': 'INR',
+        'Asia/Calcutta': 'INR',
+        'Asia/Colombo': 'LKR',
+        'Asia/Karachi': 'PKR',
+        'Asia/Dhaka': 'BDT',
+        'Asia/Kathmandu': 'NPR',
+        'Asia/Dubai': 'AED',
+        'Asia/Riyadh': 'SAR',
+        'Asia/Qatar': 'QAR',
+        'Asia/Singapore': 'SGD',
+        'Asia/Tokyo': 'JPY',
+        'Asia/Seoul': 'KRW',
+        'Asia/Shanghai': 'CNY',
+        'Asia/Hong_Kong': 'HKD',
+        'Asia/Bangkok': 'THB',
+        'Asia/Jakarta': 'IDR',
+        'Asia/Manila': 'PHP',
+        'Asia/Kuala_Lumpur': 'MYR',
+        'Europe/London': 'GBP',
+        'Europe/Berlin': 'EUR',
+        'Europe/Paris': 'EUR',
+        'Europe/Madrid': 'EUR',
+        'Europe/Rome': 'EUR',
+        'Europe/Amsterdam': 'EUR',
+        'Europe/Dublin': 'EUR',
+        'Europe/Zurich': 'CHF',
+        'Europe/Stockholm': 'SEK',
+        'Europe/Oslo': 'NOK',
+        'Europe/Moscow': 'RUB',
+        'Europe/Istanbul': 'TRY',
+        'America/New_York': 'USD',
+        'America/Chicago': 'USD',
+        'America/Los_Angeles': 'USD',
+        'America/Toronto': 'CAD',
+        'America/Vancouver': 'CAD',
+        'America/Mexico_City': 'MXN',
+        'America/Sao_Paulo': 'BRL',
+        'America/Buenos_Aires': 'ARS',
+        'Africa/Cairo': 'EGP',
+        'Africa/Johannesburg': 'ZAR',
+        'Africa/Nairobi': 'KES',
+        'Africa/Lagos': 'NGN',
+        'Australia/Sydney': 'AUD',
+        'Australia/Melbourne': 'AUD',
+        'Pacific/Auckland': 'NZD',
+      };
+      const localCurrency = tzToCurrency[localTimezone] || 'INR';
+
+      const tzToCountry: Record<string, string> = {
+        'Asia/Kolkata': 'IN',
+        'Asia/Calcutta': 'IN',
+        'Asia/Colombo': 'LK',
+        'Asia/Karachi': 'PK',
+        'Asia/Dhaka': 'BD',
+        'Asia/Kathmandu': 'NP',
+        'Asia/Dubai': 'AE',
+        'Asia/Riyadh': 'SA',
+        'Asia/Qatar': 'QA',
+        'Asia/Singapore': 'SG',
+        'Asia/Tokyo': 'JP',
+        'Asia/Seoul': 'KR',
+        'Asia/Shanghai': 'CN',
+        'Asia/Hong_Kong': 'HK',
+        'Asia/Bangkok': 'TH',
+        'Asia/Jakarta': 'ID',
+        'Asia/Manila': 'PH',
+        'Asia/Kuala_Lumpur': 'MY',
+        'Europe/London': 'GB',
+        'Europe/Berlin': 'DE',
+        'Europe/Paris': 'FR',
+        'Europe/Madrid': 'ES',
+        'Europe/Rome': 'IT',
+        'Europe/Amsterdam': 'NL',
+        'Europe/Dublin': 'IE',
+        'Europe/Zurich': 'CH',
+        'Europe/Stockholm': 'SE',
+        'Europe/Oslo': 'NO',
+        'Europe/Moscow': 'RU',
+        'Europe/Istanbul': 'TR',
+        'America/New_York': 'US',
+        'America/Chicago': 'US',
+        'America/Los_Angeles': 'US',
+        'America/Toronto': 'CA',
+        'America/Vancouver': 'CA',
+        'America/Mexico_City': 'MX',
+        'America/Sao_Paulo': 'BR',
+        'America/Buenos_Aires': 'AR',
+        'Africa/Cairo': 'EG',
+        'Africa/Johannesburg': 'ZA',
+        'Africa/Nairobi': 'KE',
+        'Africa/Lagos': 'NG',
+        'Australia/Sydney': 'AU',
+        'Australia/Melbourne': 'AU',
+        'Pacific/Auckland': 'NZ',
+      };
+      const localCountry = tzToCountry[localTimezone] || 'IN';
+
       const res = await apiPost<SignupResponse>({ ...ctx, apiBaseUrl } as DevContext, '/auth/signup', {
         clinicName: clinicName.trim(),
         adminName: adminName.trim(),
         adminEmail: email,
         password,
+        timezone: localTimezone,
+        currency: localCurrency,
+        countryCode: localCountry,
       });
       setBtnState('success');
       setTimeout(() => onSuccess(

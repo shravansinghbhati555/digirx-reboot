@@ -24,12 +24,14 @@ export function FaceScanModal({
   captureLabel = 'Capture',
   onCancel,
   onCapture,
+  onPhoneVerify,
 }: {
   title: string;
   hint?: string;
   captureLabel?: string;
   onCancel: () => void;
   onCapture: (blob: Blob, opts?: { preDetected?: boolean }) => Promise<void> | void;
+  onPhoneVerify?: (phone: string) => Promise<void> | void;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -49,6 +51,8 @@ export function FaceScanModal({
   // loop. The "score" feeds an optional confidence chip in the corner.
   const [bbox, setBbox] = useState<DetectedFace | null>(null);
   const [videoDims, setVideoDims] = useState<{ w: number; h: number }>({ w: 640, h: 480 });
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [verifyingPhone, setVerifyingPhone] = useState(false);
 
   // --- Camera setup --------------------------------------------------
   useEffect(() => {
@@ -318,6 +322,64 @@ export function FaceScanModal({
           </div>
 
           <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+          {onPhoneVerify && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, margin: '4px 0 8px 0' }}>
+              <label style={{ fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                Or Verify by Mobile Number
+              </label>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="tel"
+                  value={phoneNumber}
+                  onChange={(e) => setPhoneNumber(e.target.value)}
+                  placeholder="Enter patient mobile number..."
+                  style={{
+                    flex: 1, height: 38, padding: '0 12px',
+                    background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 8,
+                    fontSize: 13, color: 'var(--text)', outline: 'none'
+                  }}
+                  onKeyDown={async (e) => {
+                    if (e.key === 'Enter' && phoneNumber.trim()) {
+                      e.preventDefault();
+                      setVerifyingPhone(true);
+                      setError(null);
+                      try {
+                        await onPhoneVerify(phoneNumber.trim());
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : String(err));
+                      } finally {
+                        setVerifyingPhone(false);
+                      }
+                    }
+                  }}
+                />
+                <button
+                  onClick={async () => {
+                    if (!phoneNumber.trim()) return;
+                    setVerifyingPhone(true);
+                    setError(null);
+                    try {
+                      await onPhoneVerify(phoneNumber.trim());
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : String(err));
+                    } finally {
+                      setVerifyingPhone(false);
+                    }
+                  }}
+                  disabled={verifyingPhone || !phoneNumber.trim()}
+                  style={{
+                    height: 38, padding: '0 14px', background: 'var(--brand-500)',
+                    color: 'var(--brand-text)', border: 'none', borderRadius: 8,
+                    fontSize: 12, fontWeight: 600, cursor: verifyingPhone ? 'wait' : 'pointer',
+                    opacity: !phoneNumber.trim() ? 0.6 : 1, display: 'flex', alignItems: 'center', gap: 4
+                  }}
+                >
+                  {verifyingPhone ? <Spinner size={12} /> : 'Verify'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {error && (
             <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>

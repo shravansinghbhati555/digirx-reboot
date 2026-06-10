@@ -15,9 +15,9 @@ export function Counter({
   format?: (n: number) => string;
   delay?: number;
 }) {
-  const [displayed, setDisplayed] = useState(0);
+  const [displayed, setDisplayed] = useState(value);
   const rafRef = useRef<number | null>(null);
-  const lastTargetRef = useRef<number>(0);
+  const lastTargetRef = useRef<number>(value);
 
   useEffect(() => {
     if (typeof window !== 'undefined' && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches) {
@@ -37,7 +37,7 @@ export function Counter({
       }
       const p = Math.min(elapsed / duration, 1);
       const ease = 1 - Math.pow(1 - p, 3);
-      setDisplayed(Math.round(start + (target - start) * ease));
+      setDisplayed(start + (target - start) * ease);
       if (p < 1) rafRef.current = requestAnimationFrame(step);
     };
     rafRef.current = requestAnimationFrame(step);
@@ -46,5 +46,5 @@ export function Counter({
     };
   }, [value, duration, delay]);
 
-  return <>{format ? format(displayed) : displayed.toLocaleString('en-IN')}</>;
+  return <>{format ? format(displayed) : Math.round(displayed).toLocaleString('en-IN')}</>;
 }

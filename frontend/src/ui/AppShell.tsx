@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import countryToCurrency from 'country-to-currency';
 import { useApp, type ScreenKey } from '../app/AppContext';
 import { canAccessScreen, isScreenAllowedForRoles, Perm } from '../app/permissions';
 import { apiGet, apiPost } from '../app/api';
-import { Avatar } from './shared/primitives';
+import { Avatar, Spinner, useToast } from './shared/primitives';
 import { Icon, type IconName } from './shared/Icon';
 import { DatePickerChip } from './shared/DatePickerChip';
 
@@ -94,9 +95,115 @@ function CommandPalette({ commands, onNavigate, onClose }: { commands: typeof AL
 
 export function AppShell({ children }: { children: ReactNode }) {
   const { screen, setScreen, theme, toggleTheme, ctx, setCtx, logout, selectedDate, setSelectedDate, permissions, roleNames } = useApp();
+  const toast = useToast();
   const [collapsed, setCollapsed] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [showLocationModal, setShowLocationModal] = useState(false);
+
+  // Pre-fetch global currency exchange rates relative to INR on app mount.
+  // This makes sure exchange rates are always available for any currency conversion,
+  // even if the user hasn't granted location permissions.
+  useEffect(() => {
+    const fetchRates = async () => {
+      try {
+        const ratesRes = await fetch('https://open.er-api.com/v6/latest/INR');
+        if (ratesRes.ok) {
+          const ratesData = await ratesRes.json();
+          if (ratesData && ratesData.rates) {
+            localStorage.setItem('digirx.exchange_rates', JSON.stringify(ratesData.rates));
+          }
+        }
+      } catch (e) {
+        console.error('Failed to pre-fetch exchange rates on mount:', e);
+      }
+    };
+    void fetchRates();
+  }, []);
+
+  useEffect(() => {
+    if (!ctx.userId) return;
+    const storageKey = `digirx.location_permission_asked_${ctx.userId}`;
+    const alreadyAsked = localStorage.getItem(storageKey);
+    if (!alreadyAsked) {
+      const timer = setTimeout(() => {
+        setShowLocationModal(true);
+      }, 1500);
+      return () => clearTimeout(timer);
+    }
+  }, [ctx.userId]);
+
+  // If the user has already allowed location permission, silently check and update their location/currency
+  // in the background without showing any modal, so if they move/travel to another country, the display currency updates.
+  useEffect(() => {
+    if (!ctx.userId) return;
+    const storageKey = `digirx.location_permission_asked_${ctx.userId}`;
+    const alreadyAsked = localStorage.getItem(storageKey);
+    
+    if (alreadyAsked === 'granted' && navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        async (position) => {
+          const { latitude, longitude } = position.coords;
+          localStorage.setItem(
+            `digirx.last_location_${ctx.userId}`,
+            JSON.stringify({
+              lat: latitude,
+              lng: longitude,
+              accuracy: position.coords.accuracy,
+              timestamp: position.timestamp,
+            })
+          );
+
+          let detectedCountry = 'IN';
+          let detectedCurrency = 'INR';
+
+          try {
+            const geoUrl = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`;
+            const geoRes = await fetch(geoUrl);
+            if (geoRes.ok) {
+              const geoData = await geoRes.json();
+              if (geoData && geoData.countryCode) {
+                detectedCountry = geoData.countryCode;
+                const resolved = (countryToCurrency as Record<string, string>)[detectedCountry];
+                detectedCurrency = resolved || 'USD';
+              }
+            }
+          } catch (e) {
+            console.error('Failed to resolve country from location in background:', e);
+          }
+
+          try {
+            const ratesRes = await fetch('https://open.er-api.com/v6/latest/INR');
+            if (ratesRes.ok) {
+              const ratesData = await ratesRes.json();
+              if (ratesData && ratesData.rates) {
+                localStorage.setItem('digirx.exchange_rates', JSON.stringify(ratesData.rates));
+              }
+            }
+          } catch (e) {
+            console.error('Failed to fetch exchange rates in background:', e);
+          }
+
+          const cachedCountry = localStorage.getItem(`digirx.detected_country_${ctx.userId}`);
+
+          // Cache the location-detected country + currency, but DON'T
+          // surface a "currency updated" toast: the display currency now
+          // follows the clinic's Settings value, not location. The geo
+          // currency is only a fallback when no settings currency exists
+          // (brand-new clinic), so a location change should never visibly
+          // override what the operator picked in Settings.
+          if (!cachedCountry || cachedCountry !== detectedCountry) {
+            localStorage.setItem(`digirx.detected_country_${ctx.userId}`, detectedCountry);
+            localStorage.setItem(`digirx.detected_currency_${ctx.userId}`, detectedCurrency);
+          }
+        },
+        (error) => {
+          console.error('Background location resolution error:', error);
+        }
+      );
+    }
+  }, [ctx.userId, toast]);
+
   const rail = collapsed ? 56 : 208;
   const userName = ctx.fullName ?? 'User';
   const userEmail = ctx.email ?? '';
@@ -338,6 +445,12 @@ export function AppShell({ children }: { children: ReactNode }) {
 
       {cmdOpen && <CommandPalette commands={visibleCmd} onNavigate={setScreen} onClose={() => setCmdOpen(false)} />}
       {helpOpen && <ShortcutsCheatsheet onClose={() => setHelpOpen(false)} />}
+      {showLocationModal && (
+        <LocationPermissionModal
+          userId={ctx.userId}
+          onClose={() => setShowLocationModal(false)}
+        />
+      )}
     </div>
   );
 }
@@ -532,6 +645,265 @@ function ShortcutsCheatsheet({ onClose }: { onClose: () => void }) {
               </div>
             </div>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function LocationPermissionModal({
+  onClose,
+  userId,
+}: {
+  onClose: () => void;
+  userId: string;
+}) {
+  const toast = useToast();
+  const [requesting, setRequesting] = useState(false);
+
+  const handleAllow = () => {
+    setRequesting(true);
+    if (!navigator.geolocation) {
+      toast('Geolocation is not supported by your browser', 'error');
+      localStorage.setItem(`digirx.location_permission_asked_${userId}`, 'unsupported');
+      setRequesting(false);
+      onClose();
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      async (position) => {
+        const { latitude, longitude } = position.coords;
+        localStorage.setItem(`digirx.location_permission_asked_${userId}`, 'granted');
+        localStorage.setItem(
+          `digirx.last_location_${userId}`,
+          JSON.stringify({
+            lat: latitude,
+            lng: longitude,
+            accuracy: position.coords.accuracy,
+            timestamp: position.timestamp,
+          })
+        );
+
+        let detectedCountry = 'IN';
+        let detectedCurrency = 'INR';
+
+        // 1. Resolve coordinates to a country code using a free geocoding API
+        try {
+          const geoUrl = `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${latitude}&longitude=${longitude}&localityLanguage=en`;
+          const geoRes = await fetch(geoUrl);
+          if (geoRes.ok) {
+            const geoData = await geoRes.json();
+            if (geoData && geoData.countryCode) {
+              detectedCountry = geoData.countryCode;
+              const resolved = (countryToCurrency as Record<string, string>)[detectedCountry];
+              detectedCurrency = resolved || 'USD';
+            }
+          }
+        } catch (e) {
+          console.error('Failed to resolve country from location:', e);
+        }
+
+        // 2. Fetch exchange rates relative to INR using free public API
+        try {
+          const ratesRes = await fetch('https://open.er-api.com/v6/latest/INR');
+          if (ratesRes.ok) {
+            const ratesData = await ratesRes.json();
+            if (ratesData && ratesData.rates) {
+              localStorage.setItem('digirx.exchange_rates', JSON.stringify(ratesData.rates));
+            }
+          }
+        } catch (e) {
+          console.error('Failed to fetch exchange rates:', e);
+        }
+
+        localStorage.setItem(`digirx.detected_country_${userId}`, detectedCountry);
+        localStorage.setItem(`digirx.detected_currency_${userId}`, detectedCurrency);
+
+        toast(`Location access allowed. Currency converted to ${detectedCurrency}.`, 'success');
+        setRequesting(false);
+        onClose();
+      },
+      (error) => {
+        let msg = 'Location access declined or unavailable';
+        if (error.code === error.PERMISSION_DENIED) {
+          msg = 'Location permission denied by browser';
+        }
+        toast(msg, 'error');
+        localStorage.setItem(`digirx.location_permission_asked_${userId}`, 'denied');
+        setRequesting(false);
+        onClose();
+      },
+      { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+    );
+  };
+
+  const handleDecline = () => {
+    localStorage.setItem(`digirx.location_permission_asked_${userId}`, 'declined');
+    toast('Location permission declined', 'info');
+    onClose();
+  };
+
+  return (
+    <div
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 300,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        background: 'rgba(15,23,42,0.4)',
+        backdropFilter: 'blur(6px)',
+        animation: 'fadeIn 200ms ease-out',
+      }}
+    >
+      <div
+        style={{
+          width: '100%',
+          maxWidth: 400,
+          background: 'var(--surface)',
+          borderRadius: 20,
+          border: '1px solid var(--border)',
+          boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.25)',
+          overflow: 'hidden',
+          animation: 'slideUp 250ms cubic-bezier(0.16, 1, 0.3, 1)',
+          padding: 24,
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          textAlign: 'center',
+        }}
+      >
+        <div
+          style={{
+            width: 64,
+            height: 64,
+            borderRadius: '50%',
+            background: 'var(--brand-50)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            marginBottom: 20,
+            position: 'relative',
+            boxShadow: '0 0 20px rgba(59, 130, 246, 0.15)',
+          }}
+        >
+          <div
+            style={{
+              position: 'absolute',
+              inset: -4,
+              borderRadius: '50%',
+              border: '2px solid var(--brand-100)',
+              animation: 'pulseRing 2s infinite',
+            }}
+          />
+          <Icon name="mapPin" size={32} style={{ color: 'var(--brand-500)' }} />
+        </div>
+
+        <h2
+          style={{
+            fontFamily: "'Manrope', sans-serif",
+            fontSize: 18,
+            fontWeight: 800,
+            color: 'var(--text)',
+            letterSpacing: '-0.3px',
+            marginBottom: 8,
+          }}
+        >
+          Enable Location Services
+        </h2>
+        
+        <p
+          style={{
+            fontSize: 13,
+            color: 'var(--text-muted)',
+            lineHeight: 1.5,
+            marginBottom: 20,
+          }}
+        >
+          DigiRx uses your location to customize clinic branches, automate timezones, and log secure access audit logs for compliance.
+        </p>
+
+        <div
+          style={{
+            width: '100%',
+            background: 'var(--surface-muted)',
+            border: '1px solid var(--border)',
+            borderRadius: 12,
+            padding: 12,
+            fontSize: 11,
+            color: 'var(--text-subtle)',
+            textAlign: 'left',
+            display: 'flex',
+            gap: 8,
+            alignItems: 'flex-start',
+            marginBottom: 24,
+          }}
+        >
+          <Icon name="info" size={14} style={{ color: 'var(--brand-500)', marginTop: 1, flexShrink: 0 }} />
+          <span>
+            You will be prompted by your browser to allow access. We only access your location while you use the application.
+          </span>
+        </div>
+
+        <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+          <button
+            type="button"
+            onClick={handleDecline}
+            disabled={requesting}
+            style={{
+              flex: 1,
+              height: 40,
+              background: 'none',
+              border: '1.5px solid var(--border)',
+              borderRadius: 10,
+              fontSize: 13,
+              fontWeight: 600,
+              color: 'var(--text-muted)',
+              cursor: requesting ? 'not-allowed' : 'pointer',
+              transition: 'background 120ms',
+            }}
+            onMouseEnter={(e) => {
+              if (!requesting) e.currentTarget.style.background = 'var(--surface-muted)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.background = 'none';
+            }}
+          >
+            No, thanks
+          </button>
+          
+          <button
+            type="button"
+            onClick={handleAllow}
+            disabled={requesting}
+            style={{
+              flex: 1,
+              height: 40,
+              background: 'var(--brand-500)',
+              color: 'var(--brand-text)',
+              border: 'none',
+              borderRadius: 10,
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: requesting ? 'wait' : 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 6,
+              transition: 'opacity 120ms',
+            }}
+            onMouseEnter={(e) => {
+              if (!requesting) e.currentTarget.style.opacity = '0.9';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.opacity = '1';
+            }}
+          >
+            {requesting ? <Spinner size={16} color="var(--brand-text)" /> : null}
+            {requesting ? 'Allowing...' : 'Allow Access'}
+          </button>
         </div>
       </div>
     </div>

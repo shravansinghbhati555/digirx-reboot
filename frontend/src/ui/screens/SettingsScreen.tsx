@@ -4,7 +4,7 @@ import { useApp } from '../../app/AppContext';
 import { emitAvailabilityChanged } from '../../app/events';
 import { Perm, type PermName } from '../../app/permissions';
 import { isValidIndianMobile, normalizeIndianMobile } from '../../app/validators';
-import { Checkbox, Dropdown, EmptyState, Field, Spinner, labelStyle, useToast } from '../shared/primitives';
+import { Checkbox, Dropdown, EmptyState, Field, Spinner, labelStyle, useToast, setDetectedCurrency } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
 // InventoryScreen used to be embedded under a Settings → Inventory tab,
 // but inventory now has its own top-level sidebar entry. The tab was
@@ -40,19 +40,6 @@ type ClinicSettingsResp = {
   clinic: { _id: string; name: string; timezone?: string; currency?: string };
   settings: ClinicSettings;
 };
-
-const COMMON_TIMEZONES = [
-  'Asia/Kolkata',
-  'Asia/Dubai',
-  'Asia/Singapore',
-  'Asia/Tokyo',
-  'Europe/London',
-  'Europe/Berlin',
-  'America/New_York',
-  'America/Los_Angeles',
-  'Australia/Sydney',
-  'UTC',
-];
 
 // Best-effort timezone → ISO 4217 currency lookup. Exact-zone entries
 // win first; if none match, we fall back to the region prefix
@@ -108,7 +95,78 @@ const TIMEZONE_TO_CURRENCY: Record<string, string> = {
 };
 
 function currencyForTimezone(tz: string): string | null {
-  return TIMEZONE_TO_CURRENCY[tz] ?? null;
+  if (TIMEZONE_TO_CURRENCY[tz]) {
+    return TIMEZONE_TO_CURRENCY[tz];
+  }
+
+  // Region-based fallbacks for any user-selected timezones
+  if (tz.startsWith('Europe/')) {
+    if (tz.includes('London')) return 'GBP';
+    if (tz.includes('Zurich') || tz.includes('Vaduz')) return 'CHF';
+    if (tz.includes('Stockholm')) return 'SEK';
+    if (tz.includes('Oslo')) return 'NOK';
+    if (tz.includes('Copenhagen')) return 'DKK';
+    if (tz.includes('Moscow') || tz.includes('Volgograd') || tz.includes('Kirov')) return 'RUB';
+    if (tz.includes('Istanbul')) return 'TRY';
+    if (tz.includes('Kiev') || tz.includes('Kyiv') || tz.includes('Uzhgorod') || tz.includes('Zaporozhye')) return 'UAH';
+    if (tz.includes('Warsaw')) return 'PLN';
+    if (tz.includes('Prague')) return 'CZK';
+    if (tz.includes('Budapest')) return 'HUF';
+    if (tz.includes('Bucharest')) return 'RON';
+    if (tz.includes('Sofia')) return 'BGN';
+    if (tz.includes('Reykjavik')) return 'ISK';
+    return 'EUR'; // Default fallback for Eurozone countries
+  }
+
+  if (tz.startsWith('America/')) {
+    if (tz.startsWith('America/Canada/') || tz.includes('Toronto') || tz.includes('Vancouver') || tz.includes('Halifax') || tz.includes('Winnipeg') || tz.includes('Edmonton') || tz.includes('St_Johns')) return 'CAD';
+    if (tz.includes('Mexico_City') || tz.includes('Monterrey') || tz.includes('Tijuana') || tz.includes('Cancun')) return 'MXN';
+    if (tz.includes('Sao_Paulo') || tz.includes('Rio_Branco') || tz.includes('Porto_Velho') || tz.includes('Boa_Vista') || tz.includes('Manaus') || tz.includes('Belem') || tz.includes('Araguaina') || tz.includes('Recife') || tz.includes('Bahia') || tz.includes('Fortaleza') || tz.includes('Maceio')) return 'BRL';
+    if (tz.includes('Buenos_Aires') || tz.includes('Cordoba') || tz.includes('Jujuy') || tz.includes('Mendoza') || tz.includes('Catamarca') || tz.includes('La_Rioja') || tz.includes('San_Juan') || tz.includes('San_Luis') || tz.includes('Tucuman') || tz.includes('Salta')) return 'ARS';
+    if (tz.includes('Santiago') || tz.includes('Easter')) return 'CLP';
+    if (tz.includes('Bogota')) return 'COP';
+    if (tz.includes('Lima')) return 'PEN';
+    if (tz.includes('Caracas')) return 'VES';
+    if (tz.includes('Montevideo')) return 'UYU';
+    if (tz.includes('Asuncion')) return 'PYG';
+    if (tz.includes('La_Paz')) return 'BOB';
+    if (tz.includes('Quito') || tz.includes('Panama') || tz.includes('San_Salvador')) return 'USD';
+    return 'USD'; // Default fallback for US/Americas
+  }
+
+  if (tz.startsWith('Australia/')) {
+    return 'AUD';
+  }
+
+  if (tz.startsWith('Pacific/')) {
+    if (tz.includes('Auckland') || tz.includes('Chatham')) return 'NZD';
+    if (tz.includes('Honolulu')) return 'USD';
+    return 'USD';
+  }
+
+  if (tz.startsWith('Asia/')) {
+    if (tz.includes('Kolkata') || tz.includes('Calcutta')) return 'INR';
+    if (tz.includes('Colombo')) return 'LKR';
+    if (tz.includes('Karachi')) return 'PKR';
+    if (tz.includes('Dhaka')) return 'BDT';
+    if (tz.includes('Kathmandu') || tz.includes('Katmandu')) return 'NPR';
+    if (tz.includes('Dubai') || tz.includes('Abu_Dhabi')) return 'AED';
+    if (tz.includes('Riyadh')) return 'SAR';
+    if (tz.includes('Qatar') || tz.includes('Doha')) return 'QAR';
+    if (tz.includes('Singapore')) return 'SGD';
+    if (tz.includes('Tokyo')) return 'JPY';
+    if (tz.includes('Seoul')) return 'KRW';
+    if (tz.includes('Shanghai') || tz.includes('Urumqi')) return 'CNY';
+    if (tz.includes('Hong_Kong')) return 'HKD';
+    if (tz.includes('Bangkok')) return 'THB';
+    if (tz.includes('Jakarta') || tz.includes('Pontianak') || tz.includes('Makassar') || tz.includes('Jayapura')) return 'IDR';
+    if (tz.includes('Manila')) return 'PHP';
+    if (tz.includes('Kuala_Lumpur') || tz.includes('Kuching')) return 'MYR';
+    if (tz.includes('Taipei')) return 'TWD';
+    if (tz.includes('Jerusalem') || tz.includes('Tel_Aviv')) return 'ILS';
+  }
+
+  return null;
 }
 
 type SettingsTab = 'clinic' | 'branches' | 'availability' | 'notif_cfg' | 'audit' | 'about';
@@ -188,6 +246,259 @@ export function SettingsScreen() {
           {activeAllowed && tab === 'about' && <AboutTab />}
         </div>
       </div>
+    </div>
+  );
+}
+
+function TimezoneDropdown({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (tz: string) => void;
+  disabled?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const allTimezones = useMemo(() => {
+    let zones: string[] = [];
+    try {
+      zones = Intl.supportedValuesOf('timeZone');
+    } catch {
+      zones = [
+        'Asia/Kolkata',
+        'Asia/Colombo',
+        'Asia/Karachi',
+        'Asia/Dhaka',
+        'Asia/Kathmandu',
+        'Asia/Dubai',
+        'Asia/Riyadh',
+        'Asia/Qatar',
+        'Asia/Singapore',
+        'Asia/Tokyo',
+        'Asia/Seoul',
+        'Asia/Shanghai',
+        'Asia/Hong_Kong',
+        'Asia/Bangkok',
+        'Asia/Jakarta',
+        'Asia/Manila',
+        'Asia/Kuala_Lumpur',
+        'Europe/London',
+        'Europe/Berlin',
+        'Europe/Paris',
+        'Europe/Madrid',
+        'Europe/Rome',
+        'Europe/Amsterdam',
+        'Europe/Dublin',
+        'Europe/Zurich',
+        'Europe/Stockholm',
+        'Europe/Oslo',
+        'Europe/Moscow',
+        'Europe/Istanbul',
+        'America/New_York',
+        'America/Chicago',
+        'America/Los_Angeles',
+        'America/Toronto',
+        'America/Vancouver',
+        'America/Mexico_City',
+        'America/Sao_Paulo',
+        'America/Buenos_Aires',
+        'Africa/Cairo',
+        'Africa/Johannesburg',
+        'Africa/Nairobi',
+        'Africa/Lagos',
+        'Australia/Sydney',
+        'Australia/Melbourne',
+        'Pacific/Auckland',
+        'UTC',
+      ];
+    }
+    const mapped = zones.map((tz) => {
+      if (tz === 'Asia/Calcutta') return 'Asia/Kolkata';
+      if (tz === 'Asia/Katmandu') return 'Asia/Kathmandu';
+      return tz;
+    });
+    const unique = Array.from(new Set(mapped));
+    return unique.filter((tz) => currencyForTimezone(tz) !== null);
+  }, []);
+
+  const filtered = useMemo(() => {
+    const queryNormalized = search.toLowerCase().trim();
+    if (!queryNormalized) return allTimezones;
+
+    // Split search query into tokens/words
+    const tokens = queryNormalized.split(/\s+/).filter(Boolean);
+
+    return allTimezones.filter((tz) => {
+      // Normalize timezone: replace slashes (/), underscores (_), and dashes (-) with spaces
+      let tzNormalized = tz.toLowerCase().replace(/[\/_]/g, ' ');
+      // Alias handling for standard IANA zones:
+      if (tzNormalized.includes('calcutta')) tzNormalized += ' kolkata';
+      if (tzNormalized.includes('katmandu')) tzNormalized += ' kathmandu';
+      if (tzNormalized.includes('saigon')) tzNormalized += ' ho chi minh';
+      
+      // Every search token must be found in the normalized timezone name
+      return tokens.every((token) => tzNormalized.includes(token));
+    });
+  }, [search, allTimezones]);
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  return (
+    <div ref={containerRef} style={{ position: 'relative', width: '100%' }}>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => {
+          if (disabled) return;
+          setOpen(!open);
+          setSearch('');
+        }}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          width: '100%',
+          height: 40,
+          padding: '0 12px',
+          background: 'var(--surface-muted)',
+          border: '1.5px solid var(--border)',
+          borderRadius: 10,
+          fontSize: 13,
+          color: value ? 'var(--text)' : 'var(--text-subtle)',
+          textAlign: 'left',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          opacity: disabled ? 0.6 : 1,
+          outline: 'none',
+        }}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          <span>{value || 'Select timezone…'}</span>
+          {value && currencyForTimezone(value) && (
+            <span style={{ fontSize: 10, fontWeight: 700, color: 'var(--brand-600)', background: 'var(--brand-50)', padding: '1px 5px', borderRadius: 4, border: '1px solid var(--brand-100)', fontVariantNumeric: 'tabular-nums' }}>
+              {currencyForTimezone(value)}
+            </span>
+          )}
+        </div>
+        <Icon
+          name="chevronDown"
+          size={14}
+          style={{
+            color: 'var(--text-subtle)',
+            transform: open ? 'rotate(180deg)' : 'none',
+            transition: 'transform 0.2s',
+          }}
+        />
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '100%',
+            left: 0,
+            right: 0,
+            zIndex: 100,
+            marginTop: 6,
+            background: 'var(--surface)',
+            border: '1.5px solid var(--border)',
+            borderRadius: 10,
+            boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 8px 10px -6px rgba(0, 0, 0, 0.1)',
+            overflow: 'hidden',
+            display: 'flex',
+            flexDirection: 'column',
+          }}
+        >
+          <div
+            style={{
+              padding: 8,
+              borderBottom: '1px solid var(--border)',
+              display: 'flex',
+              gap: 6,
+              alignItems: 'center',
+            }}
+          >
+            <Icon name="search" size={12} style={{ color: 'var(--text-subtle)', marginLeft: 4 }} />
+            <input
+              autoFocus
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search timezones..."
+              style={{
+                width: '100%',
+                border: 'none',
+                background: 'transparent',
+                outline: 'none',
+                fontSize: 12,
+                color: 'var(--text)',
+                padding: '4px 0',
+              }}
+            />
+          </div>
+          <div style={{ maxHeight: 200, overflowY: 'auto', padding: 4 }}>
+            {filtered.length === 0 ? (
+              <div style={{ padding: '8px 12px', fontSize: 12, color: 'var(--text-subtle)', textAlign: 'center' }}>
+                No timezones found
+              </div>
+            ) : (
+              filtered.map((tz) => (
+                <button
+                  key={tz}
+                  type="button"
+                  onClick={() => {
+                    onChange(tz);
+                    setOpen(false);
+                  }}
+                  style={{
+                    display: 'block',
+                    width: '100%',
+                    padding: '8px 12px',
+                    border: 'none',
+                    borderRadius: 6,
+                    background: value === tz ? 'var(--brand-50)' : 'transparent',
+                    color: value === tz ? 'var(--brand-600)' : 'var(--text)',
+                    fontSize: 12.5,
+                    fontWeight: value === tz ? 600 : 400,
+                    textAlign: 'left',
+                    cursor: 'pointer',
+                    transition: 'background 0.15s, color 0.15s',
+                  }}
+                  onMouseEnter={(e) => {
+                    if (value !== tz) {
+                      e.currentTarget.style.background = 'var(--surface-muted)';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (value !== tz) {
+                      e.currentTarget.style.background = 'transparent';
+                    }
+                  }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                    <span>{tz}</span>
+                    {currencyForTimezone(tz) && (
+                      <span style={{ fontSize: 10, fontWeight: 600, color: value === tz ? 'var(--brand-600)' : 'var(--text-subtle)', background: value === tz ? 'var(--brand-100)' : 'var(--surface-muted)', padding: '1px 5px', borderRadius: 4 }}>
+                        {currencyForTimezone(tz)}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -370,10 +681,19 @@ function ClinicTab() {
       };
       if (name.trim() && name.trim() !== data?.clinic.name) body.name = name.trim();
       if (timezone.trim() && timezone.trim() !== data?.clinic.timezone) body.timezone = timezone.trim();
-      if (currency.trim() && currency.trim().toUpperCase() !== data?.clinic.currency) body.currency = currency.trim().toUpperCase();
+      const newCurrency = currency.trim().toUpperCase();
+      const isCurrencyChanged = newCurrency && newCurrency !== data?.clinic.currency;
+      if (isCurrencyChanged) {
+        body.currency = newCurrency;
+      }
 
       const updated = await apiPatch<ClinicSettingsResp>(ctx, settingsPath(), body);
       hydrate(updated);
+
+      if (isCurrencyChanged && ctx.userId) {
+        setDetectedCurrency(ctx.userId, newCurrency);
+      }
+
       // Refetch /me so app-wide context (ctx.currency, ctx.branding,
       // features.appointmentMode, …) reflects the changes immediately.
       // Without this, the Dashboard's currency symbol and any other
@@ -402,34 +722,15 @@ function ClinicTab() {
               <Field label="Name" value={name} onChange={setName} placeholder="Demo Clinic" />
               <div>
                 <label style={labelStyle}>Timezone (IANA)</label>
-                <input
-                  list="tz-options"
+                <TimezoneDropdown
                   value={timezone}
-                  onChange={(e) => {
-                    const next = e.target.value;
+                  disabled={!canWrite}
+                  onChange={(next) => {
                     setTimezone(next);
-                    // Auto-fill currency from the mapping when the picked
-                    // timezone has a known canonical currency. We only
-                    // overwrite when the lookup returns a hit, so partial
-                    // typing ("Asia/") doesn't blank out the field, and
-                    // an operator who deliberately set a different
-                    // currency for a known TZ can still re-edit it
-                    // manually after.
                     const mapped = currencyForTimezone(next);
                     if (mapped) setCurrency(mapped);
                   }}
-                  disabled={!canWrite}
-                  placeholder="Asia/Kolkata"
-                  style={{
-                    width: '100%', height: 40, padding: '0 12px',
-                    background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
-                    fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
-                    opacity: canWrite ? 1 : 0.6,
-                  }}
                 />
-                <datalist id="tz-options">
-                  {COMMON_TIMEZONES.map((tz) => <option key={tz} value={tz} />)}
-                </datalist>
               </div>
               <div>
                 <Field label="Currency (ISO 4217)" value={currency} onChange={(v) => setCurrency(v.toUpperCase())} placeholder="INR" />

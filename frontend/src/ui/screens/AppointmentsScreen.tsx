@@ -426,6 +426,12 @@ function formatDrName(name: string | undefined): string {
               ) : queueAppts.length === 0 ? <EmptyState icon="users" title="No queue tokens for this date" /> : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                   {queueAppts.map((a) => (
+                    // Open the appointment detail panel (ApptSheet) — it
+                    // has the role-appropriate action: front desk sees
+                    // "Check in patient", the doctor sees "Start
+                    // encounter". Jumping straight to /encounters here
+                    // broke front-desk check-in (they lack encounter
+                    // access, so the shell bounced them to dashboard).
                     <div key={a._id} onClick={() => setSelected(a)}
                       style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '14px 16px', background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: 14, cursor: 'pointer' }}>
                       <div style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 800, color: 'var(--text-muted)', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
@@ -701,6 +707,18 @@ function formatDrName(name: string | undefined): string {
                 style={{ height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
                 <Icon name="clipboard" size={14} />
                 Continue encounter
+              </button>
+            )}
+            {/* DONE = the consultation was completed (and likely signed).
+                Let the doctor reopen it to view / edit the prescription
+                or re-print / re-share any time. The encounter screen
+                opens a signed consultation in preview with an Edit
+                action. */}
+            {status === 'DONE' && (
+              <button onClick={startEncounter} className="press-scale"
+                style={{ height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                <Icon name="fileText" size={14} />
+                View / Edit prescription
               </button>
             )}
             {(status === 'BOOKED' || status === 'CHECKED_IN') && (
@@ -1006,6 +1024,7 @@ function formatDrName(name: string | undefined): string {
   }) {
     const { ctx, features } = useApp();
     const { has } = usePerm();
+    const toast = useToast();
     // 4-step wizard: 1 Patient → 2 Details → 3 Payment → 4 Confirm.
     // Step 3 collects payment info; the appointment + bill + payment are all
     // submitted together at step 4 so an abandoned wizard never leaves a
@@ -1301,6 +1320,20 @@ function formatDrName(name: string | undefined): string {
       setFaceMatches([]);
       setShowFaceScanner(false);
       setFaceScanInfo('Face not recognized. Try a different angle, better lighting, or search by name.');
+    }
+
+    async function handlePhoneVerify(phone: string) {
+      const matches = await apiGet<PatientLite[]>(ctx, `/patients?query=${encodeURIComponent(phone)}`);
+      if (!matches || matches.length === 0) {
+        throw new Error('No patient found with this mobile number.');
+      }
+      const exactMatch = matches.find((p) => p.phones?.includes(phone)) ?? matches[0];
+      setSelectedPatient(exactMatch);
+      setFaceMatches([]);
+      setFaceScanInfo(null);
+      setShowFaceScanner(false);
+      setStep(2);
+      toast('Patient verified by phone ✓', 'success');
     }
 
     async function pickFaceCandidate(patientId: string) {
@@ -1602,6 +1635,7 @@ function formatDrName(name: string | undefined): string {
             captureLabel="Capture & match"
             onCancel={() => setShowFaceScanner(false)}
             onCapture={handleFaceScan}
+            onPhoneVerify={handlePhoneVerify}
           />
         )}
       </div>
@@ -2220,14 +2254,11 @@ function formatDrName(name: string | undefined): string {
   }) {
     const due = visitType?.price ?? 0;
     const label = visitType?.name ?? fallbackLabel;
-    // Partial / half-payment chips are disabled for now — clinic
-    // policy is "full payment at booking" only. The check-in flow
-    // rejects unpaid bills, so under-paying just creates work later.
-    // Walk-ins (no visit type) still get quick-amount suggestions
-    // because there's no catalog price to anchor against.
-    const suggestions = visitType
-      ? [] // was: [due, Math.round(due / 2), 500, 1000]
-      : [300, 500, 1000, 1500];
+    // Quick-amount suggestion chips removed entirely. With a visit type
+    // the amount is the locked catalog fee; for walk-ins the operator
+    // types the exact amount. The arbitrary 300/500/1000 chips were
+    // just noise.
+    const suggestions: number[] = [];
     return (
       <>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 10 }}>
@@ -2300,18 +2331,20 @@ function formatDrName(name: string | undefined): string {
               }}
             />
           </div>
-          <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-            {suggestions.map((v) => (
-              <button key={v} type="button" onClick={() => setPayAmount(String(v))}
-                style={{
-                  padding: '4px 10px', border: '1px solid var(--border)', borderRadius: 8,
-                  background: 'var(--surface-muted)', fontSize: 11, fontWeight: 500,
-                  color: 'var(--text-muted)', cursor: 'pointer', fontVariantNumeric: 'tabular-nums',
-                }}>
-                {currency} {v.toLocaleString('en-IN')}
-              </button>
-            ))}
-          </div>
+          {suggestions.length > 0 && (
+            <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
+              {suggestions.map((v) => (
+                <button key={v} type="button" onClick={() => setPayAmount(String(v))}
+                  style={{
+                    padding: '4px 10px', border: '1px solid var(--border)', borderRadius: 8,
+                    background: 'var(--surface-muted)', fontSize: 11, fontWeight: 500,
+                    color: 'var(--text-muted)', cursor: 'pointer', fontVariantNumeric: 'tabular-nums',
+                  }}>
+                  {currency} {v.toLocaleString('en-IN')}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div>

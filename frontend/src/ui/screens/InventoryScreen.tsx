@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
-import { EmptyState, Spinner, useToast } from '../shared/primitives';
+import { EmptyState, Spinner, useToast, getCurrencySymbol } from '../shared/primitives';
 import { DatePickerChip } from '../shared/DatePickerChip';
 import { Icon } from '../shared/Icon';
 import { Skeleton } from '../shared/Skeleton';
@@ -875,7 +875,7 @@ function ReceiveSheet({
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
           <Field label="Unit cost (optional)">
             <input type="number" min={0} step="0.01" value={unitCost} onChange={(e) => setUnitCost(e.target.value)}
-              placeholder="₹/unit" style={inputStyle} />
+              placeholder={`${getCurrencySymbol()}/unit`} style={inputStyle} />
           </Field>
           <Field label="Supplier (optional)">
             <input value={supplier} onChange={(e) => setSupplier(e.target.value)} style={inputStyle} />

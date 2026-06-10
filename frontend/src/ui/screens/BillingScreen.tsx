@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiGet, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
-import { Avatar, EmptyState, Spinner, StatusPill, formatMoney, labelStyle, useToast } from '../shared/primitives';
+import { Avatar, EmptyState, Spinner, StatusPill, formatMoney, labelStyle, useToast, getCurrencySymbol, getCurrencyConversionData } from '../shared/primitives';
 
 // Common currencies surfaced in the create-bill sheet. The backend accepts
 // any 3-letter ISO 4217 code; this is just an opinionated FE shortcut.
@@ -738,7 +738,22 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
   const { ctx } = useApp();
   const toast = useToast();
   const [method, setMethod] = useState('UPI');
-  const [amount, setAmount] = useState(String(balance));
+
+  // Convert balance (which is in bill.currency) to detectedCurrency for input initialization
+  const getConvertedBalance = () => {
+    const { detectedCurrency, exchangeRates } = getCurrencyConversionData();
+    if (detectedCurrency && detectedCurrency !== bill.currency && exchangeRates) {
+      const srcRate = exchangeRates[bill.currency ?? 'INR'];
+      const targetRate = exchangeRates[detectedCurrency];
+      if (srcRate && targetRate) {
+        return (balance * targetRate) / srcRate;
+      }
+    }
+    return balance;
+  };
+
+  const convertedBalance = getConvertedBalance();
+  const [amount, setAmount] = useState(String(Math.round(convertedBalance * 100) / 100));
   const [reference, setReference] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -751,10 +766,22 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
     }
     setLoading(true); setError(null);
     try {
+      const amountNum = Number(amount);
+      let backendAmount = amountNum;
+      
+      const { detectedCurrency, exchangeRates } = getCurrencyConversionData();
+      if (detectedCurrency && detectedCurrency !== bill.currency && exchangeRates) {
+        const srcRate = exchangeRates[bill.currency ?? 'INR'];
+        const targetRate = exchangeRates[detectedCurrency];
+        if (srcRate && targetRate) {
+          backendAmount = (amountNum * srcRate) / targetRate;
+        }
+      }
+
       await apiPost(ctx, `/bills/${bill._id}/payments`, {
-        method, amount: Number(amount), providerRef: reference.trim() || undefined, idempotencyKey,
+        method, amount: backendAmount, providerRef: reference.trim() || undefined, idempotencyKey,
       });
-      toast(`Payment of ${formatMoney(Number(amount), bill.currency)} recorded`, 'success');
+      toast(`Payment of ${formatMoney(backendAmount, bill.currency)} recorded`, 'success');
       onSuccess();
     } catch (e) {
       shake();
@@ -763,6 +790,8 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
       setLoading(false);
     }
   }
+
+  const { detectedCurrency } = getCurrencyConversionData();
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', background: 'rgba(15,23,42,0.3)', backdropFilter: 'blur(2px)' }} onClick={onClose}>
@@ -791,19 +820,30 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
           </div>
 
           <div>
-            <label style={labelStyle}>Amount <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>({bill.currency})</span></label>
+            <label style={labelStyle}>Amount <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>({getCurrencySymbol(bill.currency)})</span></label>
             <div style={{ position: 'relative' }}>
-              <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 14, color: 'var(--text-muted)', fontFamily: "'Manrope',sans-serif", fontWeight: 700 }}>{bill.currency}</span>
+              <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 14, color: 'var(--text-muted)', fontFamily: "'Manrope',sans-serif", fontWeight: 700 }}>{getCurrencySymbol(bill.currency)}</span>
               <input type="number" value={amount} onChange={(e) => setAmount(e.target.value)}
                 style={{ width: '100%', height: 52, padding: '0 14px 0 34px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 12, fontSize: 22, fontWeight: 700, color: 'var(--text)', fontFamily: "'Manrope',sans-serif", outline: 'none', boxSizing: 'border-box', fontVariantNumeric: 'tabular-nums' }} />
             </div>
             <div style={{ display: 'flex', gap: 6, marginTop: 8 }}>
-              {[balance, Math.round(balance / 2), 500, 1000].filter((v, i, a) => v > 0 && a.indexOf(v) === i).slice(0, 4).map((v) => (
-                <button key={v} onClick={() => setAmount(String(v))}
-                  style={{ padding: '4px 10px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-muted)', fontSize: 11, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer', fontVariantNumeric: 'tabular-nums' }}>
-                  {formatMoney(v, bill.currency)}
-                </button>
-              ))}
+              {[balance, Math.round(balance / 2), 500, 1000].filter((v, i, a) => v > 0 && a.indexOf(v) === i).slice(0, 4).map((v) => {
+                let displayVal = v;
+                const { detectedCurrency, exchangeRates } = getCurrencyConversionData();
+                if (detectedCurrency && detectedCurrency !== bill.currency && exchangeRates) {
+                  const srcRate = exchangeRates[bill.currency ?? 'INR'];
+                  const targetRate = exchangeRates[detectedCurrency];
+                  if (srcRate && targetRate) {
+                    displayVal = (v * targetRate) / srcRate;
+                  }
+                }
+                return (
+                  <button key={v} onClick={() => setAmount(String(Math.round(displayVal * 100) / 100))}
+                    style={{ padding: '4px 10px', border: '1px solid var(--border)', borderRadius: 8, background: 'var(--surface-muted)', fontSize: 11, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer', fontVariantNumeric: 'tabular-nums' }}>
+                    {formatMoney(v, bill.currency)}
+                  </button>
+                );
+              })}
             </div>
           </div>
 
@@ -823,7 +863,7 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
         <div style={{ padding: '16px 20px', borderTop: '1px solid var(--border)' }}>
           <button onClick={submit} disabled={loading || !amount || Number(amount) <= 0}
             style={{ width: '100%', height: 46, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 12, fontSize: 14, fontWeight: 600, cursor: loading ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, opacity: loading ? 0.8 : 1 }}>
-            {loading ? <Spinner /> : <><Icon name="check" size={16} strokeWidth={2.5} />Record {formatMoney(Number(amount) || 0, bill.currency)}</>}
+            {loading ? <Spinner /> : <><Icon name="check" size={16} strokeWidth={2.5} />Record {formatMoney(Number(amount) || 0, detectedCurrency || bill.currency)}</>}
           </button>
         </div>
       </div>

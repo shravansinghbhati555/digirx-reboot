@@ -224,29 +224,57 @@ export function EncounterScreen() {
   const [patientResults, setPatientResults] = useState<Patient[]>([]);
   const [searching, setSearching] = useState(false);
 
-  // If we arrived from an appointment, pre-load the appointment to get patient/doctor
+  // If we arrived from an appointment, load/create encounter automatically
   useEffect(() => {
     if (!selectedAppointmentId) return;
-    apiGet<{ patientId: string; doctorId: string }>(ctx, `/appointments/${selectedAppointmentId}`)
-      .then((appt) => {
-        setPatientId(appt.patientId);
-        setDoctorId(appt.doctorId);
-      })
-      .catch(() => undefined);
 
-    // Also check if an encounter already exists for this appointment
-    apiGet<Encounter | null>(ctx, `/encounters/by-appointment/${selectedAppointmentId}`)
-      .then((enc) => {
-        if (enc) {
-          setEncounter(enc);
-          setEncounterId(enc._id);
-          const pid = typeof enc.patientId === 'object' ? enc.patientId._id : enc.patientId;
+    let cancelled = false;
+    async function loadOrCreate() {
+      try {
+        // 1. Fetch appointment details
+        const appt = await apiGet<any>(ctx, `/appointments/${selectedAppointmentId}`);
+        if (cancelled) return;
+
+        // 2. Check if encounter already exists
+        const existing = await apiGet<Encounter | null>(ctx, `/encounters/by-appointment/${selectedAppointmentId}`);
+        if (cancelled) return;
+
+        if (existing) {
+          setEncounter(existing);
+          setEncounterId(existing._id);
+          const pid = typeof existing.patientId === 'object' ? existing.patientId._id : existing.patientId;
           setPatientId(pid);
-          // Clear it so we don't jump back here if we navigate away and return
+          setDoctorId(existing.doctorId);
+        } else {
+          // 3. Create a new encounter automatically
+          const created = await apiPost<Encounter>(ctx, '/encounters', {
+            branchId: ctx.branchId || appt.branchId,
+            doctorId: appt.doctorId,
+            patientId: typeof appt.patientId === 'object' ? appt.patientId._id : appt.patientId,
+            appointmentId: selectedAppointmentId,
+            visitedAt: new Date().toISOString(),
+          });
+          if (cancelled) return;
+          setEncounter(created);
+          setEncounterId(created._id);
+          const pid = typeof created.patientId === 'object' ? created.patientId._id : created.patientId;
+          setPatientId(pid);
+          setDoctorId(created.doctorId);
+        }
+      } catch (e) {
+        console.error("Auto-encounter start failed:", e);
+      } finally {
+        if (!cancelled) {
           setSelectedAppointmentId(undefined);
         }
-      })
-      .catch(() => undefined);
+      }
+    }
+
+    void loadOrCreate();
+
+    return () => {
+      cancelled = true;
+    };
   }, [selectedAppointmentId, ctx, setSelectedAppointmentId]);
 
   useEffect(() => {
@@ -865,6 +893,11 @@ function EncounterEditor({
       const { shareToken } = await apiPost<{ shareToken: string }>(ctx, `/prescriptions/${prescriptionId}/share`, {
         expiresInSeconds: 7 * 24 * 60 * 60, // 7 days
       });
+      // Share the backend PDF endpoint. It now renders the PDF by
+      // screenshotting the share page (which mirrors the doctor's
+      // preview) via puppeteer — so the patient gets a real, savable
+      // PDF that looks exactly like the preview. The patient's browser
+      // opens / downloads it directly from this link.
       const shareUrl = `${ctx.apiBaseUrl}/share/prescriptions/${shareToken}/pdf`;
       const text = encodeURIComponent(`Hi ${patient?.fullName ?? 'Patient'}, your prescription is ready. You can view it here: ${shareUrl}`);
       window.open(`https://wa.me/${patient?.phones?.[0]?.replace(/\D/g, '') || ''}?text=${text}`, '_blank');

@@ -11,7 +11,7 @@ import { useShake } from '../shared/useShake';
 import { FaceScanModal } from '../shared/FaceScanModal';
 import { DocumentsScreen } from './DocumentsScreen';
 
-type Patient = {
+export type Patient = {
   _id: string;
   // MRN is auto-minted on registration (clinic-configurable format) and is
   // the human-readable identifier the front desk should reference. The raw
@@ -38,7 +38,7 @@ type Patient = {
 // Single source of truth for patient-ref display. Prefer the MRN; fall
 // back to a short tail of `_id` only when the MRN hasn't been minted (old
 // rows from before MRN auto-gen, or tests).
-function patientRef(p: { mrn?: string; _id: string }): string {
+export function patientRef(p: { mrn?: string; _id: string }): string {
   return p.mrn ?? `#${p._id.slice(-6)}`;
 }
 
@@ -788,7 +788,7 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
     </div>
   );
 }
-function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; onClose: () => void; onUpdated: (p: Patient) => void }) {
+export function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; onClose: () => void; onUpdated: (p: Patient) => void }) {
   const { ctx, features } = useApp();
   const { has } = usePerm();
   const toast = useToast();
@@ -1194,17 +1194,37 @@ function VisitCard({ visit }: { visit: Visit }) {
 }
 
 function AppointmentRow({ appt }: { appt: Appointment }) {
+  const { setScreen, setSelectedAppointmentId } = useApp();
   const isQueue = appt.type === 'QUEUE';
   const cancelled = appt.status === 'CANCELLED';
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
       <Icon name="calendar" size={14} style={{ color: 'var(--brand-500)', marginTop: 3 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 2 }}>
-          <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
-            {isQueue ? `Queue token #${appt.queueNumber ?? '—'}` : 'Time appointment'}
-          </span>
-          <StatusPill status={appt.status.toLowerCase().replace(/_/g, '-')} small />
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>
+              {isQueue ? `Queue token #${appt.queueNumber ?? '—'}` : 'Time appointment'}
+            </span>
+            <StatusPill status={appt.status.toLowerCase().replace(/_/g, '-')} small />
+          </div>
+          {!cancelled && (
+            <button
+              onClick={() => {
+                setSelectedAppointmentId(appt._id);
+                setScreen('encounters');
+              }}
+              className="press-scale"
+              style={{
+                height: 24, padding: '0 8px', background: 'var(--surface)',
+                border: '1px solid var(--border)', borderRadius: 6,
+                color: 'var(--text-muted)', fontSize: 11, fontWeight: 600,
+                cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4
+              }}
+            >
+              <Icon name="stethoscope" size={11} /> Prescribe
+            </button>
+          )}
         </div>
         <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>
           {appt.type === 'TIME' && appt.startAt && appt.endAt && (
@@ -1227,6 +1247,7 @@ function AppointmentRow({ appt }: { appt: Appointment }) {
 }
 
 function EncounterRow({ encounter: e }: { encounter: Encounter }) {
+  const { setScreen, setSelectedEncounterId } = useApp();
   // Diagnosis can come from the legacy `diagnosis` string OR the typed
   // `diagnoses` array. We render whichever is present; if both are
   // there (transitional period), the typed array wins.
@@ -1244,15 +1265,32 @@ function EncounterRow({ encounter: e }: { encounter: Encounter }) {
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', background: 'var(--surface-muted)', borderRadius: 10, border: '1px solid var(--border)' }}>
       <Icon name="activity" size={14} style={{ color: 'var(--teal-500)', marginTop: 3 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
-          <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Clinical encounter</span>
-          <span style={{ fontSize: 10, color: 'var(--text-subtle)', fontFamily: 'monospace' }}>#{e._id.slice(-8).toUpperCase()}</span>
-          <StatusPill status={isSigned ? 'signed' : 'draft'} small />
-          {isSigned && e.signedAt && (
-            <span style={{ fontSize: 10, color: 'var(--text-subtle)' }}>
-              · signed {new Date(e.signedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
-            </span>
-          )}
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Clinical encounter</span>
+            <span style={{ fontSize: 10, color: 'var(--text-subtle)', fontFamily: 'monospace' }}>#{e._id.slice(-8).toUpperCase()}</span>
+            <StatusPill status={isSigned ? 'signed' : 'draft'} small />
+            {isSigned && e.signedAt && (
+              <span style={{ fontSize: 10, color: 'var(--text-subtle)' }}>
+                · signed {new Date(e.signedAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+              </span>
+            )}
+          </div>
+          <button
+            onClick={() => {
+              setSelectedEncounterId(e._id);
+              setScreen('encounters');
+            }}
+            className="press-scale"
+            style={{
+              height: 24, padding: '0 8px', background: 'var(--surface)',
+              border: '1px solid var(--border)', borderRadius: 6,
+              color: 'var(--text-muted)', fontSize: 11, fontWeight: 600,
+              cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4
+            }}
+          >
+            <Icon name="edit" size={11} /> Open
+          </button>
         </div>
 
         {e.chiefComplaint && (

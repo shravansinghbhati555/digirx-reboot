@@ -97,7 +97,11 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
           border-bottom: 1px solid #e9ebee;
           padding: 20px 40px;
           display: grid;
-          grid-template-columns: repeat(4, 1fr);
+          /* Matches the preview's patient strip exactly. The 0.7fr
+             third column is the (currently hidden) blood-group slot —
+             kept empty so the field order / spacing lines up with the
+             doctor-side preview. */
+          grid-template-columns: 1.4fr 1.2fr 0.7fr 1.2fr;
           gap: 20px;
         }
         .ps-field { display: flex; flex-direction: column; }
@@ -174,10 +178,10 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
             <span className="ps-value">{data.patientGender || '—'} · {data.patientAge ? `${data.patientAge}y` : '—'}</span>
             <span className="ps-label">Demographics</span>
           </div>
-          <div className="ps-field">
-            <span className="ps-value">B+</span>
-            <span className="ps-label">Blood group</span>
-          </div>
+          {/* Blood group hidden — same as the doctor-side preview. The
+              empty column keeps the spacing aligned. Re-add when we
+              capture Patient.bloodGroup at registration. */}
+          <div className="ps-field" />
           <div className="ps-field">
             <span className="ps-value">{data.patientPhone || '—'}</span>
             <span className="ps-label">Phone</span>

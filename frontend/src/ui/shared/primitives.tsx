@@ -170,30 +170,102 @@ export function ToastProvider({ children }: { children: ReactNode }) {
  * the symbol + locale conventions follow automatically. Falls back to INR
  * when the code is missing/garbled so legacy data still renders.
  */
+let cachedDetectedCurrency: string | null = null;
+let cachedExchangeRates: Record<string, number> | null = null;
+let lastCacheCheck = 0;
+
+export function setDetectedCurrency(userId: string, currency: string) {
+  try {
+    localStorage.setItem(`digirx.detected_currency_${userId}`, currency);
+  } catch (e) {
+    // ignore
+  }
+  cachedDetectedCurrency = currency;
+  lastCacheCheck = 0; // force reload
+}
+
+export function getCurrencyConversionData() {
+  const now = Date.now();
+  if (now - lastCacheCheck < 2000) {
+    return { detectedCurrency: cachedDetectedCurrency, exchangeRates: cachedExchangeRates };
+  }
+  lastCacheCheck = now;
+  try {
+    const rawCtx = localStorage.getItem('digirx.devContext.v1');
+    let settingsCurrency: string | null = null;
+    let userId: string | null = null;
+    if (rawCtx) {
+      const parsed = JSON.parse(rawCtx);
+      userId = parsed.userId || null;
+      // The clinic's settings currency (from /me → ctx.currency) is
+      // AUTHORITATIVE — whatever the operator picked in Settings wins
+      // over any location-detected currency. We only fall back to the
+      // per-user geolocation currency when the clinic has no currency
+      // configured at all (brand-new clinic before signup defaults it).
+      if (typeof parsed.currency === 'string' && /^[A-Z]{3}$/.test(parsed.currency)) {
+        settingsCurrency = parsed.currency;
+      }
+    }
+    const geoCurrency = userId
+      ? localStorage.getItem(`digirx.detected_currency_${userId}`)
+      : null;
+    cachedDetectedCurrency = settingsCurrency || geoCurrency;
+    const rawRates = localStorage.getItem('digirx.exchange_rates');
+    if (rawRates) {
+      cachedExchangeRates = JSON.parse(rawRates);
+    }
+  } catch (e) {
+    // ignore
+  }
+  return { detectedCurrency: cachedDetectedCurrency, exchangeRates: cachedExchangeRates };
+}
+
+/**
+ * Currency-aware money formatter. Pass the bill's `currency` (ISO 4217) and
+ * the symbol + locale conventions follow automatically. Falls back to INR
+ * when the code is missing/garbled so legacy data still renders.
+ */
 export const formatMoney = (
   n: number | null | undefined,
-  currency: string | null | undefined,
+  currency?: string | null,
   locale = 'en-IN',
 ): string => {
   if (n === undefined || n === null || isNaN(Number(n))) return '—';
-  const code =
+  const srcCurrency =
     typeof currency === 'string' && /^[A-Z]{3}$/.test(currency)
       ? currency
       : 'INR';
+
+  let value = Number(n);
+  let targetCurrency = srcCurrency;
+  let targetLocale = locale;
+
+  const { detectedCurrency, exchangeRates } = getCurrencyConversionData();
+
+  if (detectedCurrency && detectedCurrency !== srcCurrency && exchangeRates) {
+    const srcRate = exchangeRates[srcCurrency];
+    const targetRate = exchangeRates[detectedCurrency];
+    if (srcRate && targetRate) {
+      value = (value * targetRate) / srcRate;
+      targetCurrency = detectedCurrency;
+      targetLocale = detectedCurrency === 'USD' ? 'en-US' : (detectedCurrency === 'GBP' ? 'en-GB' : (detectedCurrency === 'EUR' ? 'en-DE' : locale));
+    }
+  }
+
   try {
     // `narrowSymbol` forces the short currency symbol (¥, $, ₹) even
     // when the chosen locale would otherwise disambiguate with a code
     // prefix — e.g. en-IN renders JPY as "JP¥1,200" by default; with
     // narrowSymbol it becomes just "¥1,200". Far cleaner across the
     // board, no locale-juggling needed.
-    return new Intl.NumberFormat(locale, {
+    return new Intl.NumberFormat(targetLocale, {
       style: 'currency',
-      currency: code,
+      currency: targetCurrency,
       currencyDisplay: 'narrowSymbol',
-      maximumFractionDigits: 0,
-    }).format(Number(n));
+      maximumFractionDigits: targetCurrency === 'INR' ? 0 : 2,
+    }).format(value);
   } catch {
-    return `${code} ${Number(n).toLocaleString(locale)}`;
+    return `${targetCurrency} ${value.toLocaleString(targetLocale)}`;
   }
 };
 
@@ -210,24 +282,53 @@ export const formatINR = (n: number | null | undefined) => formatMoney(n, 'INR')
  */
 export const formatMoneyCompact = (
   n: number | null | undefined,
-  currency: string | null | undefined,
+  currency?: string | null,
   locale = 'en-IN',
 ): string => {
   if (n === undefined || n === null || isNaN(Number(n))) return '—';
-  const code =
+  const srcCurrency =
     typeof currency === 'string' && /^[A-Z]{3}$/.test(currency)
       ? currency
       : 'INR';
+
+  let value = Number(n);
+  let targetCurrency = srcCurrency;
+  let targetLocale = locale;
+
+  const { detectedCurrency, exchangeRates } = getCurrencyConversionData();
+
+  if (detectedCurrency && detectedCurrency !== srcCurrency && exchangeRates) {
+    const srcRate = exchangeRates[srcCurrency];
+    const targetRate = exchangeRates[detectedCurrency];
+    if (srcRate && targetRate) {
+      value = (value * targetRate) / srcRate;
+      targetCurrency = detectedCurrency;
+      targetLocale = detectedCurrency === 'USD' ? 'en-US' : (detectedCurrency === 'GBP' ? 'en-GB' : (detectedCurrency === 'EUR' ? 'en-DE' : locale));
+    }
+  }
+
   try {
-    return new Intl.NumberFormat(locale, {
+    return new Intl.NumberFormat(targetLocale, {
       style: 'currency',
-      currency: code,
+      currency: targetCurrency,
       currencyDisplay: 'narrowSymbol',
       notation: 'compact',
       maximumFractionDigits: 1,
-    }).format(Number(n));
+    }).format(value);
   } catch {
-    return `${code} ${Number(n).toLocaleString(locale)}`;
+    return `${targetCurrency} ${value.toLocaleString(targetLocale)}`;
+  }
+};
+
+export const getCurrencySymbol = (currency?: string | null): string => {
+  const { detectedCurrency } = getCurrencyConversionData();
+  const targetCurrency = detectedCurrency || (currency && /^[A-Z]{3}$/.test(currency) ? currency : 'INR');
+  try {
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: targetCurrency, currencyDisplay: 'narrowSymbol' })
+      .formatToParts(0)
+      .find((p) => p.type === 'currency')?.value || targetCurrency;
+  } catch {
+    return targetCurrency;
   }
 };
 

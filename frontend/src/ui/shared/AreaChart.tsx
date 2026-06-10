@@ -1,9 +1,11 @@
+import { formatMoneyCompact } from './primitives';
+
 export function AreaChart({
   data,
   labels,
   color = 'var(--brand-500)',
   height = 220,
-  yFormat = (v: number) => (v >= 1000 ? `₹${(v / 1000).toFixed(0)}k` : String(v)),
+  yFormat = (v: number) => formatMoneyCompact(v),
 }: {
   data: number[];
   labels: string[];

@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiGet, apiPatch, apiPost } from '../../app/api';
+import { apiDelete, apiGet, apiPatch, apiPost, apiPostMultipart } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
 import { isValidEmail, isValidIndianMobile, normalizeIndianMobile } from '../../app/validators';
 import { Avatar, Spinner, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
+import { FaceScanModal } from '../shared/FaceScanModal';
 
 type UserRow = {
   _id: string;
@@ -17,6 +18,7 @@ type UserRow = {
   registrationNumber?: string;
   qualifications?: string;
   branchIds?: string[];
+  faceEnrolledAt?: string;
 };
 
 type RoleOption = { _id: string; name: string; immutable: boolean };
@@ -609,6 +611,36 @@ function EditUserModal({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Face-login management. Admin (user:write) can enroll / re-enroll /
+  // remove a staff member's face. `faceEnrolled` is the live state —
+  // seeded from the user row, flipped by enroll/remove actions.
+  const { ctx } = useApp();
+  const toast = useToast();
+  const [faceEnrolled, setFaceEnrolled] = useState(!!user.faceEnrolledAt);
+  const [showFaceScan, setShowFaceScan] = useState(false);
+
+  async function handleFaceEnroll(blob: Blob, opts?: { preDetected?: boolean }) {
+    const fd = new FormData();
+    fd.append('image', blob, 'enroll.jpg');
+    if (opts?.preDetected) fd.append('pre_detected', 'true');
+    // Throw on failure so FaceScanModal renders the error inline.
+    await apiPostMultipart(ctx, `/users/${user._id}/face`, fd);
+    setShowFaceScan(false);
+    setFaceEnrolled(true);
+    toast('Face enrolled for login', 'success');
+  }
+
+  async function handleFaceRemove() {
+    if (!window.confirm(`Remove ${user.name}'s face login? They'll need email & password until re-enrolled.`)) return;
+    try {
+      await apiDelete(ctx, `/users/${user._id}/face`);
+      setFaceEnrolled(false);
+      toast('Face login removed', 'success');
+    } catch (e) {
+      toast(e instanceof Error ? e.message : String(e), 'error');
+    }
+  }
+
   function toggleBranch(id: string) {
     setBranchIds((prev) => {
       const next = new Set(prev);
@@ -741,6 +773,31 @@ function EditUserModal({
             </div>
           )}
 
+          {/* Face login — admin enrolls / removes a staff face. */}
+          <div style={{ paddingTop: 4, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+              <Icon name={faceEnrolled ? 'checkCircle' : 'camera'} size={17} style={{ color: faceEnrolled ? 'var(--success-500)' : 'var(--brand-500)' }} />
+            </div>
+            <div style={{ flex: 1, minWidth: 0 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Face login</div>
+              <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1 }}>
+                {faceEnrolled
+                  ? 'Enrolled — this user can sign in with their face.'
+                  : 'Not enrolled. Capture their face to enable face sign-in.'}
+              </div>
+            </div>
+            <button type="button" onClick={() => { setError(null); setShowFaceScan(true); }}
+              style={{ height: 32, padding: '0 12px', background: 'var(--brand-500)', border: 'none', borderRadius: 8, color: 'var(--brand-text)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <Icon name="camera" size={13} /> {faceEnrolled ? 'Re-enroll' : 'Enroll'}
+            </button>
+            {faceEnrolled && (
+              <button type="button" onClick={() => void handleFaceRemove()}
+                style={{ height: 32, padding: '0 10px', background: 'none', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--danger-500)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+                Remove
+              </button>
+            )}
+          </div>
+
           {error && (
             <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--danger-500)', fontSize: 13 }}>
               <Icon name="alertTriangle" size={14} style={{ flexShrink: 0, marginTop: 2 }} />
@@ -760,6 +817,16 @@ function EditUserModal({
           </div>
         </form>
       </div>
+
+      {showFaceScan && (
+        <FaceScanModal
+          title={faceEnrolled ? 'Re-enroll face' : 'Enroll face for login'}
+          hint={`Capture ${user.name}'s face. Well-lit, centered, single face in frame.`}
+          captureLabel="Capture & enroll"
+          onCancel={() => setShowFaceScan(false)}
+          onCapture={handleFaceEnroll}
+        />
+      )}
     </div>
   );
 }

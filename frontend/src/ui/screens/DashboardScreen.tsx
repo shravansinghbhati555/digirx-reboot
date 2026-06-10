@@ -46,8 +46,22 @@ function isoToTime(iso?: string) {
 type KpiKey = 'revenue' | 'bills' | 'pending' | 'appointments';
 
 export function DashboardScreen() {
-  const { ctx, setScreen, selectedDate, setSelectedEncounterId } = useApp();
+  const { ctx, setScreen, selectedDate, setSelectedEncounterId, setSelectedAppointmentId } = useApp();
   const { has } = usePerm();
+  // Clicking a completed appointment in today's schedule opens its
+  // consultation (signed → preview with Edit). Only navigate to the
+  // encounter screen when the user can actually access it, otherwise
+  // the shell would bounce them to the dashboard.
+  const canOpenConsult = has(Perm.EncounterRead);
+  function openScheduleItem(a: { _id: string; status: string }) {
+    const done = (a.status || '').toUpperCase() === 'DONE';
+    if (done && canOpenConsult) {
+      setSelectedAppointmentId(a._id);
+      setScreen('encounters');
+    } else {
+      setScreen('appointments');
+    }
+  }
   // Per-tile visibility. Mapping per role:
   //   Super Admin → all four (has every permission)
   //   Manager     → Revenue + Bills + Pending (ReportsRead + BillingRead, no ClinicWrite)
@@ -196,6 +210,8 @@ export function DashboardScreen() {
               <div style={{ display: 'flex', gap: 10, overflowX: 'auto', padding: '12px 16px' }}>
                 {schedule.items.slice(0, 12).map((a) => (
                   <div key={a._id}
+                    onClick={() => openScheduleItem(a)}
+                    title={(a.status || '').toUpperCase() === 'DONE' ? 'Open consultation' : 'Open in appointments'}
                     style={{ flexShrink: 0, width: 150, background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10, padding: 10, cursor: 'pointer' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
                       <span style={{ fontSize: 10, fontWeight: 600, color: 'var(--text-subtle)', fontVariantNumeric: 'tabular-nums' }}>

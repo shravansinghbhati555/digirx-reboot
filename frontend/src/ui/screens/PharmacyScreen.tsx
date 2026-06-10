@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
-import { EmptyState, Spinner, useToast } from '../shared/primitives';
+import { EmptyState, Spinner, useToast, formatMoney, getCurrencySymbol, getCurrencyConversionData } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
 
 // ---- Types ---------------------------------------------------------------
@@ -946,7 +946,21 @@ function PaymentModal({
 }) {
   const { ctx } = useApp();
   const toast = useToast();
-  const [amount, setAmount] = useState(String(outstanding));
+
+  const getConvertedOutstanding = () => {
+    const { detectedCurrency, exchangeRates } = getCurrencyConversionData();
+    if (detectedCurrency && detectedCurrency !== bill.currency && exchangeRates) {
+      const srcRate = exchangeRates[bill.currency ?? 'INR'];
+      const targetRate = exchangeRates[detectedCurrency];
+      if (srcRate && targetRate) {
+        return (outstanding * targetRate) / srcRate;
+      }
+    }
+    return outstanding;
+  };
+
+  const convertedOutstanding = getConvertedOutstanding();
+  const [amount, setAmount] = useState(String(Math.round(convertedOutstanding * 100) / 100));
   const [method, setMethod] = useState<string>('CASH');
   const [reference, setReference] = useState('');
   const [busy, setBusy] = useState(false);
@@ -955,12 +969,23 @@ function PaymentModal({
   async function submit() {
     const amt = Number(amount);
     if (!Number.isFinite(amt) || amt <= 0) { setError('Enter a positive amount.'); return; }
-    if (amt > outstanding + 0.01) { setError(`Amount exceeds total (${formatMoney(outstanding, bill.currency)}).`); return; }
+
+    let backendAmount = amt;
+    const { detectedCurrency, exchangeRates } = getCurrencyConversionData();
+    if (detectedCurrency && detectedCurrency !== bill.currency && exchangeRates) {
+      const srcRate = exchangeRates[bill.currency ?? 'INR'];
+      const targetRate = exchangeRates[detectedCurrency];
+      if (srcRate && targetRate) {
+        backendAmount = (amt * srcRate) / targetRate;
+      }
+    }
+
+    if (backendAmount > outstanding + 0.01) { setError(`Amount exceeds total (${formatMoney(outstanding, bill.currency)}).`); return; }
     setBusy(true); setError(null);
     try {
       await apiPost(ctx, `/bills/${bill._id}/payments`, {
         method,
-        amount: amt,
+        amount: backendAmount,
         providerRef: reference.trim() || undefined,
         idempotencyKey: typeof crypto !== 'undefined' && 'randomUUID' in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random()}`,
       });
@@ -1004,7 +1029,7 @@ function PaymentModal({
             </div>
           </div>
           <div>
-            <label style={fieldLabel}>Amount (total: {formatMoney(outstanding, bill.currency)})</label>
+            <label style={fieldLabel}>Amount ({getCurrencySymbol(bill.currency)}) (total: {formatMoney(outstanding, bill.currency)})</label>
             <input type="number" min={0.01} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)}
               autoFocus
               style={modalInput} />
@@ -1042,14 +1067,6 @@ const modalInput: React.CSSProperties = {
   background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9,
   fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box', fontFamily: 'inherit',
 };
-
-function formatMoney(amount: number, currency: string): string {
-  try {
-    return new Intl.NumberFormat('en-IN', { style: 'currency', currency }).format(amount);
-  } catch {
-    return `${currency} ${amount.toFixed(2)}`;
-  }
-}
 
 // ---- Printable receipt (client-side HTML, no server PDF) ---------------
 
