@@ -16,7 +16,7 @@ import { CreatePaymentDto } from './dto/create-payment.dto';
 import { UpdateBillDto } from './dto/update-bill.dto';
 import { Bill, BillKind, BillLineItem, BillStatus } from './schemas/bill.schema';
 import { DocumentCategory, DocumentOwnerType, DocumentStatus } from '../documents/schemas/document.schema';
-import { Branch } from '../tenancy/schemas/branch.schema';
+import { Branch, legacyAddressLine } from '../tenancy/schemas/branch.schema';
 import { PdfService } from '../pdf/pdf.service';
 import { StorageService } from '../storage/storage.service';
 import { DocumentsService } from '../documents/documents.service';
@@ -863,7 +863,7 @@ export class BillingService {
         clinicLogoUrl: branding?.logoUrl ?? undefined,
         primaryColor: branding?.primaryColor ?? undefined,
         branchName: branch?.name,
-        clinicAddress: branch?.addressLine,
+        clinicAddress: branch?.addressLine || legacyAddressLine(branch?.address as any),
         clinicPhone: branch?.phone,
         billNo: bill.billNo,
         patientName: patient?.fullName ?? 'Patient',

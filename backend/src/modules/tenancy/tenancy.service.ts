@@ -3,7 +3,7 @@ import { InjectModel } from '@nestjs/mongoose';
 import { DateTime } from 'luxon';
 import { Model, Types } from 'mongoose';
 import { Clinic } from './schemas/clinic.schema';
-import { Branch } from './schemas/branch.schema';
+import { Branch, legacyAddressLine } from './schemas/branch.schema';
 import { User } from '../authz/schemas/user.schema';
 import {
   mergeClinicSettings,
@@ -359,15 +359,6 @@ export class TenancyService {
       doctorCount,
     };
   }
-}
-
-function legacyAddressLine(addr?: Record<string, unknown>): string | undefined {
-  if (!addr) return undefined;
-  const street = typeof addr.street === 'string' ? addr.street : '';
-  const city = typeof addr.city === 'string' ? addr.city : '';
-  const zip = typeof addr.zip === 'string' ? addr.zip : '';
-  const left = [street, city].filter(Boolean).join(', ');
-  return zip ? (left ? `${left} — ${zip}` : zip) : left || undefined;
 }
 
 function isValidIanaZone(tz: string): boolean {

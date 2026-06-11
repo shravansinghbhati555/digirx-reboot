@@ -18,9 +18,11 @@ import { DocumentCategory, DocumentOwnerType, DocumentStatus } from '../document
 import { Patient } from '../patients/schemas/patient.schema';
 import { User } from '../authz/schemas/user.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
-import { Branch } from '../tenancy/schemas/branch.schema';
+import { Branch, legacyAddressLine } from '../tenancy/schemas/branch.schema';
 import { Encounter } from '../encounters/schemas/encounter.schema';
 import { Prescription } from './schemas/prescription.schema';
+
+import { mergeClinicSettings } from '../tenancy/clinic-settings.types';
 
 @Controller()
 export class PrescriptionsController {
@@ -55,7 +57,7 @@ export class PrescriptionsController {
     const rx = await this.prescriptions.getByEncounter(
       req.context!.clinicId,
       encounterId,
-    );
+      );
     return rx ?? null;
   }
 
@@ -108,12 +110,19 @@ export class PrescriptionsController {
     const { rx, clinic, branch, patient, doctor, encounter, age } =
       await this.prescriptions.getShareData(token);
 
+    const settings = clinic ? mergeClinicSettings((clinic as any).settings) : null;
+    const branding = settings?.branding;
+
     return {
       _id: rx._id,
       createdAt: (rx as any).createdAt,
       clinicName: clinic?.name,
+      clinicDisplayName: branding?.displayName,
+      clinicLogoUrl: branding?.logoUrl,
+      primaryColor: branding?.primaryColor,
+      prescriptionNo: rx.prescriptionNo,
       branchName: branch?.name,
-      branchAddress: branch?.addressLine,
+      branchAddress: branch?.addressLine || legacyAddressLine(branch?.address as any),
       patientName: patient?.fullName,
       patientAge: age || undefined,
       patientGender: patient?.gender,

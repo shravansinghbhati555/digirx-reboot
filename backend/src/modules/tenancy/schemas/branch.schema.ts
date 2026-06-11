@@ -63,3 +63,13 @@ BranchSchema.index(
   { clinicId: 1, code: 1 },
   { unique: true, sparse: true, name: 'branch_unique_code_per_clinic' },
 );
+
+export function legacyAddressLine(addr?: Record<string, unknown>): string | undefined {
+  if (!addr) return undefined;
+  const street = typeof addr.street === 'string' ? addr.street : '';
+  const city = typeof addr.city === 'string' ? addr.city : '';
+  const zip = typeof addr.zip === 'string' ? addr.zip : '';
+  const left = [street, city].filter(Boolean).join(', ');
+  return zip ? (left ? `${left} — ${zip}` : zip) : left || undefined;
+}
+

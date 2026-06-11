@@ -25,7 +25,7 @@ import { PdfService } from '../pdf/pdf.service';
 import { StorageService } from '../storage/storage.service';
 import { DocumentsService } from '../documents/documents.service';
 import { DocumentCategory, DocumentOwnerType, DocumentStatus } from '../documents/schemas/document.schema';
-import { Branch } from '../tenancy/schemas/branch.schema';
+import { Branch, legacyAddressLine } from '../tenancy/schemas/branch.schema';
 import { Encounter, EncounterStatus } from '../encounters/schemas/encounter.schema';
 
 const DEFAULT_RX_SHARE_EXPIRY_SECONDS = 7 * 24 * 60 * 60;
@@ -450,7 +450,7 @@ export class PrescriptionsService {
       clinicDisplayName: branding?.displayName ?? undefined,
       clinicLogoUrl: branding?.logoUrl ?? undefined,
       primaryColor: branding?.primaryColor ?? undefined,
-      clinicAddress: branch?.addressLine,
+      clinicAddress: branch?.addressLine || legacyAddressLine(branch?.address as any),
       clinicPhone: branch?.phone,
       patientName: patient?.fullName ?? 'Patient',
       patientAge: age || undefined,

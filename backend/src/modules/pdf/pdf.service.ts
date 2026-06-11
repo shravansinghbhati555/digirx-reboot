@@ -385,7 +385,7 @@ export class PdfService {
       const dateWidth = bold.latin.widthOfTextAtSize(`Date: ${dateStr}`, 10);
       drawText(page, `Date: ${dateStr}`, { x: PAGE_WIDTH - MARGIN_X - dateWidth, y: y + 2, size: 10, font: bold });
 
-      y -= 25;
+      y -= 40;
 
       // Patient Info Strip
       page.drawRectangle({
@@ -422,10 +422,49 @@ export class PdfService {
       // Vitals & Diagnosis
       if (input.vitals || input.diagnosis) {
         if (input.vitals) {
-          const vitalsArr = Object.entries(input.vitals).filter(([_, v]) => !!v).map(([k, v]) => `${k.toUpperCase()}: ${v}`);
-          if (vitalsArr.length > 0) {
+          const formattedVitals: string[] = [];
+          const v = input.vitals;
+
+          if (v.bpSystolic || v.bpDiastolic) {
+            formattedVitals.push(`BP: ${v.bpSystolic ?? '—'}/${v.bpDiastolic ?? '—'} mmHg`);
+          }
+          if (v.spo2) {
+            formattedVitals.push(`SpO2: ${v.spo2}%`);
+          }
+          if (v.temperatureC != null) {
+            const celsius = parseFloat(String(v.temperatureC));
+            if (!isNaN(celsius)) {
+              const f = (celsius * 9 / 5) + 32;
+              const fahrenheit = Math.round(f * 10) / 10;
+              formattedVitals.push(`Temp: ${fahrenheit}°F`);
+            }
+          } else if (v.temp != null) {
+            formattedVitals.push(`Temp: ${v.temp}°F`);
+          }
+          if (v.pulseBpm) {
+            formattedVitals.push(`Pulse: ${v.pulseBpm} bpm`);
+          } else if (v.pulse) {
+            formattedVitals.push(`Pulse: ${v.pulse} bpm`);
+          }
+          if (v.respiratoryRate) {
+            formattedVitals.push(`RR: ${v.respiratoryRate}/min`);
+          } else if (v.rr) {
+            formattedVitals.push(`RR: ${v.rr}/min`);
+          }
+          if (v.weightKg) {
+            formattedVitals.push(`Weight: ${v.weightKg} kg`);
+          } else if (v.weight) {
+            formattedVitals.push(`Weight: ${v.weight} kg`);
+          }
+          if (v.heightCm) {
+            formattedVitals.push(`Height: ${v.heightCm} cm`);
+          } else if (v.height) {
+            formattedVitals.push(`Height: ${v.height} cm`);
+          }
+
+          if (formattedVitals.length > 0) {
             drawText(page, 'Vitals: ', { x: MARGIN_X, y, size: 9, font: bold, color: TEXT_MUTED });
-            drawText(page, vitalsArr.join('  •  '), { x: MARGIN_X + 45, y, size: 9, font, color: TEXT_DARK });
+            drawText(page, formattedVitals.join('  •  '), { x: MARGIN_X + 45, y, size: 9, font, color: TEXT_DARK });
             y -= 16;
           }
         }
