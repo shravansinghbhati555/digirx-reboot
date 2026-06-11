@@ -74,11 +74,14 @@ export function App() {
   // Simple public routing for sharing
   const path = window.location.pathname;
   if (path.startsWith('/share/')) {
-    const token = path.split('/')[2];
+    const parts = path.split('/').filter(Boolean);
+    const token = parts[parts.length - 1];
     return (
-      <AppProvider>
-        <SharePrescriptionScreen token={token} />
-      </AppProvider>
+      <BrowserRouter>
+        <AppProvider>
+          <SharePrescriptionScreen token={token} />
+        </AppProvider>
+      </BrowserRouter>
     );
   }
 

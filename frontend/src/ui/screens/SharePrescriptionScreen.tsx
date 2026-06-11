@@ -2,6 +2,16 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../../app/AppContext';
 import { Icon } from '../shared/Icon';
 
+const VITAL_FIELDS: { key: string; label: string; unit: string }[] = [
+  { key: 'bp', label: 'BP', unit: 'mmHg' },
+  { key: 'spo2', label: 'SpO2', unit: '%' },
+  { key: 'temp', label: 'Temp', unit: '°F' },
+  { key: 'pulse', label: 'Pulse', unit: 'bpm' },
+  { key: 'rr', label: 'RR', unit: '/min' },
+  { key: 'weight', label: 'Weight', unit: 'kg' },
+  { key: 'height', label: 'Height', unit: 'cm' },
+];
+
 export function SharePrescriptionScreen({ token }: { token: string }) {
   const { ctx } = useApp();
   const [data, setData] = useState<any>(null);
@@ -12,10 +22,10 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
     // Determine the best API URL. 
     // If we are on localhost (like Puppeteer), and the context URL is a remote tunnel,
     // we might want to try localhost:4000 directly to avoid loopback issues.
-    let baseUrl = ctx.apiBaseUrl || 'https://api.digirx.stageprojects.xyz/';
+    let baseUrl = ctx.apiBaseUrl || 'http://localhost:4000/';
     if (window.location.hostname === 'localhost' && !baseUrl.includes('localhost')) {
       console.log('Detected local environment, trying local API fallback');
-      baseUrl = 'https://api.digirx.stageprojects.xyz/';
+      baseUrl = 'http://localhost:4000/';
     }
 
     const url = `${baseUrl}/share/prescriptions/${token}`;
@@ -31,7 +41,9 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
       })
       .finally(() => setLoading(false));
   }, [token, ctx.apiBaseUrl]);
-  console.log("DATA=======", data)
+
+  console.log("DATA=======", data);
+
   if (error) {
     return (
       <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f8fafc', padding: 20 }}>
@@ -59,110 +71,293 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
   }
 
   const dateStr = new Date(data.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
-  const filledVitals = Object.entries(data.vitals || {}).filter(([_, v]) => v);
+  const filledVitals = Object.entries(data.vitals || {}).filter(([_, v]) => v && String(v).trim());
   const diagnosisList = (data.diagnosis || '').split('|').map((s: string) => s.trim()).filter(Boolean);
+
+  // Determine the best API URL for logo fallback.
+  let baseUrl = ctx.apiBaseUrl || 'http://localhost:4000/';
+  if (window.location.hostname === 'localhost' && !baseUrl.includes('localhost')) {
+    baseUrl = 'http://localhost:4000/';
+  }
+
+  // Resolve dynamic branding inputs
+  const brandColor = (data.primaryColor || '').trim() || '#1a56db';
+  const headerName = (data.clinicDisplayName || '').trim() || data.clinicName || 'Clinic';
+  const rxNo = `#${(data.prescriptionNo || data._id || '').slice(-6).toUpperCase()}`;
+  
+  const logoSrc = data.clinicLogoUrl
+    ? data.clinicLogoUrl.startsWith('http://') || data.clinicLogoUrl.startsWith('https://')
+      ? data.clinicLogoUrl
+      : `${baseUrl.replace(/\/+$/, '')}/${data.clinicLogoUrl.replace(/^\/+/, '')}`
+    : '';
+
+  const doctorName = data.doctorName
+    ? data.doctorName.toLowerCase().startsWith('dr.')
+      ? data.doctorName
+      : `Dr. ${data.doctorName}`
+    : 'Doctor';
 
   return (
     <div style={{ background: '#f1f5f9', minHeight: '100vh', padding: '20px 0' }}>
       <style>{`
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+        
         .share-container {
-          width: 800px;
+          width: 794px;
           margin: 0 auto;
           background: #fff;
-          box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
-          min-height: 1000px;
+          box-shadow: 0 4px 24px rgba(15,23,42,0.08);
+          border: 1px solid #e2e8f0;
+          border-radius: 12px;
+          padding: 28px 28px 36px;
           position: relative;
           color: #1a1a1a;
-          font-family: 'Inter', -apple-system, sans-serif;
+          font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+          font-size: 13px;
+          line-height: 1.5;
         }
 
         .header {
-          padding: 40px;
-          border-bottom: 3px solid #1a56db;
           display: flex;
           justify-content: space-between;
           align-items: flex-start;
+          padding-bottom: 14px;
+          border-bottom: 2px solid var(--brand-color);
+          margin-bottom: 20px;
           background: #fff;
         }
 
-        .clinic-name { font-size: 24px; font-weight: 800; color: #1a1a1a; margin-bottom: 4px; }
-        .clinic-addr { font-size: 11px; color: #6b7280; line-height: 1.5; }
-        .doctor-block { text-align: right; }
-        .dr-name { font-size: 18px; font-weight: 700; color: #1a1a1a; display: block; }
-        .dr-cred { font-size: 11px; color: #6b7280; display: block; margin-top: 2px; }
-        .dr-date { font-size: 12px; font-weight: 600; color: #1a56db; display: block; margin-top: 8px; }
+        .clinic-name {
+          font-size: 28px;
+          font-weight: 700;
+          color: var(--brand-color);
+          line-height: 1.1;
+          margin-bottom: 6px;
+        }
+
+        .clinic-addr {
+          font-size: 12px;
+          color: #6b7280;
+          font-weight: 400;
+          line-height: 1.7;
+        }
+
+        .doctor-block {
+          text-align: right;
+        }
+
+        .dr-name {
+          font-size: 14px;
+          font-weight: 700;
+          color: #1a1a1a;
+          display: block;
+          margin-bottom: 2px;
+        }
+
+        .dr-cred {
+          font-size: 11.5px;
+          color: #6b7280;
+          font-weight: 400;
+          display: block;
+          line-height: 1.6;
+        }
+
+        .dr-date {
+          font-size: 12px;
+          font-weight: 700;
+          color: var(--brand-color);
+          display: block;
+          margin-top: 4px;
+        }
+
+        .rx-no-top {
+          font-size: 11px;
+          font-weight: 800;
+          color: #1e293b;
+          text-transform: uppercase;
+          margin-bottom: 8px;
+        }
 
         .patient-strip {
-          background: #f8fafb;
-          border-bottom: 1px solid #e9ebee;
-          padding: 20px 40px;
           display: grid;
-          /* Matches the preview's patient strip exactly. The 0.7fr
-             third column is the (currently hidden) blood-group slot —
-             kept empty so the field order / spacing lines up with the
-             doctor-side preview. */
           grid-template-columns: 1.4fr 1.2fr 0.7fr 1.2fr;
-          gap: 20px;
+          background: #f3f4f6;
+          border: 1px solid #e5e7eb;
+          border-radius: 6px;
+          padding: 12px 20px;
+          margin-bottom: 22px;
+          gap: 0;
         }
-        .ps-field { display: flex; flex-direction: column; }
-        .ps-value { font-size: 13px; font-weight: 700; color: #1a1a1a; margin-bottom: 2px; display: block; }
-        .ps-label { font-size: 10px; color: #9ca3af; text-transform: uppercase; letter-spacing: 0.05em; }
 
-        .content { padding: 30px 40px; }
-        .section { margin-bottom: 24px; }
+        .ps-field {
+          padding: 4px 12px 4px 0;
+        }
+
+        .ps-field:first-child {
+          padding-left: 0;
+        }
+
+        .ps-value {
+          font-size: 14px;
+          font-weight: 700;
+          color: #1a1a1a;
+          display: block;
+          margin-bottom: 2px;
+        }
+
+        .ps-label {
+          font-size: 11px;
+          color: #9ca3af;
+          font-weight: 400;
+          display: block;
+        }
+
+        .content {
+          padding: 0;
+        }
+
+        .section {
+          margin-bottom: 20px;
+        }
+
         .section-title {
           font-size: 11px;
           font-weight: 700;
-          color: #1a56db;
+          color: var(--brand-color);
           text-transform: uppercase;
           letter-spacing: 0.1em;
-          margin-bottom: 12px;
-          display: flex;
-          align-items: center;
-          gap: 6px;
+          margin: 0 0 10px 0;
         }
-        .section-title::after { content: ''; flex: 1; height: 1px; background: #e5e7eb; }
 
-        .vitals-grid { display: grid; grid-template-columns: repeat(6, 1fr); gap: 8px; }
-        .vital-box { background: #f9fafb; border: 1px solid #e9ebee; border-radius: 6px; padding: 10px 6px; text-align: center; }
-        .vital-lbl { font-size: 9px; font-weight: 600; color: #9ca3af; text-transform: uppercase; margin-bottom: 4px; display: block; }
-        .vital-val { font-size: 15px; font-weight: 700; color: #1a1a1a; }
-        .vital-unit { font-size: 9px; color: #6b7280; margin-left: 1px; }
+        .vitals-grid {
+          display: grid;
+          grid-template-columns: repeat(6, 1fr);
+          gap: 8px;
+        }
 
-        .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-        .chip { padding: 4px 12px; border-radius: 20px; background: #e8eefb; border: 1px solid #c3d2f5; color: #1a56db; font-size: 12px; font-weight: 500; }
+        .vital-box {
+          background: #f9fafb;
+          border: 1px solid #e9ebee;
+          border-radius: 6px;
+          padding: 10px 6px;
+          text-align: center;
+        }
 
-        .rx-table { width: 100%; border-collapse: collapse; }
-        .rx-table th { font-size: 10px; font-weight: 700; color: #6b7280; text-transform: uppercase; padding: 10px 12px; text-align: left; border-bottom: 1px solid #e5e7eb; background: #f9fafb; }
-        .rx-table td { padding: 12px; border-bottom: 1px solid #f3f4f6; font-size: 12.5px; vertical-align: top; }
-        .med-name { font-weight: 700; color: #1a1a1a; }
+        .vital-lbl {
+          font-size: 9.5px;
+          font-weight: 600;
+          color: #9ca3af;
+          text-transform: uppercase;
+          letter-spacing: 0.06em;
+          display: block;
+          margin-bottom: 5px;
+        }
 
-        .notes-text { font-size: 12.5px; color: #374151; white-space: pre-wrap; line-height: 1.6; }
+        .vital-val {
+          font-size: 17px;
+          font-weight: 700;
+          color: #1a1a1a;
+          line-height: 1;
+        }
+
+        .chips {
+          display: flex;
+          flex-wrap: wrap;
+          gap: 8px;
+        }
+
+        .chip {
+          padding: 5px 14px;
+          border-radius: 20px;
+          background: #e8eefb;
+          border: 1px solid #c3d2f5;
+          color: var(--brand-color);
+          font-size: 12px;
+          font-weight: 500;
+        }
+
+        .rx-table {
+          width: 100%;
+          border-collapse: collapse;
+          font-size: 13px;
+        }
+
+        .rx-table thead tr {
+          background: #f3f4f6;
+        }
+
+        .rx-table th {
+          font-size: 11px;
+          font-weight: 600;
+          color: #6b7280;
+          text-transform: uppercase;
+          letter-spacing: 0.07em;
+          padding: 9px 12px;
+          text-align: left;
+          border-bottom: 1px solid #e5e7eb;
+        }
+
+        .rx-table td {
+          padding: 12px 12px;
+          border-bottom: 1px solid #f0f0f0;
+          color: #1a1a1a;
+          font-size: 13px;
+          vertical-align: top;
+        }
+
+        .rx-table td.med-name {
+          font-weight: 600;
+          color: #1a1a1a;
+        }
+
+        .notes-text {
+          font-size: 13px;
+          color: #374151;
+          white-space: pre-wrap;
+          line-height: 1.6;
+        }
 
         .footer {
-          margin-top: 40px;
-          padding: 0 40px 40px;
+          margin-top: 48px;
           display: flex;
           justify-content: space-between;
           align-items: flex-end;
+          padding: 0;
         }
-        .foot-meta { font-size: 10px; color: #9ca3af; line-height: 1.6; }
-        .signature-block { text-align: right; }
-        .sig-line { border-bottom: 2px solid #1a1a1a; width: 180px; margin-bottom: 6px; }
-        .sig-name { font-size: 13px; font-weight: 700; color: #1a1a1a; }
+
+        .foot-meta {
+          font-size: 10px;
+          color: #9ca3af;
+          line-height: 1.7;
+        }
       `}</style>
 
-      <div id="prescription-capture-area" className="share-container">
+      <div
+        id="prescription-capture-area"
+        className="share-container"
+        style={{ ['--brand-color' as any]: brandColor }}
+      >
         <header className="header">
-          <div>
-            <div className="clinic-name">{data.clinicName || 'DigiRx'}</div>
-            <div className="clinic-addr">
-              {data.branchName || 'Main Branch'}{data.branchAddress ? ` · ${data.branchAddress}` : ''}<br />
-              {data.branchAddress || ''} {data.branchPhone ? ` · ${data.branchPhone}` : ''}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+            {logoSrc && (
+              <img
+                src={logoSrc}
+                alt=""
+                style={{ maxHeight: '60px', maxWidth: '120px', objectFit: 'contain' }}
+                onError={(e) => { e.currentTarget.style.display = 'none'; }}
+              />
+            )}
+            <div>
+              <div className="clinic-name">{headerName}</div>
+              <div className="clinic-addr">
+                {data.branchName || 'Main Branch'}<br />
+                {data.branchAddress || ''} {data.branchPhone ? ` · ${data.branchPhone}` : ''}
+              </div>
             </div>
           </div>
           <div className="doctor-block">
-            <span className="dr-name">Dr. {data.doctorName}</span>
+            <div className="rx-no-top">Rx No: {rxNo}</div>
+            <span className="dr-name">{doctorName}</span>
             <span className="dr-cred">{data.doctorQuals || ''}</span>
             <span className="dr-cred">{data.doctorReg ? `Reg No: ${data.doctorReg}` : ''}</span>
             <span className="dr-date">{dateStr}</span>
@@ -175,13 +370,9 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
             <span className="ps-label">Patient</span>
           </div>
           <div className="ps-field">
-            <span className="ps-value">{data.patientGender || '—'} · {data.patientAge ? `${data.patientAge}y` : '—'}</span>
+            <span className="ps-value">{data.patientGender || '—'} · {data.patientAge ? `${data.patientAge} yrs` : '—'}</span>
             <span className="ps-label">Demographics</span>
           </div>
-          {/* Blood group hidden — same as the doctor-side preview. The
-              empty column keeps the spacing aligned. Re-add when we
-              capture Patient.bloodGroup at registration. */}
-          <div className="ps-field" />
           <div className="ps-field">
             <span className="ps-value">{data.patientPhone || '—'}</span>
             <span className="ps-label">Phone</span>
@@ -193,12 +384,22 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
             <section className="section">
               <div className="section-title">Vitals</div>
               <div className="vitals-grid">
-                {filledVitals.map(([k, v]) => (
-                  <div key={k} className="vital-box">
-                    <span className="vital-lbl">{k.toUpperCase()}</span>
-                    <span className="vital-val">{v as string}</span>
-                  </div>
-                ))}
+                {filledVitals.map(([k, v]) => {
+                  const meta = VITAL_FIELDS.find((f) => f.key === k);
+                  return (
+                    <div key={k} className="vital-box">
+                      <span className="vital-lbl">{meta?.label ?? k.toUpperCase()}</span>
+                      <span className="vital-val">
+                        {v as string}
+                        {meta?.unit && (
+                          <span style={{ fontSize: '11px', fontWeight: 500, color: '#6b7280', marginLeft: '2px' }}>
+                            {meta.unit}
+                          </span>
+                        )}
+                      </span>
+                    </div>
+                  );
+                })}
               </div>
             </section>
           )}
@@ -266,15 +467,20 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
 
         <footer className="footer">
           <div className="foot-meta">
-            Generated via DigiRx Clinical Platform<br />
-            This prescription is valid for 30 days from date of issue.
+            Generated by DigiRx · digirx.in<br />
+            This prescription is valid for 30 days from the date of issue.
           </div>
-          <div className="signature-block">
-            <div className="sig-line"></div>
-            <div className="sig-name">Dr. {data.doctorName}</div>
+          <div className="signature" style={{ textAlign: 'right' }}>
+            <div className="line" style={{ borderBottom: '2px solid #0f172a', minWidth: '180px', marginBottom: '6px' }} />
+            <div className="who" style={{ fontWeight: 700, color: '#0f172a' }}>{doctorName}</div>
+            <div style={{ fontSize: '10px', color: '#64748b', marginTop: '2px' }}>
+              {data.doctorQuals || ''}
+              {data.doctorReg && <><br />Reg No: {data.doctorReg}</>}
+            </div>
           </div>
         </footer>
       </div>
     </div>
   );
 }
+
