@@ -6,6 +6,7 @@ import { Icon, type IconName } from '../shared/Icon';
 import { DatePickerChip } from '../shared/DatePickerChip';
 import { ListItemSkeleton } from '../shared/Skeleton';
 import { DocumentsScreen } from './DocumentsScreen';
+import { VoiceInput } from '../shared/VoiceInput';
 
 type Encounter = {
   _id: string;
@@ -1145,8 +1146,14 @@ function EncounterEditor({
 
           {(!signed || complaint.trim()) && (
             <Section title="Chief complaint" icon="stethoscope" defaultOpen={!signed}>
-              <textarea value={complaint} onChange={(e) => setComplaint(e.target.value)}                placeholder="Describe the patient's presenting complaint…"
-                style={{ width: '100%', minHeight: 72, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box'}} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-subtle)', fontWeight: 500 }}>Describe the patient's presenting complaint…</span>
+                  <VoiceInput onTranscript={(text) => setComplaint((c) => c ? c.trim() + ' ' + text.trim() : text.trim())} />
+                </div>
+                <textarea value={complaint} onChange={(e) => setComplaint(e.target.value)}                placeholder="Describe the patient's presenting complaint…"
+                  style={{ width: '100%', minHeight: 72, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box'}} />
+              </div>
             </Section>
           )}
 
@@ -1163,10 +1170,11 @@ function EncounterEditor({
                   </span>
                 ))}
               </div>
-              <div style={{ display: 'flex', gap: 8 }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                 <input value={diagInput} onChange={(e) => setDiagInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && (e.preventDefault(), addDiag())}
                   placeholder="Add ICD-10 code or diagnosis…"
                   style={{ flex: 1, height: 36, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 9, fontSize: 13, color: 'var(--text)', outline: 'none' }} />
+                <VoiceInput onTranscript={(text) => setDiagInput((d) => d ? d.trim() + ' ' + text.trim() : text.trim())} />
                 <button onClick={addDiag} style={{ height: 36, padding: '0 14px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 9, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>Add</button>
               </div>
             </Section>
@@ -1178,7 +1186,7 @@ function EncounterEditor({
                 {rx.some(r => r.med.trim()) && (
                   <div style={{
                     display: 'grid',
-                    gridTemplateColumns: 'minmax(180px, 2fr) 80px 80px 80px minmax(140px, 1.6fr) 40px',
+                    gridTemplateColumns: 'minmax(180px, 2fr) auto 80px 80px 80px minmax(140px, 1.6fr) 40px',
                     gap: 10,
                     padding: '0 12px 4px',
                     fontSize: 10,
@@ -1188,6 +1196,7 @@ function EncounterEditor({
                     letterSpacing: '0.06em'
                   }}>
                     <span>Medicine</span>
+                    <span />
                     <span>Dose</span>
                     <span>Freq</span>
                     <span>Duration</span>
@@ -1200,7 +1209,7 @@ function EncounterEditor({
                   {rx.map((item) => (
                     <div key={item.id} style={{
                       display: 'grid',
-                      gridTemplateColumns: 'minmax(180px, 2fr) 80px 80px 80px minmax(140px, 1.6fr) 40px',
+                      gridTemplateColumns: 'minmax(180px, 2fr) auto 80px 80px 80px minmax(140px, 1.6fr) 40px',
                       gap: 10,
                       padding: '8px 12px',
                       background: 'var(--surface-muted)',
@@ -1216,6 +1225,7 @@ function EncounterEditor({
                                                stockStatus={item.stockStatus}
                         onHand={item.onHand}
                       />
+                      <VoiceInput onTranscript={(text) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, med: x.med ? x.med.trim() + ' ' + text.trim() : text.trim() } : x))} />
                       <input value={item.dose} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dose: e.target.value } : x))} placeholder="1 tab" style={rxInputStyle} />
                       <select value={item.freq} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, freq: e.target.value } : x))} style={{ ...rxInputStyle, cursor: 'pointer' }}>
                         <option value="">Freq</option>
@@ -1255,8 +1265,14 @@ function EncounterEditor({
 
           {(!signed || notes.trim()) && (
             <Section title="Notes" icon="fileText" defaultOpen={!!notes.trim()}>
-              <textarea value={notes} onChange={(e) => setNotes(e.target.value)}                placeholder="Clinical notes, observations, or special instructions…"
-                style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box'}} />
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span style={{ fontSize: 11, color: 'var(--text-subtle)', fontWeight: 500 }}>Clinical notes, observations, or special instructions…</span>
+                  <VoiceInput onTranscript={(text) => setNotes((n) => n ? n.trim() + ' ' + text.trim() : text.trim())} />
+                </div>
+                <textarea value={notes} onChange={(e) => setNotes(e.target.value)}                placeholder="Clinical notes, observations, or special instructions…"
+                  style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box'}} />
+              </div>
             </Section>
           )}
 

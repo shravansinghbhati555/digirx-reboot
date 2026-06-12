@@ -9,7 +9,7 @@ export type IconName =
   | 'xCircle' | 'trendingUp' | 'trendingDown' | 'moon' | 'sun' | 'help' | 'command'
   | 'stethoscope' | 'pill' | 'fileText' | 'cross' | 'arrowUp' | 'user' | 'gitBranch'
   | 'activity' | 'eye' | 'lock' | 'send' | 'tag' | 'creditCard' | 'banknote' | 'smartphone'
-  | 'printer' | 'share' | 'externalLink' | 'eyeOff' | 'refresh' | 'play' | 'camera';
+  | 'printer' | 'share' | 'externalLink' | 'eyeOff' | 'refresh' | 'play' | 'camera' | 'mic';
 
 export function Icon({
   name,
@@ -101,6 +101,7 @@ export function Icon({
     case 'refresh': return <svg {...p}><polyline points="23 4 23 10 17 10" /><polyline points="1 20 1 14 7 14" /><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" /></svg>;
     case 'play': return <svg {...p}><polygon points="5 3 19 12 5 21 5 3" /></svg>;
     case 'camera': return <svg {...p}><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" /><circle cx="12" cy="13" r="4" /></svg>;
+    case 'mic': return <svg {...p}><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z" /><path d="M19 10v2a7 7 0 0 1-14 0v-2" /><line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" /></svg>;
     default: return <svg {...p}><circle cx="12" cy="12" r="5" /></svg>;
   }
 }
