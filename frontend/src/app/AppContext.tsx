@@ -159,6 +159,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         clinic?: {
           name?: string;
           currency?: string;
+          timezone?: string;
           branding?: {
             displayName?: string | null;
             logoUrl?: string | null;
@@ -180,6 +181,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // name instead of an id-tail fallback.
         branchName: data.branch?.name ?? ctx.branchName,
         currency: data.clinic?.currency ?? ctx.currency,
+        timezone: data.clinic?.timezone ?? ctx.timezone,
         branding: data.clinic?.branding
           ? {
               displayName: data.clinic.branding.displayName ?? null,

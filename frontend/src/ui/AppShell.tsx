@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import countryToCurrency from 'country-to-currency';
 import { useApp, type ScreenKey } from '../app/AppContext';
 import { canAccessScreen, isScreenAllowedForRoles, Perm } from '../app/permissions';
-import { apiGet, apiPost } from '../app/api';
+import { apiGet, apiPost, apiPatch } from '../app/api';
 import { Avatar, Spinner, useToast } from './shared/primitives';
 import { Icon, type IconName } from './shared/Icon';
 import { DatePickerChip } from './shared/DatePickerChip';
@@ -94,7 +94,7 @@ function CommandPalette({ commands, onNavigate, onClose }: { commands: typeof AL
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { screen, setScreen, theme, toggleTheme, ctx, setCtx, logout, selectedDate, setSelectedDate, permissions, roleNames } = useApp();
+  const { screen, setScreen, theme, toggleTheme, ctx, setCtx, logout, selectedDate, setSelectedDate, permissions, roleNames, refreshMe } = useApp();
   const toast = useToast();
   const [collapsed, setCollapsed] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
@@ -196,13 +196,32 @@ export function AppShell({ children }: { children: ReactNode }) {
             localStorage.setItem(`digirx.detected_country_${ctx.userId}`, detectedCountry);
             localStorage.setItem(`digirx.detected_currency_${ctx.userId}`, detectedCurrency);
           }
+
+          if (ctx.clinicId && localStorage.getItem('digirx.settings_manually_set_' + ctx.clinicId) !== 'true') {
+            const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+            const hasTimezoneDiff = detectedTimezone && detectedTimezone !== ctx.timezone;
+            const hasCurrencyDiff = detectedCurrency && detectedCurrency !== ctx.currency;
+
+            if (hasTimezoneDiff || hasCurrencyDiff) {
+              try {
+                const body: Record<string, string> = {};
+                if (hasTimezoneDiff) body.timezone = detectedTimezone;
+                if (hasCurrencyDiff) body.currency = detectedCurrency;
+
+                await apiPatch(ctx, `/clinics/${ctx.clinicId}/settings`, body);
+                void refreshMe();
+              } catch (e) {
+                console.error('Failed to sync settings based on location in background:', e);
+              }
+            }
+          }
         },
         (error) => {
           console.error('Background location resolution error:', error);
         }
       );
     }
-  }, [ctx.userId, toast]);
+  }, [ctx.userId, ctx.clinicId, ctx.timezone, ctx.currency, refreshMe, toast]);
 
   const rail = collapsed ? 56 : 208;
   const userName = ctx.fullName ?? 'User';
@@ -660,6 +679,7 @@ function LocationPermissionModal({
 }) {
   const toast = useToast();
   const [requesting, setRequesting] = useState(false);
+  const { ctx, refreshMe } = useApp();
 
   const handleAllow = () => {
     setRequesting(true);
@@ -719,6 +739,25 @@ function LocationPermissionModal({
 
         localStorage.setItem(`digirx.detected_country_${userId}`, detectedCountry);
         localStorage.setItem(`digirx.detected_currency_${userId}`, detectedCurrency);
+
+        if (ctx.clinicId && localStorage.getItem('digirx.settings_manually_set_' + ctx.clinicId) !== 'true') {
+          const detectedTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+          const hasTimezoneDiff = detectedTimezone && detectedTimezone !== ctx.timezone;
+          const hasCurrencyDiff = detectedCurrency && detectedCurrency !== ctx.currency;
+
+          if (hasTimezoneDiff || hasCurrencyDiff) {
+            try {
+              const body: Record<string, string> = {};
+              if (hasTimezoneDiff) body.timezone = detectedTimezone;
+              if (hasCurrencyDiff) body.currency = detectedCurrency;
+
+              await apiPatch(ctx, `/clinics/${ctx.clinicId}/settings`, body);
+              void refreshMe();
+            } catch (e) {
+              console.error('Failed to sync settings based on location:', e);
+            }
+          }
+        }
 
         toast(`Location access allowed. Currency converted to ${detectedCurrency}.`, 'success');
         setRequesting(false);

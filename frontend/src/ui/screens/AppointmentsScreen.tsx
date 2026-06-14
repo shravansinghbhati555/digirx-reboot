@@ -1096,6 +1096,25 @@ function BookSheet({
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const isIndiaRegion = useMemo(() => {
+    if (ctx.currency) {
+      return ctx.currency === 'INR';
+    }
+    if (ctx.timezone) {
+      return ctx.timezone === 'Asia/Kolkata';
+    }
+    const cachedCountry = ctx.userId ? localStorage.getItem(`digirx.detected_country_${ctx.userId}`) : null;
+    return cachedCountry === 'IN';
+  }, [ctx.currency, ctx.timezone, ctx.userId]);
+
+  useEffect(() => {
+    if (isIndiaRegion) {
+      setPayMethod('UPI');
+    } else {
+      setPayMethod('CASH');
+    }
+  }, [isIndiaRegion]);
+
   // Load patient list (step 1) — refetch on query change. `cancelled`
   // guards against an older query's response overwriting a newer one's
   // when the user keeps typing while a request is in flight.
@@ -1550,6 +1569,7 @@ function BookSheet({
               payAmount={payAmount} setPayAmount={setPayAmount}
               payRef={payRef} setPayRef={setPayRef}
               idempotencyKey={payIdempKey}
+              isIndiaRegion={isIndiaRegion}
             />
           )}
 
@@ -2243,6 +2263,7 @@ function DoctorPicker({
 function PaymentStep({
   visitType, fallbackLabel, currency,
   payMethod, setPayMethod, payAmount, setPayAmount, payRef, setPayRef, idempotencyKey,
+  isIndiaRegion,
 }: {
   visitType: { _id: string; name: string; price: number; currency: string } | null;
   fallbackLabel: string;
@@ -2251,6 +2272,7 @@ function PaymentStep({
   payAmount: string; setPayAmount: (v: string) => void;
   payRef: string; setPayRef: (v: string) => void;
   idempotencyKey: string;
+  isIndiaRegion: boolean;
 }) {
   const due = visitType?.price ?? 0;
   const label = visitType?.name ?? fallbackLabel;
@@ -2259,6 +2281,15 @@ function PaymentStep({
   // types the exact amount. The arbitrary 300/500/1000 chips were
   // just noise.
   const suggestions: number[] = [];
+
+  const filteredPaymentMethods = useMemo(() => {
+    if (isIndiaRegion) {
+      return PAYMENT_METHODS;
+    } else {
+      return PAYMENT_METHODS.filter((m) => m.id !== 'UPI');
+    }
+  }, [isIndiaRegion]);
+
   return (
     <>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 10 }}>
@@ -2279,7 +2310,7 @@ function PaymentStep({
       <div>
         <label style={labelStyle}>Method</label>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {PAYMENT_METHODS.map((m) => (
+          {filteredPaymentMethods.map((m) => (
             <button key={m.id} type="button" onClick={() => setPayMethod(m.id)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6,

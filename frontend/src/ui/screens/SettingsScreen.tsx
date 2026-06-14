@@ -694,11 +694,10 @@ function ClinicTab() {
         setDetectedCurrency(ctx.userId, newCurrency);
       }
 
-      // Refetch /me so app-wide context (ctx.currency, ctx.branding,
-      // features.appointmentMode, …) reflects the changes immediately.
-      // Without this, the Dashboard's currency symbol and any other
-      // /me-derived UI stays on the previous value until next reload.
       void refreshMe();
+      if (ctx.clinicId) {
+        localStorage.setItem('digirx.settings_manually_set_' + ctx.clinicId, 'true');
+      }
       toast('Clinic settings saved', 'success');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
