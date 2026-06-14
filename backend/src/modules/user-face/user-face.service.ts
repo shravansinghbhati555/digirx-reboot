@@ -58,12 +58,18 @@ export class UserFaceService {
     });
     if (!user) throw new NotFoundException('User not found');
 
+    // ALWAYS use server-side detection + alignment (preDetected=false),
+    // exactly like identify() at login time. SFace embeddings from an
+    // aligned face vs a naively-resized browser crop don't compare well,
+    // so enroll and login MUST use the same path or the same person's
+    // embeddings won't match. We ignore the FE's pre_detected flag here
+    // on purpose.
     const embed = await this.faceClient.embed({
       ...input.image,
-      preDetected: input.preDetected,
+      preDetected: false,
     });
 
-    if (!input.preDetected && embed.faceConfidence < MIN_ENROLL_CONFIDENCE) {
+    if (embed.faceConfidence < MIN_ENROLL_CONFIDENCE) {
       throw new BadRequestException(
         `Face detection too weak (confidence ${embed.faceConfidence.toFixed(2)}) — retake the photo with better lighting`,
       );

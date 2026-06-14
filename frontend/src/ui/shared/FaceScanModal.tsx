@@ -53,6 +53,25 @@ export function FaceScanModal({
   const [videoDims, setVideoDims] = useState<{ w: number; h: number }>({ w: 640, h: 480 });
   const [phoneNumber, setPhoneNumber] = useState('');
   const [verifyingPhone, setVerifyingPhone] = useState(false);
+  // Network status — face recognition has to reach the server, so we
+  // surface an offline banner and disable the capture button when the
+  // connection drops, instead of letting the scan fail with a cryptic
+  // network error after the user already posed for the camera.
+  const [online, setOnline] = useState<boolean>(
+    typeof navigator !== 'undefined' ? navigator.onLine : true,
+  );
+
+  // --- Network status ------------------------------------------------
+  useEffect(() => {
+    const goOnline = () => setOnline(true);
+    const goOffline = () => setOnline(false);
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
+    return () => {
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
+    };
+  }, []);
 
   // --- Camera setup --------------------------------------------------
   useEffect(() => {
@@ -381,6 +400,16 @@ export function FaceScanModal({
             </div>
           )}
 
+          {/* Offline warning — shown the moment the connection drops so
+              the operator knows why the scan won't work (and isn't left
+              wondering after posing for the camera). */}
+          {!online && (
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8, background: 'rgba(245,158,11,0.1)', border: '1px solid rgba(245,158,11,0.3)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--warning-text)' }}>
+              <Icon name="alertTriangle" size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+              <span>No internet connection. Reconnect to continue — face recognition needs to reach the server.</span>
+            </div>
+          )}
+
           {error && (
             <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>
               {error}
@@ -389,23 +418,41 @@ export function FaceScanModal({
         </div>
 
         <div style={{ padding: '12px 20px 18px', display: 'flex', gap: 10, borderTop: '1px solid var(--border)' }}>
-          <button onClick={onCancel} disabled={busy}
-            style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', cursor: busy ? 'wait' : 'pointer' }}>
-            Cancel
-          </button>
-          <button onClick={triggerCapture}
-            disabled={permission !== 'ok' || busy || countdown !== null}
-            style={{
-              flex: 2, height: 42, border: 'none', borderRadius: 10,
-              background: permission === 'ok' ? (bbox ? 'rgb(34,197,94)' : 'var(--brand-500)') : 'rgba(99,102,241,0.4)',
-              color: 'var(--brand-text)', fontSize: 13, fontWeight: 600,
-              cursor: permission === 'ok' && !busy ? 'pointer' : 'not-allowed',
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-              transition: 'background 200ms',
-            }}>
-            <Icon name="camera" size={14} strokeWidth={2.5} />
-            {captureLabel}
-          </button>
+          {permission === 'pending' ? (
+            // Camera still starting up — show a loading row instead of
+            // the action buttons so the operator doesn't try to capture
+            // before the camera is live.
+            <div style={{ flex: 1, height: 42, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: 'var(--text-subtle)', fontSize: 13, fontWeight: 500 }}>
+              <Spinner size={16} /> Starting camera…
+            </div>
+          ) : (
+            <>
+              <button onClick={onCancel} disabled={busy}
+                style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 500, color: 'var(--text-muted)', cursor: busy ? 'wait' : 'pointer' }}>
+                Cancel
+              </button>
+              {/* Capture / match only appears once the camera is live
+                  (permission === 'ok'). Disabled while busy, mid-
+                  countdown, or offline. */}
+              {permission === 'ok' && (
+                <button onClick={triggerCapture}
+                  disabled={busy || countdown !== null || !online}
+                  title={!online ? 'No internet connection' : undefined}
+                  style={{
+                    flex: 2, height: 42, border: 'none', borderRadius: 10,
+                    background: !online ? 'rgba(99,102,241,0.4)' : (bbox ? 'rgb(34,197,94)' : 'var(--brand-500)'),
+                    color: 'var(--brand-text)', fontSize: 13, fontWeight: 600,
+                    cursor: (busy || !online) ? 'not-allowed' : 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                    transition: 'background 200ms',
+                    opacity: !online ? 0.7 : 1,
+                  }}>
+                  <Icon name="camera" size={14} strokeWidth={2.5} />
+                  {captureLabel}
+                </button>
+              )}
+            </>
+          )}
         </div>
       </div>
     </div>
