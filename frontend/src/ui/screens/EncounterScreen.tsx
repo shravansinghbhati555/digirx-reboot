@@ -219,6 +219,11 @@ export function EncounterScreen() {
   const [creating, setCreating] = useState(false);
   const [queue, setQueue] = useState<any[]>([]);
   const [loadingQueue, setLoadingQueue] = useState(false);
+  // True while we're auto-opening an encounter from an appointment
+  // (e.g. "View / Edit prescription"). Lets us show a clean loader
+  // instead of flashing the queue/patient-picker view (and firing its
+  // /appointments poll) before the prescription editor mounts.
+  const [autoLoading, setAutoLoading] = useState(false);
 
   // Patient search (only used while no patient is selected)
   const [patientQuery, setPatientQuery] = useState('');
@@ -230,6 +235,7 @@ export function EncounterScreen() {
     if (!selectedAppointmentId) return;
 
     let cancelled = false;
+    setAutoLoading(true);
     async function loadOrCreate() {
       try {
         // 1. Fetch appointment details
@@ -267,6 +273,7 @@ export function EncounterScreen() {
       } finally {
         if (!cancelled) {
           setSelectedAppointmentId(undefined);
+          setAutoLoading(false);
         }
       }
     }
@@ -288,6 +295,10 @@ export function EncounterScreen() {
   // visibility listener without duplicating the URL build.
   useEffect(() => {
     if (encounter) return;
+    // Skip the live-queue poll while auto-opening an encounter from an
+    // appointment — otherwise the queue view flashes and an extra
+    // /appointments fetch runs before the prescription editor mounts.
+    if (selectedAppointmentId || autoLoading) return;
     const tz = ctx.timezone || 'Asia/Kolkata';
 
     let cancelled = false;
@@ -336,7 +347,7 @@ export function EncounterScreen() {
       clearInterval(tick);
       document.removeEventListener('visibilitychange', onVisibilityChange);
     };
-  }, [encounter, ctx.branchId]);
+  }, [encounter, ctx.branchId, selectedAppointmentId, autoLoading]);
 
   useEffect(() => {
     if (!patientId.trim()) { setPatient(null); return; }
@@ -432,6 +443,20 @@ export function EncounterScreen() {
     } finally {
       setCreating(false);
     }
+  }
+
+  // Arrived from an appointment and still resolving the encounter — show
+  // a single steady loader so the prescription page doesn't flicker
+  // through the queue view first.
+  if ((selectedAppointmentId || autoLoading) && !encounter) {
+    return (
+      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ textAlign: 'center' }}>
+          <Spinner />
+          <p style={{ marginTop: 12, fontSize: 13, color: 'var(--text-subtle)', fontWeight: 500 }}>Opening prescription…</p>
+        </div>
+      </div>
+    );
   }
 
   if (!encounter) {
@@ -677,7 +702,9 @@ function EncounterEditor({
         })
     );
 
-    Promise.all(promises).catch(err => console.error("FETCH ERROR", err));
+    Promise.all(promises)
+      .catch(err => console.error("FETCH ERROR", err))
+      .finally(() => setMetaLoaded(true));
   }, [ctx.clinicId, ctx.branchId]);
 
   const [prescriptionId, setPrescriptionId] = useState<string | null>(null);
@@ -688,6 +715,11 @@ function EncounterEditor({
   const [sharing, setSharing] = useState(false);
   const [savingDraft, setSavingDraft] = useState(false);
   const [signing, setSigning] = useState(false);
+  // Gate the preview iframe until the data it renders (prescription
+  // items + branch/doctor header) has loaded, so it mounts once with
+  // complete data instead of flashing through empty → populated states.
+  const [rxLoaded, setRxLoaded] = useState(false);
+  const [metaLoaded, setMetaLoaded] = useState(false);
   // View mode: signed encounters open in 'preview' (read-only printable
   // render with Edit / Print / Share / Close buttons on top). Clicking
   // Edit flips to 'chart' so the doctor can swap medicines, etc.
@@ -741,6 +773,7 @@ function EncounterEditor({
   // Load existing prescription items when the encounter opens
   useEffect(() => {
     let cancelled = false;
+    setRxLoaded(false);
     apiGet<{
       _id: string;
       prescriptionNo?: string;
@@ -775,7 +808,7 @@ function EncounterEditor({
           setRx(loaded);
         }
       }
-    }).catch(() => undefined);
+    }).catch(() => undefined).finally(() => { if (!cancelled) setRxLoaded(true); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [encounter._id]);
@@ -919,6 +952,10 @@ function EncounterEditor({
   // bar has Edit / Print / Share / Close — Print prints the iframe
   // content directly so the doctor stays inside the app; Close fully
   // exits the consultation screen back to today's queue.
+  // Only mount the iframe once the data it renders has loaded — avoids
+  // the preview flashing from empty to populated as the async fetches
+  // (prescription items, branch, doctor) resolve one by one.
+  const previewReady = rxLoaded && metaLoaded;
   if (viewMode === 'preview') {
     return (
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface-muted)' }}>
@@ -957,12 +994,18 @@ function EncounterEditor({
           </div>
         </div>
         <div style={{ flex: 1, padding: 20, overflow: 'auto' }}>
-          <iframe
-            ref={previewIframeRef}
-            srcDoc={previewHtml}
-            title="Prescription preview"
-            style={{ width: '100%', height: '100%', minHeight: 600, border: '1px solid var(--border)', borderRadius: 12, background: 'white', boxShadow: '0 4px 24px rgba(15,23,42,0.08)' }}
-          />
+          {previewReady ? (
+            <iframe
+              ref={previewIframeRef}
+              srcDoc={previewHtml}
+              title="Prescription preview"
+              style={{ width: '100%', height: '100%', minHeight: 600, border: '1px solid var(--border)', borderRadius: 12, background: 'white', boxShadow: '0 4px 24px rgba(15,23,42,0.08)' }}
+            />
+          ) : (
+            <div style={{ width: '100%', height: '100%', minHeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border)', borderRadius: 12, background: 'white', boxShadow: '0 4px 24px rgba(15,23,42,0.08)' }}>
+              <Spinner />
+            </div>
+          )}
         </div>
       </div>
     );

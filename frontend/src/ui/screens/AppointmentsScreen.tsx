@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiGet, apiPatch, apiPost, apiPostMultipart } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { AVAILABILITY_CHANGED_EVENT } from '../../app/events';
@@ -116,6 +116,10 @@ function patientRefLabel(
 
 const HOURS = Array.from({ length: 12 }, (_, i) => i + 8);
 const EXPANDED_H = 300;
+// Collapsed hours are thin strips; only the selected hour (the current
+// one by default) expands to the full EXPANDED_H so the doctor sees it
+// without scrolling.
+const COLLAPSED_H = 48;
 
 const STATUS_COLORS: Record<string, { bg: string; border: string; text: string }> = {
   DONE: { bg: 'var(--success-bg)', border: 'var(--success-500)', text: 'var(--success-text)' },
@@ -148,6 +152,15 @@ function isoToMin(iso: string | undefined): number {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return 0;
   return d.getHours() * 60 + d.getMinutes();
+}
+
+// Local YYYY-MM-DD (matches how the grid reads `getHours()` in local
+// time, so "is the picked date today?" lines up with the clock).
+function localYmd(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
 }
 
 type ApptLayout = { left: string; width: string; zIndex: number; opacity: number };
@@ -232,17 +245,79 @@ export function AppointmentsScreen() {
   const [patients, setPatients] = useState<Map<string, PatientLite>>(new Map());
   const [doctors, setDoctors] = useState<Map<string, string>>(new Map());
 
-  const getHourH = (_h: number) => EXPANDED_H;
+  // Scroll container for the time-based day grid + a once-a-minute clock
+  // tick so the "now" marker tracks the current time and the grid lands
+  // on the current hour for the doctor without manual scrolling.
+  const gridScrollRef = useRef<HTMLDivElement | null>(null);
+  const [nowTick, setNowTick] = useState(() => new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNowTick(new Date()), 60_000);
+    return () => clearInterval(id);
+  }, []);
 
-  const getHourTop = (h: number) => (h - 8) * EXPANDED_H;
+  const isToday = date === localYmd(nowTick);
+  const nowMin = nowTick.getHours() * 60 + nowTick.getMinutes();
+
+  // Accordion: exactly one hour is expanded at a time. Default = current
+  // hour on today's view; the doctor can tap any hour strip to expand it.
+  const [selectedHour, setSelectedHour] = useState<number | null>(null);
+
+  const getHourH = (h: number) => (h === selectedHour ? EXPANDED_H : COLLAPSED_H);
+
+  // Cumulative top offsets — heights vary, so we accumulate instead of a
+  // flat (h-8)*H. Recomputed whenever the expanded hour changes.
+  const hourGeom = useMemo(() => {
+    const tops: Record<number, number> = {};
+    let acc = 0;
+    for (const h of HOURS) {
+      tops[h] = acc;
+      acc += h === selectedHour ? EXPANDED_H : COLLAPSED_H;
+    }
+    return { tops, total: acc };
+  }, [selectedHour]);
+
+  const getHourTop = (h: number) => hourGeom.tops[h] ?? 0;
 
   const getTimeTop = (iso: string | undefined) => {
     if (!iso) return 0;
     const min = isoToMin(iso);
     const h = Math.floor(min / 60);
     const m = min % 60;
-    return getHourTop(h) + (m / 60) * EXPANDED_H;
+    return getHourTop(h) + (m / 60) * getHourH(h);
   };
+
+  // Auto-select the current hour when opening today's schedule. For other
+  // dates, expand the earliest hour that actually has an appointment so
+  // the doctor still lands on something useful. Keyed on date/loading
+  // (not nowTick) so it doesn't re-collapse the doctor's manual choice
+  // every minute.
+  useEffect(() => {
+    if (loading) return;
+    if (isToday && nowMin >= 8 * 60 && nowMin < 20 * 60) {
+      setSelectedHour(Math.floor(nowMin / 60));
+    } else {
+      const firstApptHour = dayAppts
+        .map((a) => Math.floor(isoToMin(a.startAt) / 60))
+        .filter((h) => h >= 8 && h <= 19)
+        .sort((a, b) => a - b)[0];
+      setSelectedHour(firstApptHour ?? null);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [date, loading]);
+
+  // Scroll the expanded hour into view whenever the selection changes
+  // (auto on open, or after a tap). A small margin keeps the hour above
+  // it partly visible for context.
+  useEffect(() => {
+    const el = gridScrollRef.current;
+    if (!el || loading) return;
+    if (selectedHour != null) {
+      el.scrollTo({ top: Math.max(0, getHourTop(selectedHour) - 56), behavior: 'smooth' });
+    } else {
+      el.scrollTo({ top: 0 });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedHour, loading]);
 
   async function load() {
     if (!ctx.branchId) {
@@ -460,46 +535,50 @@ export function AppointmentsScreen() {
               <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{loading ? '—' : dayAppts.filter((a) => statusKey(a.status) === 'BOOKED').length} scheduled</p>
             </div>
           </div>
-          <div style={{ flex: 1, overflowY: 'auto', display: 'flex', background: 'var(--bg)', position: 'relative', marginTop: 16, borderTop: '1px solid var(--border)' }}>
+          <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', minHeight: 0, marginTop: 16, borderTop: '1px solid var(--border)' }}>
+          <div ref={gridScrollRef} style={{ flex: 1, overflowY: 'auto', display: 'flex', background: 'var(--bg)', position: 'relative' }}>
             {/* Labels column */}
-            <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', position: 'relative', minHeight: getHourTop(20) }}>
-              {HOURS.map((h) => (
-                <div key={h} style={{ position: 'absolute', top: getHourTop(h), left: 0, right: 0, height: getHourH(h), borderBottom: '1px solid var(--border)', boxSizing: 'border-box', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ height: EXPANDED_H / 4, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', paddingRight: 8, paddingTop: 6, fontSize: 11, fontWeight: 700, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
-                    {String(h).padStart(2, '0')}:00
-                  </div>
-                  {(['15', '30', '45'] as const).map((m) => (
-                    <div key={m} style={{ height: EXPANDED_H / 4, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', paddingRight: 8, paddingTop: 6, fontSize: 10, color: 'var(--text-subtle)', fontVariantNumeric: 'tabular-nums' }}>
-                      {String(h).padStart(2, '0')}:{m}
+            <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', position: 'relative', minHeight: hourGeom.total }}>
+              {HOURS.map((h) => {
+                const expanded = h === selectedHour;
+                return (
+                  <div key={h} onClick={() => setSelectedHour(h)}
+                    title={expanded ? undefined : `Show ${String(h).padStart(2, '0')}:00`}
+                    style={{ position: 'absolute', top: getHourTop(h), left: 0, right: 0, height: getHourH(h), borderBottom: '1px solid var(--border)', boxSizing: 'border-box', cursor: 'pointer', background: expanded ? 'var(--brand-bg-soft)' : 'transparent', display: 'flex', flexDirection: 'column', justifyContent: expanded ? 'flex-start' : 'center' }}>
+                    <div style={{ height: expanded ? EXPANDED_H / 4 : 'auto', display: 'flex', alignItems: expanded ? 'flex-start' : 'center', justifyContent: 'flex-end', paddingRight: 8, paddingTop: expanded ? 6 : 0, fontSize: 11, fontWeight: 700, color: expanded ? 'var(--brand-text-strong)' : 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+                      {String(h).padStart(2, '0')}:00
                     </div>
-                  ))}
-                </div>
-              ))}
+                    {expanded && (['15', '30', '45'] as const).map((m) => (
+                      <div key={m} style={{ height: EXPANDED_H / 4, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', paddingRight: 8, paddingTop: 6, fontSize: 10, color: 'var(--text-subtle)', fontVariantNumeric: 'tabular-nums' }}>
+                        {String(h).padStart(2, '0')}:{m}
+                      </div>
+                    ))}
+                  </div>
+                );
+              })}
             </div>
 
             {/* Grid and Appointments */}
-            <div style={{ flex: 1, position: 'relative', minHeight: getHourTop(20) }}>
-              {HOURS.map((h) => (
-                <div key={h}
-                  style={{
-                    position: 'absolute', left: 0, right: 0, top: getHourTop(h), height: getHourH(h),
-                    borderBottom: '1px solid var(--border)', boxSizing: 'border-box',
-                  }}>
-                  {(['15', '30', '45'] as const).map((m) => (
-                    <div key={m} style={{ position: 'absolute', left: 0, right: 0, top: (parseInt(m) / 60) * EXPANDED_H, height: 1, borderTop: '1px dashed var(--border)' }} />
-                  ))}
-                </div>
-              ))}
+            <div style={{ flex: 1, position: 'relative', minHeight: hourGeom.total }}>
+              {HOURS.map((h) => {
+                const expanded = h === selectedHour;
+                return (
+                  <div key={h} onClick={() => setSelectedHour(h)}
+                    style={{
+                      position: 'absolute', left: 0, right: 0, top: getHourTop(h), height: getHourH(h),
+                      borderBottom: '1px solid var(--border)', boxSizing: 'border-box', cursor: 'pointer',
+                      background: expanded ? 'var(--surface-muted)' : 'transparent',
+                    }}>
+                    {expanded && (['15', '30', '45'] as const).map((m) => (
+                      <div key={m} style={{ position: 'absolute', left: 0, right: 0, top: (parseInt(m) / 60) * EXPANDED_H, height: 1, borderTop: '1px dashed var(--border)' }} />
+                    ))}
+                  </div>
+                );
+              })}
 
               {loading && (
                 <div style={{ padding: 20 }}>
                   <Spinner />
-                </div>
-              )}
-
-              {!loading && dayAppts.length === 0 && !error && (
-                <div style={{ padding: '60px 24px', textAlign: 'center', color: 'var(--text-subtle)' }}>
-                  <EmptyState icon="calendar" title="No time-based appointments" hint="Use the Book button to create one." />
                 </div>
               )}
 
@@ -508,7 +587,10 @@ export function AppointmentsScreen() {
                 return dayAppts.map((a) => {
                   const top = getTimeTop(a.startAt);
                   const bottom = getTimeTop(a.endAt);
-                  const height = Math.max(bottom - top, 32);
+                  // In a collapsed hour the block is a thin bar (just the
+                  // name); in the expanded hour it gets the full block.
+                  const inExpanded = Math.floor(isoToMin(a.startAt) / 60) === selectedHour;
+                  const height = Math.max(bottom - top, inExpanded ? 32 : 16);
 
                   if (top < 0) return null;
 
@@ -521,12 +603,14 @@ export function AppointmentsScreen() {
                   const unpaid = !!a.billId && statusKey(a.status) === 'BOOKED';
                   return (
                     <div key={a._id} onClick={(e) => { e.stopPropagation(); setSelected(a); }}
+                      title={inExpanded ? undefined : `${getName(a.patientId)} · ${isoToTime(a.startAt)}`}
                       style={{
                         position: 'absolute', left: layout.left, width: layout.width,
                         top: top + 2, height: height - 4,
                         background: col.bg, border: `1.5px solid ${col.border}`,
-                        borderRadius: 10, padding: '6px 10px', cursor: 'pointer', overflow: 'hidden', zIndex: 2,
-                        boxShadow: 'var(--e1)', display: 'flex', flexDirection: 'column', gap: 2
+                        borderRadius: inExpanded ? 10 : 6, padding: inExpanded ? '6px 10px' : '1px 8px', cursor: 'pointer', overflow: 'hidden', zIndex: 2,
+                        boxShadow: 'var(--e1)', display: 'flex', flexDirection: 'column', gap: 2,
+                        justifyContent: 'center',
                       }}>
                       {unpaid && (
                         <span title="Unpaid · pay before check-in"
@@ -536,17 +620,29 @@ export function AppointmentsScreen() {
                             background: '#f59e0b', boxShadow: '0 0 0 2px var(--surface)',
                           }} />
                       )}
-                      <div style={{ fontSize: 12, fontWeight: 700, color: col.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      <div style={{ fontSize: inExpanded ? 12 : 10, fontWeight: 700, color: col.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                         {getName(a.patientId)}
                       </div>
-                      <div style={{ fontSize: 10, color: col.text, opacity: 0.8 }}>
-                        {isoToTime(a.startAt)} → {isoToTime(a.endAt)}
-                      </div>
+                      {inExpanded && (
+                        <div style={{ fontSize: 10, color: col.text, opacity: 0.8 }}>
+                          {isoToTime(a.startAt)} → {isoToTime(a.endAt)}
+                        </div>
+                      )}
                     </div>
                   );
                 });
               })()}
             </div>
+          </div>
+
+          {/* Empty state — pinned to the center of the visible grid area
+              (outside the scroll container) so it stays centered instead
+              of sitting at the top of the tall, scrollable timeline. */}
+          {!loading && dayAppts.length === 0 && !error && (
+            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', padding: 24, textAlign: 'center', color: 'var(--text-subtle)' }}>
+              <EmptyState icon="calendar" title="No time-based appointments" hint="Use the Book button to create one." />
+            </div>
+          )}
           </div>
         </div>
       </div>

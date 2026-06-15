@@ -295,7 +295,7 @@ export function DashboardScreen() {
 
 
           {isDoctor ? (
-            <RecentEncountersWidget onOpen={(id) => {
+            <RecentEncountersWidget date={selectedDate} onOpen={(id) => {
               // Open the specific consultation — set the encounter id
               // first so EncounterScreen's mount effect picks it up,
               // then navigate. Going through setSelectedEncounterId
@@ -735,7 +735,7 @@ type EncounterRow = {
   patientId: { _id: string; fullName: string; mrn?: string } | string;
 };
 
-function RecentEncountersWidget({ onOpen }: { onOpen: (id: string) => void }) {
+function RecentEncountersWidget({ onOpen, date }: { onOpen: (id: string) => void; date?: string }) {
   const { ctx } = useApp();
   const [rows, setRows] = useState<EncounterRow[]>([]);
   const [loading, setLoading] = useState(true);
@@ -745,11 +745,15 @@ function RecentEncountersWidget({ onOpen }: { onOpen: (id: string) => void }) {
     setLoading(true);
     const qs = new URLSearchParams({ limit: '20' });
     if (ctx.branchId) qs.set('branchId', ctx.branchId);
+    // Scope consultations to the dashboard's selected date (defaults to
+    // today) so the widget tracks the header date like the rest of the
+    // dashboard. The BE interprets `date` in the clinic timezone.
+    if (date) qs.set('date', date);
     apiGet<EncounterRow[]>(ctx, `/encounters?${qs.toString()}`)
       .then(setRows)
       .catch(() => setRows([]))
       .finally(() => setLoading(false));
-  }, [ctx.clinicId, ctx.branchId]);
+  }, [ctx.clinicId, ctx.branchId, date]);
 
   const filtered = rows.filter((r) => {
     const q = query.toLowerCase().trim();
@@ -789,7 +793,7 @@ function RecentEncountersWidget({ onOpen }: { onOpen: (id: string) => void }) {
         )}
         {!loading && filtered.length === 0 && (
           <div style={{ padding: '24px 16px', textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)' }}>
-            {query ? 'No sessions match your search.' : 'No recent clinical sessions.'}
+            {query ? 'No sessions match your search.' : (date ? 'No consultations on this date.' : 'No recent clinical sessions.')}
           </div>
         )}
         {!loading && filtered.map((r, i) => {
