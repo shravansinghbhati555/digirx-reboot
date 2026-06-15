@@ -14,8 +14,13 @@ export class ScreenshotService {
     if (this.browser) return this.browser;
     this.browser = await puppeteer.launch({
       headless: true,
+      // Local dev: unset → Puppeteer uses the Chrome it downloaded via
+      // `npx puppeteer browsers install chrome`.
+      // Docker/prod: set to the system Chromium (see Dockerfile), since
+      // Puppeteer's bundled Chrome can't run on Alpine/musl.
+      executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || undefined,
       args: [
-        '--no-sandbox', 
+        '--no-sandbox',
         '--disable-setuid-sandbox',
         '--disable-dev-shm-usage',
         '--disable-gpu'
