@@ -925,7 +925,7 @@ function EncounterEditor({
     setSharing(true);
     try {
       const { shareToken } = await apiPost<{ shareToken: string }>(ctx, `/prescriptions/${prescriptionId}/share`, {
-        expiresInSeconds: 7 * 24 * 60 * 60, // 7 days
+        expiresInSeconds: 60 * 24 * 60 * 60, // 60 days
       });
       // Share the backend PDF endpoint. It now renders the PDF by
       // screenshotting the share page (which mirrors the doctor's
@@ -1194,8 +1194,8 @@ function EncounterEditor({
                   <span style={{ fontSize: 11, color: 'var(--text-subtle)', fontWeight: 500 }}>Describe the patient's presenting complaint…</span>
                   <VoiceInput onTranscript={(text) => setComplaint((c) => c ? c.trim() + ' ' + text.trim() : text.trim())} />
                 </div>
-                <textarea value={complaint} onChange={(e) => setComplaint(e.target.value)}                placeholder="Describe the patient's presenting complaint…"
-                  style={{ width: '100%', minHeight: 72, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box'}} />
+                <textarea value={complaint} onChange={(e) => setComplaint(e.target.value)} placeholder="Describe the patient's presenting complaint…"
+                  style={{ width: '100%', minHeight: 72, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box' }} />
               </div>
             </Section>
           )}
@@ -1265,7 +1265,7 @@ function EncounterEditor({
                         branchId={ctx.branchId}
                         value={item.med}
                         onChange={(patch) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, ...patch } : x))}
-                                               stockStatus={item.stockStatus}
+                        stockStatus={item.stockStatus}
                         onHand={item.onHand}
                       />
                       <VoiceInput onTranscript={(text) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, med: x.med ? x.med.trim() + ' ' + text.trim() : text.trim() } : x))} />
@@ -1298,7 +1298,7 @@ function EncounterEditor({
                 <DatePickerChip
                   value={followUp}
                   onChange={setFollowUp}
-                                   placeholder="No follow-up scheduled"
+                  placeholder="No follow-up scheduled"
                   allowClear
                 />
                 {!signed && <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>Leave blank if no follow-up needed.</span>}
@@ -1313,8 +1313,8 @@ function EncounterEditor({
                   <span style={{ fontSize: 11, color: 'var(--text-subtle)', fontWeight: 500 }}>Clinical notes, observations, or special instructions…</span>
                   <VoiceInput onTranscript={(text) => setNotes((n) => n ? n.trim() + ' ' + text.trim() : text.trim())} />
                 </div>
-                <textarea value={notes} onChange={(e) => setNotes(e.target.value)}                placeholder="Clinical notes, observations, or special instructions…"
-                  style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box'}} />
+                <textarea value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Clinical notes, observations, or special instructions…"
+                  style={{ width: '100%', minHeight: 80, padding: '10px 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', resize: 'vertical', outline: 'none', boxSizing: 'border-box' }} />
               </div>
             </Section>
           )}

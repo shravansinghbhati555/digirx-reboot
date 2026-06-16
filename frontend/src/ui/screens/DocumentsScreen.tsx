@@ -209,108 +209,108 @@ export function DocumentsScreen({
       {/* Uploader Section — hidden in readOnly mode so callers can
           embed the list as a reference panel. */}
       {!readOnly && (
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 24, boxShadow: 'var(--shadow-sm)' }}>
-        <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap', alignItems: 'flex-end' }}>
-          {!isEmbedded && (
-            <div style={{ flex: '1 1 140px' }}>
-              <label style={labelStyle}>Assign To</label>
-              <select value={ownerType} onChange={(e) => { setOwnerType(e.target.value as OwnerType); setOwnerId(''); setOwnerName(''); }}
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 24, boxShadow: 'var(--shadow-sm)' }}>
+          <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            {!isEmbedded && (
+              <div style={{ flex: '1 1 140px' }}>
+                <label style={labelStyle}>Assign To</label>
+                <select value={ownerType} onChange={(e) => { setOwnerType(e.target.value as OwnerType); setOwnerId(''); setOwnerName(''); }}
+                  style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, color: 'var(--text)', outline: 'none', cursor: 'pointer' }}>
+                  {OWNER_TYPES.map(t => <option key={t} value={t}>{t.charAt(0) + t.slice(1).toLowerCase()}</option>)}
+                </select>
+              </div>
+            )}
+
+            {!isEmbedded && (
+              <div style={{ flex: '1 1 300px' }}>
+                {ownerType === 'PATIENT' ? (
+                  <PatientSearch
+                    onSelect={(p) => { setOwnerId(p._id); setOwnerName(p.fullName); }}
+                    selectedName={ownerName}
+                    onClear={() => { setOwnerId(''); setOwnerName(''); }}
+                  />
+                ) : ownerType === 'USER' ? (
+                  <UserSearch
+                    onSelect={(u) => { setOwnerId(u._id); setOwnerName(u.name); }}
+                    selectedName={ownerName}
+                    onClear={() => { setOwnerId(''); setOwnerName(''); }}
+                  />
+                ) : ownerType === 'APPOINTMENT' ? (
+                  <AppointmentSearch
+                    onSelect={(a) => { setOwnerId(a._id); setOwnerName(`Appointment ${a._id.slice(-6).toUpperCase()}`); }}
+                    selectedId={ownerId}
+                    onClear={() => { setOwnerId(''); setOwnerName(''); }}
+                  />
+                ) : ownerType === 'ENCOUNTER' ? (
+                  <EncounterSearch
+                    onSelect={(e) => { setOwnerId(e._id); setOwnerName(e.readableId || `Consultation ${e._id.slice(-6).toUpperCase()}`); }}
+                    selectedId={ownerId}
+                    onClear={() => { setOwnerId(''); setOwnerName(''); }}
+                  />
+                ) : (
+                  <Field label={`${ownerType.charAt(0) + ownerType.slice(1).toLowerCase()} ID`} value={ownerId} onChange={setOwnerId} placeholder="Enter ID here..." />
+                )}
+              </div>
+            )}
+
+            <div style={{ flex: '1 1 200px' }}>
+              <label style={labelStyle}>Category</label>
+              <select value={category} onChange={(e) => setCategory(e.target.value as DocumentCategory)}
                 style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, color: 'var(--text)', outline: 'none', cursor: 'pointer' }}>
-                {OWNER_TYPES.map(t => <option key={t} value={t}>{t.charAt(0) + t.slice(1).toLowerCase()}</option>)}
+                {DOCUMENT_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
               </select>
             </div>
-          )}
 
-          {!isEmbedded && (
-            <div style={{ flex: '1 1 300px' }}>
-              {ownerType === 'PATIENT' ? (
-                <PatientSearch
-                  onSelect={(p) => { setOwnerId(p._id); setOwnerName(p.fullName); }}
-                  selectedName={ownerName}
-                  onClear={() => { setOwnerId(''); setOwnerName(''); }}
-                />
-              ) : ownerType === 'USER' ? (
-                <UserSearch
-                  onSelect={(u) => { setOwnerId(u._id); setOwnerName(u.name); }}
-                  selectedName={ownerName}
-                  onClear={() => { setOwnerId(''); setOwnerName(''); }}
-                />
-              ) : ownerType === 'APPOINTMENT' ? (
-                <AppointmentSearch
-                  onSelect={(a) => { setOwnerId(a._id); setOwnerName(`Appointment ${a._id.slice(-6).toUpperCase()}`); }}
-                  selectedId={ownerId}
-                  onClear={() => { setOwnerId(''); setOwnerName(''); }}
-                />
-              ) : ownerType === 'ENCOUNTER' ? (
-                <EncounterSearch
-                  onSelect={(e) => { setOwnerId(e._id); setOwnerName(e.readableId || `Consultation ${e._id.slice(-6).toUpperCase()}`); }}
-                  selectedId={ownerId}
-                  onClear={() => { setOwnerId(''); setOwnerName(''); }}
-                />
-              ) : (
-                <Field label={`${ownerType.charAt(0) + ownerType.slice(1).toLowerCase()} ID`} value={ownerId} onChange={setOwnerId} placeholder="Enter ID here..." />
-              )}
-            </div>
-          )}
-
-          <div style={{ flex: '1 1 200px' }}>
-            <label style={labelStyle}>Category</label>
-            <select value={category} onChange={(e) => setCategory(e.target.value as DocumentCategory)}
-              style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, color: 'var(--text)', outline: 'none', cursor: 'pointer' }}>
-              {DOCUMENT_CATEGORIES.map((c) => <option key={c.value} value={c.value}>{c.label}</option>)}
-            </select>
+            {!hideAccessLevel && (
+              <div style={{ flex: '1 1 200px' }}>
+                <label style={labelStyle}>Access Level</label>
+                <select value={access} onChange={(e) => setAccess(e.target.value as any)}
+                  style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, color: 'var(--text)', outline: 'none', cursor: 'pointer' }}>
+                  <option value="INTERNAL_ONLY">Internal Clinic Use</option>
+                  <option value="SHAREABLE_WITH_TOKEN">Patient Shareable</option>
+                </select>
+              </div>
+            )}
           </div>
 
-          {!hideAccessLevel && (
-            <div style={{ flex: '1 1 200px' }}>
-              <label style={labelStyle}>Access Level</label>
-              <select value={access} onChange={(e) => setAccess(e.target.value as any)}
-                style={{ width: '100%', height: 42, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, color: 'var(--text)', outline: 'none', cursor: 'pointer' }}>
-                <option value="INTERNAL_ONLY">Internal Clinic Use</option>
-                <option value="SHAREABLE_WITH_TOKEN">Patient Shareable</option>
-              </select>
-            </div>
-          )}
-        </div>
-
-        <div
-          onDragOver={(e) => e.preventDefault()}
-          onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) void handleFile(f); }}
-          onClick={() => progress === null && fileInputRef.current?.click()}
-          style={{
-            border: `2px dashed ${progress !== null ? 'var(--border)' : 'var(--brand-300)'}`,
-            borderRadius: 14, padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
-            cursor: progress !== null ? 'default' : 'pointer', background: 'var(--surface-muted)', transition: 'all 0.2s ease',
-            opacity: (!ownerId && !isEmbedded) ? 0.6 : 1,
-            pointerEvents: (!ownerId && !isEmbedded) ? 'none' : 'auto'
-          }}>
-          <input ref={fileInputRef} type="file" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
-          {progress === null ? (
-            <>
-              <div style={{ width: 48, height: 48, borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
-                <Icon name="upload" size={20} style={{ color: 'var(--brand-500)' }} />
-              </div>
-              <div style={{ textAlign: 'center' }}>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
-                  {(!ownerId && !isEmbedded) ? `Select a ${ownerType.toLowerCase()} to start upload` : 'Click to upload or drag & drop'}
+          <div
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => { e.preventDefault(); const f = e.dataTransfer.files?.[0]; if (f) void handleFile(f); }}
+            onClick={() => progress === null && fileInputRef.current?.click()}
+            style={{
+              border: `2px dashed ${progress !== null ? 'var(--border)' : 'var(--brand-300)'}`,
+              borderRadius: 14, padding: 32, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 12,
+              cursor: progress !== null ? 'default' : 'pointer', background: 'var(--surface-muted)', transition: 'all 0.2s ease',
+              opacity: (!ownerId && !isEmbedded) ? 0.6 : 1,
+              pointerEvents: (!ownerId && !isEmbedded) ? 'none' : 'auto'
+            }}>
+            <input ref={fileInputRef} type="file" style={{ display: 'none' }} onChange={(e) => { const f = e.target.files?.[0]; if (f) void handleFile(f); }} />
+            {progress === null ? (
+              <>
+                <div style={{ width: 48, height: 48, borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'center', boxShadow: '0 4px 12px rgba(0,0,0,0.05)' }}>
+                  <Icon name="upload" size={20} style={{ color: 'var(--brand-500)' }} />
                 </div>
-                <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 4 }}>PDF, JPEG, PNG, or DICOM. Max 50MB.</div>
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
+                    {(!ownerId && !isEmbedded) ? `Select a ${ownerType.toLowerCase()} to start upload` : 'Click to upload or drag & drop'}
+                  </div>
+                  <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 4 }}>PDF, JPEG, PNG, or DICOM. Max 50MB.</div>
+                </div>
+              </>
+            ) : (
+              <div style={{ width: '100%', maxWidth: 400 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-600)' }}>Uploading...</span>
+                  <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-600)' }}>{progress}%</span>
+                </div>
+                <div style={{ height: 6, background: 'var(--border)', borderRadius: 100, overflow: 'hidden' }}>
+                  <div style={{ height: '100%', width: `${progress}%`, background: 'var(--brand-500)', transition: 'width 150ms ease-out' }} />
+                </div>
               </div>
-            </>
-          ) : (
-            <div style={{ width: '100%', maxWidth: 400 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-600)' }}>Uploading...</span>
-                <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--brand-600)' }}>{progress}%</span>
-              </div>
-              <div style={{ height: 6, background: 'var(--border)', borderRadius: 100, overflow: 'hidden' }}>
-                <div style={{ height: '100%', width: `${progress}%`, background: 'var(--brand-500)', transition: 'width 150ms ease-out' }} />
-              </div>
-            </div>
-          )}
+            )}
+          </div>
+          {error && <div style={{ marginTop: 12, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: 'var(--danger-600)', fontWeight: 500 }}>{error}</div>}
         </div>
-        {error && <div style={{ marginTop: 12, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: 'var(--danger-600)', fontWeight: 500 }}>{error}</div>}
-      </div>
       )}
 
       {/* List Section */}

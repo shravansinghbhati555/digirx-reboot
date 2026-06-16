@@ -536,113 +536,113 @@ export function AppointmentsScreen() {
             </div>
           </div>
           <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', minHeight: 0, marginTop: 16, borderTop: '1px solid var(--border)' }}>
-          <div ref={gridScrollRef} style={{ flex: 1, overflowY: 'auto', display: 'flex', background: 'var(--bg)', position: 'relative' }}>
-            {/* Labels column */}
-            <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', position: 'relative', minHeight: hourGeom.total }}>
-              {HOURS.map((h) => {
-                const expanded = h === selectedHour;
-                return (
-                  <div key={h} onClick={() => setSelectedHour(h)}
-                    title={expanded ? undefined : `Show ${String(h).padStart(2, '0')}:00`}
-                    style={{ position: 'absolute', top: getHourTop(h), left: 0, right: 0, height: getHourH(h), borderBottom: '1px solid var(--border)', boxSizing: 'border-box', cursor: 'pointer', background: expanded ? 'var(--brand-bg-soft)' : 'transparent', display: 'flex', flexDirection: 'column', justifyContent: expanded ? 'flex-start' : 'center' }}>
-                    <div style={{ height: expanded ? EXPANDED_H / 4 : 'auto', display: 'flex', alignItems: expanded ? 'flex-start' : 'center', justifyContent: 'flex-end', paddingRight: 8, paddingTop: expanded ? 6 : 0, fontSize: 11, fontWeight: 700, color: expanded ? 'var(--brand-text-strong)' : 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
-                      {String(h).padStart(2, '0')}:00
-                    </div>
-                    {expanded && (['15', '30', '45'] as const).map((m) => (
-                      <div key={m} style={{ height: EXPANDED_H / 4, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', paddingRight: 8, paddingTop: 6, fontSize: 10, color: 'var(--text-subtle)', fontVariantNumeric: 'tabular-nums' }}>
-                        {String(h).padStart(2, '0')}:{m}
-                      </div>
-                    ))}
-                  </div>
-                );
-              })}
-            </div>
-
-            {/* Grid and Appointments */}
-            <div style={{ flex: 1, position: 'relative', minHeight: hourGeom.total }}>
-              {HOURS.map((h) => {
-                const expanded = h === selectedHour;
-                return (
-                  <div key={h} onClick={() => setSelectedHour(h)}
-                    style={{
-                      position: 'absolute', left: 0, right: 0, top: getHourTop(h), height: getHourH(h),
-                      borderBottom: '1px solid var(--border)', boxSizing: 'border-box', cursor: 'pointer',
-                      background: expanded ? 'var(--surface-muted)' : 'transparent',
-                    }}>
-                    {expanded && (['15', '30', '45'] as const).map((m) => (
-                      <div key={m} style={{ position: 'absolute', left: 0, right: 0, top: (parseInt(m) / 60) * EXPANDED_H, height: 1, borderTop: '1px dashed var(--border)' }} />
-                    ))}
-                  </div>
-                );
-              })}
-
-              {loading && (
-                <div style={{ padding: 20 }}>
-                  <Spinner />
-                </div>
-              )}
-
-              {(() => {
-                const dayLayout = computeDayLayout(dayAppts);
-                return dayAppts.map((a) => {
-                  const top = getTimeTop(a.startAt);
-                  const bottom = getTimeTop(a.endAt);
-                  // In a collapsed hour the block is a thin bar (just the
-                  // name); in the expanded hour it gets the full block.
-                  const inExpanded = Math.floor(isoToMin(a.startAt) / 60) === selectedHour;
-                  const height = Math.max(bottom - top, inExpanded ? 32 : 16);
-
-                  if (top < 0) return null;
-
-                  const col = STATUS_COLORS[statusKey(a.status)] ?? STATUS_COLORS.BOOKED;
-                  const layout = dayLayout.get(a._id) ?? { left: '8px', width: 'calc(100% - 16px)' };
-
-                  // Tiny dot in the corner whenever the appointment has an
-                  // unpaid auto-issued bill — keeps the calendar block compact
-                  // but still flags "needs payment before check-in" at a glance.
-                  const unpaid = !!a.billId && statusKey(a.status) === 'BOOKED';
+            <div ref={gridScrollRef} style={{ flex: 1, overflowY: 'auto', display: 'flex', background: 'var(--bg)', position: 'relative' }}>
+              {/* Labels column */}
+              <div style={{ width: 64, flexShrink: 0, borderRight: '1px solid var(--border)', background: 'var(--surface)', position: 'relative', minHeight: hourGeom.total }}>
+                {HOURS.map((h) => {
+                  const expanded = h === selectedHour;
                   return (
-                    <div key={a._id} onClick={(e) => { e.stopPropagation(); setSelected(a); }}
-                      title={inExpanded ? undefined : `${getName(a.patientId)} · ${isoToTime(a.startAt)}`}
-                      style={{
-                        position: 'absolute', left: layout.left, width: layout.width,
-                        top: top + 2, height: height - 4,
-                        background: col.bg, border: `1.5px solid ${col.border}`,
-                        borderRadius: inExpanded ? 10 : 6, padding: inExpanded ? '6px 10px' : '1px 8px', cursor: 'pointer', overflow: 'hidden', zIndex: 2,
-                        boxShadow: 'var(--e1)', display: 'flex', flexDirection: 'column', gap: 2,
-                        justifyContent: 'center',
-                      }}>
-                      {unpaid && (
-                        <span title="Unpaid · pay before check-in"
-                          style={{
-                            position: 'absolute', top: 6, right: 8,
-                            width: 8, height: 8, borderRadius: 999,
-                            background: '#f59e0b', boxShadow: '0 0 0 2px var(--surface)',
-                          }} />
-                      )}
-                      <div style={{ fontSize: inExpanded ? 12 : 10, fontWeight: 700, color: col.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {getName(a.patientId)}
+                    <div key={h} onClick={() => setSelectedHour(h)}
+                      title={expanded ? undefined : `Show ${String(h).padStart(2, '0')}:00`}
+                      style={{ position: 'absolute', top: getHourTop(h), left: 0, right: 0, height: getHourH(h), borderBottom: '1px solid var(--border)', boxSizing: 'border-box', cursor: 'pointer', background: expanded ? 'var(--brand-bg-soft)' : 'transparent', display: 'flex', flexDirection: 'column', justifyContent: expanded ? 'flex-start' : 'center' }}>
+                      <div style={{ height: expanded ? EXPANDED_H / 4 : 'auto', display: 'flex', alignItems: expanded ? 'flex-start' : 'center', justifyContent: 'flex-end', paddingRight: 8, paddingTop: expanded ? 6 : 0, fontSize: 11, fontWeight: 700, color: expanded ? 'var(--brand-text-strong)' : 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>
+                        {String(h).padStart(2, '0')}:00
                       </div>
-                      {inExpanded && (
-                        <div style={{ fontSize: 10, color: col.text, opacity: 0.8 }}>
-                          {isoToTime(a.startAt)} → {isoToTime(a.endAt)}
+                      {expanded && (['15', '30', '45'] as const).map((m) => (
+                        <div key={m} style={{ height: EXPANDED_H / 4, display: 'flex', alignItems: 'flex-start', justifyContent: 'flex-end', paddingRight: 8, paddingTop: 6, fontSize: 10, color: 'var(--text-subtle)', fontVariantNumeric: 'tabular-nums' }}>
+                          {String(h).padStart(2, '0')}:{m}
                         </div>
-                      )}
+                      ))}
                     </div>
                   );
-                });
-              })()}
-            </div>
-          </div>
+                })}
+              </div>
 
-          {/* Empty state — pinned to the center of the visible grid area
+              {/* Grid and Appointments */}
+              <div style={{ flex: 1, position: 'relative', minHeight: hourGeom.total }}>
+                {HOURS.map((h) => {
+                  const expanded = h === selectedHour;
+                  return (
+                    <div key={h} onClick={() => setSelectedHour(h)}
+                      style={{
+                        position: 'absolute', left: 0, right: 0, top: getHourTop(h), height: getHourH(h),
+                        borderBottom: '1px solid var(--border)', boxSizing: 'border-box', cursor: 'pointer',
+                        background: expanded ? 'var(--surface-muted)' : 'transparent',
+                      }}>
+                      {expanded && (['15', '30', '45'] as const).map((m) => (
+                        <div key={m} style={{ position: 'absolute', left: 0, right: 0, top: (parseInt(m) / 60) * EXPANDED_H, height: 1, borderTop: '1px dashed var(--border)' }} />
+                      ))}
+                    </div>
+                  );
+                })}
+
+                {loading && (
+                  <div style={{ padding: 20 }}>
+                    <Spinner />
+                  </div>
+                )}
+
+                {(() => {
+                  const dayLayout = computeDayLayout(dayAppts);
+                  return dayAppts.map((a) => {
+                    const top = getTimeTop(a.startAt);
+                    const bottom = getTimeTop(a.endAt);
+                    // In a collapsed hour the block is a thin bar (just the
+                    // name); in the expanded hour it gets the full block.
+                    const inExpanded = Math.floor(isoToMin(a.startAt) / 60) === selectedHour;
+                    const height = Math.max(bottom - top, inExpanded ? 32 : 16);
+
+                    if (top < 0) return null;
+
+                    const col = STATUS_COLORS[statusKey(a.status)] ?? STATUS_COLORS.BOOKED;
+                    const layout = dayLayout.get(a._id) ?? { left: '8px', width: 'calc(100% - 16px)' };
+
+                    // Tiny dot in the corner whenever the appointment has an
+                    // unpaid auto-issued bill — keeps the calendar block compact
+                    // but still flags "needs payment before check-in" at a glance.
+                    const unpaid = !!a.billId && statusKey(a.status) === 'BOOKED';
+                    return (
+                      <div key={a._id} onClick={(e) => { e.stopPropagation(); setSelected(a); }}
+                        title={inExpanded ? undefined : `${getName(a.patientId)} · ${isoToTime(a.startAt)}`}
+                        style={{
+                          position: 'absolute', left: layout.left, width: layout.width,
+                          top: top + 2, height: height - 4,
+                          background: col.bg, border: `1.5px solid ${col.border}`,
+                          borderRadius: inExpanded ? 10 : 6, padding: inExpanded ? '6px 10px' : '1px 8px', cursor: 'pointer', overflow: 'hidden', zIndex: 2,
+                          boxShadow: 'var(--e1)', display: 'flex', flexDirection: 'column', gap: 2,
+                          justifyContent: 'center',
+                        }}>
+                        {unpaid && (
+                          <span title="Unpaid · pay before check-in"
+                            style={{
+                              position: 'absolute', top: 6, right: 8,
+                              width: 8, height: 8, borderRadius: 999,
+                              background: '#f59e0b', boxShadow: '0 0 0 2px var(--surface)',
+                            }} />
+                        )}
+                        <div style={{ fontSize: inExpanded ? 12 : 10, fontWeight: 700, color: col.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          {getName(a.patientId)}
+                        </div>
+                        {inExpanded && (
+                          <div style={{ fontSize: 10, color: col.text, opacity: 0.8 }}>
+                            {isoToTime(a.startAt)} → {isoToTime(a.endAt)}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  });
+                })()}
+              </div>
+            </div>
+
+            {/* Empty state — pinned to the center of the visible grid area
               (outside the scroll container) so it stays centered instead
               of sitting at the top of the tall, scrollable timeline. */}
-          {!loading && dayAppts.length === 0 && !error && (
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', padding: 24, textAlign: 'center', color: 'var(--text-subtle)' }}>
-              <EmptyState icon="calendar" title="No time-based appointments" hint="Use the Book button to create one." />
-            </div>
-          )}
+            {!loading && dayAppts.length === 0 && !error && (
+              <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none', padding: 24, textAlign: 'center', color: 'var(--text-subtle)' }}>
+                <EmptyState icon="calendar" title="No time-based appointments" hint="Use the Book button to create one." />
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -802,7 +802,7 @@ function ApptSheet({
             <button onClick={startEncounter} className="press-scale"
               style={{ height: 42, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
               <Icon name="clipboard" size={14} />
-              Continue encounter
+              Start Consultation
             </button>
           )}
           {/* DONE = the consultation was completed (and likely signed).
