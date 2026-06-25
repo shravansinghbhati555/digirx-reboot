@@ -2,6 +2,14 @@ import { useEffect, useState } from 'react';
 import { useApp } from '../../app/AppContext';
 import { Icon } from '../shared/Icon';
 
+// Only Male / Female are surfaced; anything else shows as a dash.
+function genderWord(g?: string): string {
+  const u = (g ?? '').toUpperCase();
+  if (u === 'MALE') return 'Male';
+  if (u === 'FEMALE') return 'Female';
+  return '—';
+}
+
 const VITAL_FIELDS: { key: string; label: string; unit: string }[] = [
   { key: 'bp', label: 'BP', unit: 'mmHg' },
   { key: 'spo2', label: 'SpO2', unit: '%' },
@@ -85,10 +93,16 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
   const headerName = (data.clinicDisplayName || '').trim() || data.clinicName || 'Clinic';
   const rxNo = `#${(data.prescriptionNo || data._id || '').slice(-6).toUpperCase()}`;
   
+  // Resolve the clinic logo the same way the invoice / in-app prescription
+  // do: a full URL is used as-is; otherwise load it from the public
+  // GET /clinics/:id/logo endpoint (serves the uploaded logo regardless of
+  // how its storage key is shaped).
   const logoSrc = data.clinicLogoUrl
-    ? data.clinicLogoUrl.startsWith('http://') || data.clinicLogoUrl.startsWith('https://')
+    ? (data.clinicLogoUrl.startsWith('http://') || data.clinicLogoUrl.startsWith('https://'))
       ? data.clinicLogoUrl
-      : `${baseUrl.replace(/\/+$/, '')}/${data.clinicLogoUrl.replace(/^\/+/, '')}`
+      : data.clinicId
+        ? `${baseUrl.replace(/\/+$/, '')}/clinics/${encodeURIComponent(data.clinicId)}/logo`
+        : ''
     : '';
 
   const doctorName = data.doctorName
@@ -370,7 +384,7 @@ export function SharePrescriptionScreen({ token }: { token: string }) {
             <span className="ps-label">Patient</span>
           </div>
           <div className="ps-field">
-            <span className="ps-value">{data.patientGender || '—'} · {data.patientAge ? `${data.patientAge} yrs` : '—'}</span>
+            <span className="ps-value">{genderWord(data.patientGender)} · {data.patientAge ? `${data.patientAge} yrs` : '—'}</span>
             <span className="ps-label">Demographics</span>
           </div>
           <div className="ps-field">

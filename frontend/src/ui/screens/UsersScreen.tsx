@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPostMultipart } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
-import { isValidEmail, isValidIndianMobile, normalizeIndianMobile } from '../../app/validators';
+import { isValidEmail } from '../../app/validators';
+import { dialCodeForTimezone, isValidPhoneForTimezone, normalizePhoneForTimezone } from '../../app/phone';
 import { Avatar, Spinner, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
 import { FaceScanModal } from '../shared/FaceScanModal';
@@ -261,6 +262,7 @@ function UserRolePanel({
   onEdit: () => void;
   onResetPassword: () => void;
 }) {
+  const { roleNames } = useApp();
   const [selectedRoleIds, setSelectedRoleIds] = useState<Set<string>>(
     () => new Set(user.roleIds),
   );
@@ -350,7 +352,15 @@ function UserRolePanel({
           <div style={{ fontSize: 13, color: 'var(--text-subtle)' }}>No roles defined.</div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {allRoles.map((role) => {
+            {allRoles.filter((role) => {
+              const name = (role.name || '').toLowerCase();
+              if (name === 'super admin') return true;
+              if (name === 'manager') return true;
+              if (user.roleIds.includes(role._id)) return true;
+              if (roleNames.has(name)) return true;
+              if (roleNames.has('super admin')) return true;
+              return false;
+            }).map((role) => {
               const checked = selectedRoleIds.has(role._id);
               return (
                 <button key={role._id} onClick={() => toggle(role._id)}
@@ -408,7 +418,62 @@ function UserRolePanel({
   );
 }
 
+// Compact multi-select shown as a dropdown instead of a flat wrap of all
+// options — keeps the Add User form short when there are many branches/roles.
+function MultiSelectDropdown({ options, selected, onToggle, placeholder }: {
+  options: { _id: string; name: string }[];
+  selected: string[];
+  onToggle: (id: string) => void;
+  placeholder: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    const onDoc = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [open]);
+
+  const selectedNames = options.filter((o) => selected.includes(o._id)).map((o) => o.name);
+
+  return (
+    <div ref={ref} style={{ position: 'relative' }}>
+      <button type="button" onClick={() => setOpen((o) => !o)}
+        style={{ width: '100%', minHeight: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, cursor: 'pointer', textAlign: 'left' }}>
+        <span style={{ fontSize: 13, color: selectedNames.length ? 'var(--text)' : 'var(--text-subtle)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {selectedNames.length ? selectedNames.join(', ') : placeholder}
+        </span>
+        <Icon name="chevronDown" size={16} style={{ color: 'var(--text-subtle)', flexShrink: 0 }} />
+      </button>
+      {open && (
+        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 12px 32px rgba(15,23,42,0.12)', maxHeight: 220, overflowY: 'auto', padding: 4 }}>
+          {options.length === 0 ? (
+            <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-subtle)' }}>No options available</div>
+          ) : options.map((o) => {
+            const on = selected.includes(o._id);
+            return (
+              <button type="button" key={o._id} onClick={() => onToggle(o._id)}
+                style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, background: on ? 'var(--brand-50)' : 'transparent', border: 'none', cursor: 'pointer', textAlign: 'left' }}>
+                <span style={{ width: 16, height: 16, borderRadius: 4, border: `1.5px solid ${on ? 'var(--brand-500)' : 'var(--border)'}`, background: on ? 'var(--brand-500)' : 'transparent', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                  {on && <Icon name="check" size={11} style={{ color: 'var(--brand-text)' }} />}
+                </span>
+                <span style={{ fontSize: 13, color: 'var(--text)' }}>{o.name}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[], branches: BranchOption[], onClose: () => void, onSave: (data: any) => Promise<void> }) {
+  const { roleNames, ctx } = useApp();
+  // Dial code + phone validation follow the clinic's timezone (Settings).
+  const dialCode = dialCodeForTimezone(ctx.timezone);
   const [data, setData] = useState({
     name: '',
     email: '',
@@ -433,6 +498,14 @@ function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[
   });
   const branchRequired = !isAdminLike;
 
+  // Professional details (reg no. / qualifications) print on prescriptions,
+  // so they only matter for doctors — show that section only when a Doctor
+  // role is selected.
+  const isDoctor = data.roleIds.some((id) => {
+    const role = roles.find((r) => r._id === id);
+    return role ? role.name.toLowerCase() === 'doctor' : false;
+  });
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -445,13 +518,19 @@ function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[
     }
     let phoneNormalized: string | undefined;
     if (data.phone.trim()) {
-      if (!isValidIndianMobile(data.phone)) { setError('Enter a valid 10-digit Indian mobile number.'); return; }
-      phoneNormalized = normalizeIndianMobile(data.phone) ?? undefined;
+      if (!isValidPhoneForTimezone(data.phone, ctx.timezone)) { setError('Enter a valid phone number.'); return; }
+      phoneNormalized = normalizePhoneForTimezone(data.phone, ctx.timezone) ?? undefined;
     }
+    // Only doctors get the "Dr." honorific; other roles keep the name as
+    // typed. Skip if the operator already typed a "Dr." prefix.
+    const finalName = isDoctor && !/^dr\.?\s/i.test(data.name.trim())
+      ? `Dr. ${data.name.trim()}`
+      : data.name.trim();
     setLoading(true);
     try {
       await onSave({
         ...data,
+        name: finalName,
         // Persist the canonical 10-digit form when present so duplicate
         // detection on (clinicId, phone) sees the same shape regardless
         // of how the operator typed it.
@@ -501,7 +580,7 @@ function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 <div>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Full Name *</label>
-                  <input required value={data.name} onChange={e => setData({...data, name: e.target.value})} style={{ width: '100%', height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)' }} placeholder="e.g. Dr. John Doe" />
+                  <input required value={data.name} onChange={e => setData({...data, name: e.target.value})} style={{ width: '100%', height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)' }} placeholder="e.g. John Doe" />
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Email</label>
@@ -512,25 +591,11 @@ function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
                 <div>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Phone</label>
-                  <input value={data.phone} onChange={e => setData({...data, phone: e.target.value})} style={{ width: '100%', height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)' }} placeholder="+91 9876543210" />
+                  <input value={data.phone} onChange={e => setData({...data, phone: e.target.value})} style={{ width: '100%', height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)' }} placeholder={`${dialCode} mobile number`} />
                 </div>
                 <div>
                   <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Password</label>
                   <input type="password" value={data.password} onChange={e => setData({...data, password: e.target.value})} style={{ width: '100%', height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)' }} placeholder="••••••••" />
-                </div>
-              </div>
-
-              <div style={{ background: 'var(--brand-50)', padding: 16, borderRadius: 12, border: '1px solid var(--brand-100)', display: 'grid', gap: 16 }}>
-                <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: 'var(--brand-600)', textTransform: 'uppercase' }}>Professional Details (for Prescription)</p>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-                  <div>
-                    <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--brand-700)', marginBottom: 4 }}>Reg No.</label>
-                    <input value={data.registrationNumber} onChange={e => setData({...data, registrationNumber: e.target.value})} style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: '#fff', fontSize: 13 }} placeholder="MCI-2019-..." />
-                  </div>
-                  <div>
-                    <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--brand-700)', marginBottom: 4 }}>Qualifications</label>
-                    <input value={data.qualifications} onChange={e => setData({...data, qualifications: e.target.value})} style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: '#fff', fontSize: 13 }} placeholder="MBBS, MD" />
-                  </div>
                 </div>
               </div>
 
@@ -543,32 +608,47 @@ function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[
                     </span>
                   )}
                 </label>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {branches.map(b => (
-                    <button type="button" key={b._id} onClick={() => toggleBranch(b._id)} style={{
-                      padding: '6px 14px', borderRadius: 100, fontSize: 12, fontWeight: 600,
-                      background: data.branchIds.includes(b._id) ? 'rgba(16,185,129,0.1)' : 'var(--surface-muted)',
-                      color: data.branchIds.includes(b._id) ? 'var(--success-600)' : 'var(--text-muted)',
-                      border: `1px solid ${data.branchIds.includes(b._id) ? 'var(--success-500)' : 'var(--border)'}`,
-                      cursor: 'pointer'
-                    }}>{b.name}</button>
-                  ))}
-                </div>
+                <MultiSelectDropdown
+                  options={branches}
+                  selected={data.branchIds}
+                  onToggle={toggleBranch}
+                  placeholder="Select branches…"
+                />
               </div>
 
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 10 }}>Assign Roles</label>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                  {roles.map(r => (
-                    <button type="button" key={r._id} onClick={() => toggleRole(r._id)} style={{
-                      padding: '6px 14px', borderRadius: 100, fontSize: 12, fontWeight: 600,
-                      background: data.roleIds.includes(r._id) ? 'var(--brand-500)' : 'var(--surface-muted)',
-                      color: data.roleIds.includes(r._id) ? 'var(--brand-text)' : 'var(--text-muted)',
-                      border: '1px solid var(--border)', cursor: 'pointer'
-                    }}>{r.name}</button>
-                  ))}
-                </div>
+                <MultiSelectDropdown
+                  options={roles.filter(r => {
+                    const name = (r.name || '').toLowerCase();
+                    if (name === 'super admin') return true;
+                    if (name === 'manager') return true;
+                    if (data.roleIds.includes(r._id)) return true;
+                    if (roleNames.has(name)) return true;
+                    if (roleNames.has('super admin')) return true;
+                    return false;
+                  })}
+                  selected={data.roleIds}
+                  onToggle={toggleRole}
+                  placeholder="Select roles…"
+                />
               </div>
+
+              {isDoctor && (
+                <div style={{ background: 'var(--brand-50)', padding: 16, borderRadius: 12, border: '1px solid var(--brand-100)', display: 'grid', gap: 16 }}>
+                  <p style={{ margin: 0, fontSize: 11, fontWeight: 700, color: 'var(--brand-600)', textTransform: 'uppercase' }}>Professional Details (for Prescription)</p>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--brand-700)', marginBottom: 4 }}>Reg No.</label>
+                      <input value={data.registrationNumber} onChange={e => setData({...data, registrationNumber: e.target.value})} style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: '#fff', fontSize: 13 }} placeholder="MCI-2019-..." />
+                    </div>
+                    <div>
+                      <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--brand-700)', marginBottom: 4 }}>Qualifications</label>
+                      <input value={data.qualifications} onChange={e => setData({...data, qualifications: e.target.value})} style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: '#fff', fontSize: 13 }} placeholder="MBBS, MD" />
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
 
             {error && (
@@ -657,11 +737,11 @@ function EditUserModal({
     if (email.trim() && !isValidEmail(email)) { setError('Enter a valid email address.'); return; }
     let phoneNormalized: string | undefined;
     if (phone.trim()) {
-      if (!isValidIndianMobile(phone)) {
-        setError('Enter a valid 10-digit Indian mobile number.');
+      if (!isValidPhoneForTimezone(phone, ctx.timezone)) {
+        setError('Enter a valid phone number.');
         return;
       }
-      phoneNormalized = normalizeIndianMobile(phone) ?? undefined;
+      phoneNormalized = normalizePhoneForTimezone(phone, ctx.timezone) ?? undefined;
     }
     setSaving(true);
     try {
@@ -713,7 +793,7 @@ function EditUserModal({
               <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>
                 Phone <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>(optional)</span>
               </label>
-              <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+91 9876543210"
+              <input value={phone} onChange={(e) => setPhone(e.target.value)} placeholder={`${dialCodeForTimezone(ctx.timezone)} mobile number`}
                 style={{ width: '100%', height: 40, padding: '0 12px', borderRadius: 10, border: '1px solid var(--border)', background: 'var(--surface-muted)' }} />
             </div>
             <div>
@@ -773,7 +853,9 @@ function EditUserModal({
             </div>
           )}
 
-          {/* Face login — admin enrolls / removes a staff face. */}
+          {/* Face login — admin enrolls / removes a staff face. The
+              captured frame doubles as the user's profile photo, so there's
+              no separate image upload here. */}
           <div style={{ paddingTop: 4, borderTop: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: 12 }}>
             <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--brand-50)', border: '1px solid var(--brand-100)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
               <Icon name={faceEnrolled ? 'checkCircle' : 'camera'} size={17} style={{ color: faceEnrolled ? 'var(--success-500)' : 'var(--brand-500)' }} />

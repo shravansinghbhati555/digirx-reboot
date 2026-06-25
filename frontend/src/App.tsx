@@ -14,7 +14,8 @@ import { ReportsScreen } from './ui/screens/ReportsScreen';
 import { NotificationsScreen } from './ui/screens/NotificationsScreen';
 import { InventoryScreen } from './ui/screens/InventoryScreen';
 import { PharmacyScreen } from './ui/screens/PharmacyScreen';
-import { SettingsScreen } from './ui/screens/SettingsScreen';
+import { SettingsScreen, AvailabilityScreen } from './ui/screens/SettingsScreen';
+import { ProfileScreen } from './ui/screens/ProfileScreen';
 import { RolesScreen } from './ui/screens/RolesScreen';
 import { UsersScreen } from './ui/screens/UsersScreen';
 import { SharePrescriptionScreen } from './ui/screens/SharePrescriptionScreen';
@@ -58,6 +59,8 @@ function AuthedShell() {
         <Route path="/users/*" element={<Guarded screenKey="users"><UsersScreen /></Guarded>} />
         <Route path="/roles/*" element={<Guarded screenKey="roles"><RolesScreen /></Guarded>} />
         <Route path="/settings/*" element={<Guarded screenKey="settings"><SettingsScreen /></Guarded>} />
+        <Route path="/availability/*" element={<Guarded screenKey="availability"><AvailabilityScreen /></Guarded>} />
+        <Route path="/profile/*" element={<Guarded screenKey="profile"><ProfileScreen /></Guarded>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>

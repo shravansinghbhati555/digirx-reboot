@@ -119,7 +119,6 @@ function genderWord(g?: string): string {
   const u = (g ?? '').toUpperCase();
   if (u === 'MALE') return 'Male';
   if (u === 'FEMALE') return 'Female';
-  if (u === 'OTHER') return 'Other';
   return '';
 }
 
@@ -475,7 +474,7 @@ export function EncounterScreen() {
         {/* Top Section: Start Session (Horizontal Bar) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', paddingLeft: 2 }}>Start New Session</div>
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'center', gap: 20, boxShadow: '0 2px 8px rgba(15,23,42,0.03)' }}>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'flex-end', gap: 20, boxShadow: '0 2px 8px rgba(15,23,42,0.03)' }}>
             {/* Patient Picker */}
             <div style={{ flex: 1.5, minWidth: 260 }}>
               <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Patient</label>
@@ -891,23 +890,21 @@ function EncounterEditor({
     try {
       // Save first, then sign
       await saveDraft();
-      // Save Rx items as a prescription if any are filled
+      // Save Rx items as a prescription (always, to ensure prescriptionId is minted)
       const filled = rx.filter((r) => r.med.trim());
-      if (filled.length > 0) {
-        const res = await apiPost<{ _id: string; prescriptionNo?: string }>(ctx, `/encounters/${encounter._id}/prescriptions`, {
-          items: filled.map((r) => ({
-            medicineCatalogItemId: r.medicineCatalogItemId || undefined,
-            customName: r.med,
-            dosage: r.dose || undefined,
-            frequency: r.freq || undefined,
-            duration: r.dur || undefined,
-            instructions: r.note || undefined,
-            quantity: r.qty.trim() ? Number(r.qty) || undefined : undefined,
-          })),
-        });
-        setPrescriptionId(res._id);
-        if (res.prescriptionNo) setPrescriptionNo(res.prescriptionNo);
-      }
+      const res = await apiPost<{ _id: string; prescriptionNo?: string }>(ctx, `/encounters/${encounter._id}/prescriptions`, {
+        items: filled.map((r) => ({
+          medicineCatalogItemId: r.medicineCatalogItemId || undefined,
+          customName: r.med,
+          dosage: r.dose || undefined,
+          frequency: r.freq || undefined,
+          duration: r.dur || undefined,
+          instructions: r.note || undefined,
+          quantity: r.qty.trim() ? Number(r.qty) || undefined : undefined,
+        })),
+      });
+      setPrescriptionId(res._id);
+      if (res.prescriptionNo) setPrescriptionNo(res.prescriptionNo);
       const signedEnc = await apiPost<Encounter>(ctx, `/encounters/${encounter._id}/sign`, {});
       onChanged(signedEnc);
       setJustSigned(true);
@@ -921,10 +918,32 @@ function EncounterEditor({
   }
 
   async function shareOnWhatsApp() {
-    if (!prescriptionId) return;
     setSharing(true);
     try {
-      const { shareToken } = await apiPost<{ shareToken: string }>(ctx, `/prescriptions/${prescriptionId}/share`, {
+      let activePrescriptionId = prescriptionId;
+      if (!activePrescriptionId) {
+        const filled = rx.filter((r) => r.med.trim());
+        const res = await apiPost<{ _id: string; prescriptionNo?: string }>(ctx, `/encounters/${encounter._id}/prescriptions`, {
+          items: filled.map((r) => ({
+            medicineCatalogItemId: r.medicineCatalogItemId || undefined,
+            customName: r.med,
+            dosage: r.dose || undefined,
+            frequency: r.freq || undefined,
+            duration: r.dur || undefined,
+            instructions: r.note || undefined,
+            quantity: r.qty.trim() ? Number(r.qty) || undefined : undefined,
+          })),
+        });
+        activePrescriptionId = res._id;
+        setPrescriptionId(res._id);
+        if (res.prescriptionNo) setPrescriptionNo(res.prescriptionNo);
+      }
+
+      if (!activePrescriptionId) {
+        throw new Error('Failed to generate prescription ID');
+      }
+
+      const { shareToken } = await apiPost<{ shareToken: string }>(ctx, `/prescriptions/${activePrescriptionId}/share`, {
         expiresInSeconds: 60 * 24 * 60 * 60, // 60 days
       });
       // Share the backend PDF endpoint. It now renders the PDF by
@@ -934,7 +953,10 @@ function EncounterEditor({
       // opens / downloads it directly from this link.
       const shareUrl = `${ctx.apiBaseUrl}/share/prescriptions/${shareToken}/pdf`;
       const text = encodeURIComponent(`Hi ${patient?.fullName ?? 'Patient'}, your prescription is ready. You can view it here: ${shareUrl}`);
-      window.open(`https://wa.me/${patient?.phones?.[0]?.replace(/\D/g, '') || ''}?text=${text}`, '_blank');
+      const rawPhone = patient?.phones?.[0] || '';
+      const cleanedPhone = rawPhone.replace(/\D/g, '');
+      const formattedPhone = cleanedPhone.length === 10 ? `91${cleanedPhone}` : cleanedPhone;
+      window.open(`https://wa.me/${formattedPhone}?text=${text}`, '_blank');
     } catch (e) {
       toast('Could not generate sharing link', 'error');
     } finally {
@@ -982,9 +1004,9 @@ function EncounterEditor({
               style={{ height: 34, padding: '0 12px', background: 'var(--brand-500)', border: '1px solid var(--brand-500)', borderRadius: 8, color: 'var(--brand-text)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
               <Icon name="printer" size={13} /> Print
             </button>
-            <button onClick={shareOnWhatsApp} disabled={sharing || !prescriptionId}
-              title={prescriptionId ? 'Share via WhatsApp' : 'Save and sign first to enable sharing'}
-              style={{ height: 34, padding: '0 12px', background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)', borderRadius: 8, color: '#25D366', fontSize: 12, fontWeight: 600, cursor: (sharing || !prescriptionId) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, opacity: (sharing || !prescriptionId) ? 0.5 : 1 }}>
+            <button onClick={shareOnWhatsApp} disabled={sharing || (!signed && !prescriptionId)}
+              title={prescriptionId || signed ? 'Share via WhatsApp' : 'Save and sign first to enable sharing'}
+              style={{ height: 34, padding: '0 12px', background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)', borderRadius: 8, color: '#25D366', fontSize: 12, fontWeight: 600, cursor: (sharing || (!signed && !prescriptionId)) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, opacity: (sharing || (!signed && !prescriptionId)) ? 0.5 : 1 }}>
               {sharing ? <Spinner size={13} /> : <><Icon name="share" size={13} /> Share</>}
             </button>
             <button onClick={onClose}
@@ -1148,7 +1170,7 @@ function EncounterEditor({
               </button>
               <button
                 onClick={shareOnWhatsApp}
-                disabled={sharing || !prescriptionId}
+                disabled={sharing}
                 style={{
                   height: 32, width: 36, padding: 0,
                   display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -1157,8 +1179,8 @@ function EncounterEditor({
                   borderRadius: 8,
                   color: '#25D366',
                   fontSize: 12, fontWeight: 600,
-                  cursor: 'pointer',
-                  opacity: (sharing || !prescriptionId) ? 0.6 : 1
+                  cursor: sharing ? 'not-allowed' : 'pointer',
+                  opacity: sharing ? 0.6 : 1
                 }}>
                 {sharing ? <Spinner size={13} /> : <Icon name="share" size={13} />}
               </button>

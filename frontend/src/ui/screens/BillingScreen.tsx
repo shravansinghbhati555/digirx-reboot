@@ -105,7 +105,6 @@ const PAYMENT_METHODS: { id: string; label: string; icon: IconName }[] = [
   { id: 'UPI', label: 'UPI', icon: 'smartphone' },
   { id: 'CARD', label: 'Card', icon: 'creditCard' },
   { id: 'ONLINE', label: 'Online', icon: 'send' },
-  { id: 'BANK_TRANSFER', label: 'Bank', icon: 'arrowUp' },
 ];
 
 export function BillingScreen() {
@@ -234,8 +233,8 @@ export function BillingScreen() {
   const filtered = useMemo(() => bills ?? [], [bills]);
 
   return (
-    <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-      <div style={{ width: selected ? 520 : '100%', flexShrink: 0, display: 'flex', flexDirection: 'column', borderRight: selected ? '1px solid var(--border)' : 'none', transition: 'width 240ms ease-out' }}>
+    <div style={{ display: 'flex', height: '100%', overflow: 'hidden', position: 'relative' }}>
+      <div style={{ width: '100%', flexShrink: 0, display: 'flex', flexDirection: 'column' }}>
         <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 100, padding: 4, border: '1px solid var(--border)' }}>
             {(['all', 'draft', 'issued', 'paid', 'void'] as const).map((f) => (
@@ -344,18 +343,26 @@ export function BillingScreen() {
       </div>
 
       {selected && (
-        <BillDetail
-          bill={selected as any}
-          onClose={() => setSelected(null)}
-          onChanged={(b) => {
-            setSelected(b as BillRow);
-            void loadBills();
-          }}
-          onEdit={(b) => {
-            setEditingBill(b);
-            setShowCreate(true);
-          }}
-        />
+        <>
+          {/* Backdrop — click to dismiss. The detail panel floats ON TOP
+              of the list instead of squeezing it. */}
+          <div onClick={() => setSelected(null)}
+            style={{ position: 'absolute', inset: 0, background: 'rgba(15,23,42,0.3)', backdropFilter: 'blur(2px)', zIndex: 40, animation: 'fadeIn 180ms ease-out' }} />
+          <div style={{ position: 'absolute', top: 0, right: 0, bottom: 0, width: 'min(820px, 100%)', zIndex: 41, display: 'flex', flexDirection: 'column', background: 'var(--surface)', borderLeft: '1px solid var(--border)', boxShadow: '-8px 0 32px rgba(15,23,42,0.14)' }}>
+            <BillDetail
+              bill={selected as any}
+              onClose={() => setSelected(null)}
+              onChanged={(b) => {
+                setSelected(b as BillRow);
+                void loadBills();
+              }}
+              onEdit={(b) => {
+                setEditingBill(b);
+                setShowCreate(true);
+              }}
+            />
+          </div>
+        </>
       )}
 
       {showCreate && (
@@ -406,6 +413,10 @@ function BillDetail({
   const [cancellingCn, setCancellingCn] = useState<CreditNote | null>(null);
   const [busy, setBusy] = useState(false);
   const [downloadingPdf, setDownloadingPdf] = useState(false);
+  const [sharing, setSharing] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
+  const [patientContact, setPatientContact] = useState<{ phone?: string; email?: string }>({});
+  const shareRef = useRef<HTMLDivElement | null>(null);
   const [billNoFreshKey, setBillNoFreshKey] = useState(0);
   const [latestPaymentId, setLatestPaymentId] = useState<string | null>(null);
   const prevBillNoRef = useRef<string | undefined>(bill.billNo);
@@ -413,9 +424,13 @@ function BillDetail({
   useEffect(() => {
     let cancelled = false;
     const pid = typeof bill.patientId === 'object' ? (bill.patientId as any)._id : bill.patientId;
-    apiGet<{ fullName?: string }>(ctx, `/patients/${pid}`)
-      .then((p) => { if (!cancelled) setPatientName(p.fullName ?? null); })
-      .catch(() => { if (!cancelled) setPatientName(null); });
+    apiGet<{ fullName?: string; phones?: string[]; emails?: string[] }>(ctx, `/patients/${pid}`)
+      .then((p) => {
+        if (cancelled) return;
+        setPatientName(p.fullName ?? null);
+        setPatientContact({ phone: p.phones?.[0], email: p.emails?.[0] });
+      })
+      .catch(() => { if (!cancelled) { setPatientName(null); setPatientContact({}); } });
     return () => { cancelled = true; };
   }, [bill.patientId, ctx]);
 
@@ -495,6 +510,59 @@ function BillDetail({
     }
   }
 
+  // Close the share menu on outside click.
+  useEffect(() => {
+    if (!shareOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      if (shareRef.current && !shareRef.current.contains(e.target as Node)) setShareOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [shareOpen]);
+
+  // Mint a public, 60-day token link to the invoice PDF (served by the
+  // backend's public GET /share/:token), suitable for sending to patients.
+  async function getShareUrl(): Promise<string | null> {
+    try {
+      const { token } = await apiPost<{ token: string }>(ctx, `/bills/${bill._id}/share`, {});
+      return `${(ctx.apiBaseUrl || '').replace(/\/+$/, '')}/share/${token}`;
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not create share link', 'error');
+      return null;
+    }
+  }
+
+  async function shareInvoice(channel: 'whatsapp' | 'sms' | 'email') {
+    setShareOpen(false);
+    // Guard on the required contact BEFORE minting a share link — no point
+    // generating a token if we can't deliver it. Email needs an email on
+    // file; WhatsApp/SMS need a phone.
+    if (channel === 'email' && !patientContact.email) {
+      toast('No email is registered for this patient.', 'error');
+      return;
+    }
+    if ((channel === 'whatsapp' || channel === 'sms') && !patientContact.phone) {
+      toast('No phone number is registered for this patient.', 'error');
+      return;
+    }
+    setSharing(true);
+    const url = await getShareUrl();
+    setSharing(false);
+    if (!url) return;
+    const who = patientName ?? 'there';
+    const label = bill.billNo ? `invoice ${bill.billNo}` : 'your invoice';
+    const msg = `Hi ${who}, here is ${label}: ${url}`;
+    const phone = (patientContact.phone || '').replace(/\D/g, '');
+    if (channel === 'whatsapp') {
+      window.open(`https://wa.me/${phone}?text=${encodeURIComponent(msg)}`, '_blank', 'noopener,noreferrer');
+    } else if (channel === 'sms') {
+      window.open(`sms:${phone}?body=${encodeURIComponent(msg)}`, '_self');
+    } else {
+      const subject = bill.billNo ? `Invoice ${bill.billNo}` : 'Your invoice';
+      window.open(`mailto:${patientContact.email || ''}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(msg)}`, '_self');
+    }
+  }
+
   async function reloadAll() {
     await Promise.all([loadCreditNotes(), loadPayments()]);
     try {
@@ -506,7 +574,7 @@ function BillDetail({
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflowY: 'auto', animation: 'slideInRight 240ms ease-out' }}>
       <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 12 }}>
-        <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 4 }}><Icon name="chevronLeft" size={18} /></button>
+        <button onClick={onClose} title="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 4 }}><Icon name="x" size={18} /></button>
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: 'monospace', fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
             <span key={billNoFreshKey} style={{ display: 'inline-block', animation: billNoFreshKey > 0 ? 'slideInRight 240ms var(--ease-out)' : undefined }}>
@@ -553,6 +621,27 @@ function BillDetail({
           <button onClick={downloadPdf} disabled={downloadingPdf} title="PDF" style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 9, cursor: downloadingPdf ? 'wait' : 'pointer', color: 'var(--text-muted)', opacity: downloadingPdf ? 0.6 : 1 }}>
             {downloadingPdf ? <Spinner size={14} /> : <Icon name="download" size={14} />}
           </button>
+          {(isIssued || isPaid) && (
+            <div ref={shareRef} style={{ position: 'relative' }}>
+              <button onClick={() => setShareOpen((o) => !o)} disabled={sharing} title="Share invoice"
+                style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: shareOpen ? 'var(--brand-50)' : 'none', border: `1px solid ${shareOpen ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 9, cursor: sharing ? 'wait' : 'pointer', color: shareOpen ? 'var(--brand-600)' : 'var(--text-muted)' }}>
+                {sharing ? <Spinner size={14} /> : <Icon name="share" size={14} />}
+              </button>
+              {shareOpen && (
+                <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 12px 32px rgba(15,23,42,0.12)', padding: 4, minWidth: 170 }}>
+                  <div style={{ padding: '6px 10px 4px', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Share invoice</div>
+                  {([['whatsapp', 'WhatsApp', 'share'], ['sms', 'SMS', 'smartphone'], ['email', 'Email', 'mail']] as const).map(([ch, lbl, ic]) => (
+                    <button key={ch} onClick={() => void shareInvoice(ch)}
+                      style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 13, color: 'var(--text)' }}
+                      onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-muted)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}>
+                      <Icon name={ic as IconName} size={14} style={{ color: 'var(--brand-500)' }} /> {lbl}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
       
@@ -853,9 +942,6 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
               style={{ width: '100%', height: 40, padding: '0 12px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box' }} />
           </div>
 
-          <div style={{ background: 'var(--surface-muted)', borderRadius: 12, padding: '12px 14px', border: '1px solid var(--border)', fontSize: 11, color: 'var(--text-subtle)' }}>
-            Idempotency key: <code style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>{idempotencyKey.slice(0, 8)}…</code>
-          </div>
 
           {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
         </div>

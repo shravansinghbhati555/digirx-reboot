@@ -60,8 +60,8 @@ type RevenueResp = {
 type ScheduleResp = {
   date: string; timezone: string; branchId: string; branchName?: string | null;
   total: number;
-  byDoctor: Record<string, { total: number; byStatus: Record<string, number>; byType: Record<string, number> }>;
-  items: { _id: string; type: string; status: string; doctorId: string; patientId: string; startAt?: string; endAt?: string; queueDate?: string; queueNumber?: number }[];
+  byDoctor: Record<string, { doctorName: string; total: number; byStatus: Record<string, number>; byType: Record<string, number> }>;
+  items: { _id: string; type: string; status: string; doctorId: string | { _id: string; name: string }; patientId: string; startAt?: string; endAt?: string; queueDate?: string; queueNumber?: number }[];
 };
 
 type PendingRow = { _id: string; billNo?: string; total: number; outstanding: number; totalPaid: number; status: string; patientId: string; patient?: { fullName: string; mrn?: string } };
@@ -279,7 +279,7 @@ function UtilizationTab() {
     const completed = (d.byStatus.DONE ?? 0) + (d.byStatus.CHECKED_IN ?? 0) + (d.byStatus.IN_PROGRESS ?? 0);
     const cancelled = (d.byStatus.CANCELLED ?? 0) + (d.byStatus.NO_SHOW ?? 0);
     const utilPct = d.total > 0 ? Math.round((completed / d.total) * 100) : 0;
-    return { doctorId, total: d.total, completed, cancelled, time: d.byType.TIME ?? 0, queue: d.byType.QUEUE ?? 0, utilPct };
+    return { doctorId, doctorName: d.doctorName, total: d.total, completed, cancelled, time: d.byType.TIME ?? 0, queue: d.byType.QUEUE ?? 0, utilPct };
   }).sort((a, b) => b.total - a.total) : [];
 
   return (
@@ -309,7 +309,7 @@ function UtilizationTab() {
               <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>By doctor</div>
               <ExportButton onClick={() => downloadCsv(`utilization-${date}.csv`,
                 [['Doctor', 'Total', 'Completed', 'Cancelled', 'Time', 'Queue', 'Utilization %'],
-                ...rows.map((r) => [r.doctorId, String(r.total), String(r.completed), String(r.cancelled), String(r.time), String(r.queue), String(r.utilPct)])])} />
+                ...rows.map((r) => [r.doctorName, String(r.total), String(r.completed), String(r.cancelled), String(r.time), String(r.queue), String(r.utilPct)])])} />
             </div>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
@@ -322,7 +322,7 @@ function UtilizationTab() {
               <tbody>
                 {rows.map((r, i) => (
                   <tr key={r.doctorId} style={{ borderTop: '1px solid var(--border)', animation: `slideUp 150ms ease-out ${Math.min(i * 20, 240)}ms both` }}>
-                    <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text)', fontFamily: 'monospace' }}>{formatId(r.doctorId)}</td>
+                    <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text)' }}>{r.doctorName}</td>
                     <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--text)', textAlign: 'right', fontVariantNumeric: 'tabular-nums', fontWeight: 600 }}>{r.total}</td>
                     <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--success-500)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.completed}</td>
                     <td style={{ padding: '11px 16px', fontSize: 13, color: 'var(--danger-500)', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>{r.cancelled}</td>
@@ -430,7 +430,7 @@ function ScheduleTab() {
                     <tr key={a._id} style={{ borderTop: '1px solid var(--border)' }}>
                       <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text-muted)' }}>{a.type}</td>
                       <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text)', fontWeight: 600 }}>{formatId(a.patientId)}</td>
-                      <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text-muted)', fontFamily: 'monospace' }}>{formatId(a.doctorId)}</td>
+                      <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text-muted)' }}>{formatId(a.doctorId)}</td>
                       <td style={{ padding: '11px 16px', fontSize: 12, color: 'var(--text-muted)' }}>
                         {a.type === 'TIME' ? `${formatTime(a.startAt)} → ${formatTime(a.endAt)}` : `Q#${a.queueNumber ?? '—'}`}
                       </td>

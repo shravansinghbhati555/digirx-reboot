@@ -10,6 +10,9 @@ type NotifLog = {
   _id: string;
   channel: 'EMAIL' | 'SMS' | 'WHATSAPP' | string;
   to: string;
+  // Patient name resolved from `to` by the backend, when the recipient
+  // matches a patient on file. Absent for non-patient recipients.
+  recipientName?: string;
   body: string;
   status: 'QUEUED' | 'SENT' | 'FAILED' | 'PENDING' | string;
   attempts?: number;
@@ -143,7 +146,14 @@ function LogsTab() {
                   <Icon name={channel.icon} size={11} /> {channel.label}
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{log.to}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                    {log.recipientName ?? log.to}
+                  </div>
+                  {log.recipientName && (
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {log.to}
+                    </div>
+                  )}
                   <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                     {log.templateKey ?? '—'}
                   </div>

@@ -349,7 +349,7 @@ export const formatDateTime = (str: string | Date | null | undefined) => {
 export const labelStyle: CSSProperties = { display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--text)', marginBottom: 4 };
 
 export function Field({
-  label, value, onChange, placeholder, prefix, type = 'text', optional = false,
+  label, value, onChange, placeholder, prefix, type = 'text', optional = false, disabled = false,
 }: {
   label: string; value: string; onChange: (v: string) => void;
   placeholder?: string; prefix?: string; type?: string;
@@ -357,6 +357,7 @@ export function Field({
    *  the DTO contract — fields the API treats as optional should advertise
    *  it visually, not silently accept empty input. */
   optional?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <div>
@@ -380,12 +381,13 @@ export function Field({
           {prefix && (
             <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', fontSize: 13, color: 'var(--text-subtle)', userSelect: 'none' }}>{prefix}</span>
           )}
-          <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} type={type}
+          <input value={value} onChange={(e) => onChange(e.target.value)} placeholder={placeholder} type={type} disabled={disabled}
             style={{
               width: '100%', height: 32, padding: prefix ? '0 10px 0 38px' : '0 10px',
               background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 8,
               fontSize: 12, color: 'var(--text)', fontFamily: "'Inter',sans-serif",
               outline: 'none', boxSizing: 'border-box', transition: 'border-color 120ms',
+              opacity: disabled ? 0.6 : 1, cursor: disabled ? 'not-allowed' : 'text',
             }}
             onFocus={(e) => (e.target.style.borderColor = 'var(--brand-500)')}
             onBlur={(e) => (e.target.style.borderColor = 'var(--border)')}

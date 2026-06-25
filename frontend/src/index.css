@@ -1,6 +1,7 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&display=swap');
 
 :root {
+  color-scheme: light;
   --bg: #FAFBFC;
   --surface: #FFFFFF;
   --surface-muted: #F4F6F8;
@@ -66,6 +67,7 @@
 }
 
 [data-theme="dark"] {
+  color-scheme: dark;
   --bg: #0B0E14;
   --surface: #11151D;
   --surface-muted: #181D26;
@@ -493,7 +495,6 @@ select {
 [data-theme='dark'] input[type="datetime-local"]::-webkit-calendar-picker-indicator,
 [data-theme='dark'] input[type="month"]::-webkit-calendar-picker-indicator,
 [data-theme='dark'] input[type="week"]::-webkit-calendar-picker-indicator {
-  filter: invert(0.85);
   cursor: pointer;
 }
 

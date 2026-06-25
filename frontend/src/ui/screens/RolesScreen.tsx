@@ -99,6 +99,17 @@ const PERMISSION_GROUPS: PermGroup[] = [
     ],
   },
   {
+    // The audit/access-log TABS are gated by the settings:* perms above,
+    // but the DATA endpoints (and the tab bodies) require these. Both must
+    // be granted for a role to actually read the logs — exposing them here
+    // also stops them being silently stripped when a role is saved.
+    title: 'Audit & access logs',
+    rows: [
+      { perm: Perm.AuditRead, label: 'View audit log' },
+      { perm: Perm.AccessLogRead, label: 'View access logs' },
+    ],
+  },
+  {
     title: 'Clinic admin',
     rows: [
       { perm: Perm.ClinicRead, label: 'View clinic settings' },
@@ -147,6 +158,7 @@ export function RolesScreen() {
   const { ctx, refreshMe } = useApp();
   const toast = useToast();
   const [roles, setRoles] = useState<Role[]>([]);
+  const [assignedRoleIds, setAssignedRoleIds] = useState<Set<string>>(new Set());
   const [showCreate, setShowCreate] = useState(false);
   // Map<roleId, Set<perm>> — current (possibly edited) state.
   const [edited, setEdited] = useState<Map<string, Set<string>>>(new Map());
@@ -160,11 +172,26 @@ export function RolesScreen() {
     if (!silent) setLoading(true);
     setError(null);
     try {
-      const data = await apiGet<Role[]>(ctx, '/roles');
-      setRoles(data);
+      const [roleData, userData] = await Promise.all([
+        apiGet<Role[]>(ctx, '/roles'),
+        apiGet<Array<{ roleIds?: string[] }>>(ctx, '/users'),
+      ]);
+
+      setRoles(roleData);
+
+      const assigned = new Set<string>();
+      for (const u of userData) {
+        if (u.roleIds) {
+          for (const rid of u.roleIds) {
+            assigned.add(rid);
+          }
+        }
+      }
+      setAssignedRoleIds(assigned);
+
       const e = new Map<string, Set<string>>();
       const o = new Map<string, Set<string>>();
-      for (const r of data) {
+      for (const r of roleData) {
         e.set(r._id, new Set(r.permissions));
         o.set(r._id, new Set(r.permissions));
       }
@@ -176,6 +203,14 @@ export function RolesScreen() {
       setLoading(false);
     }
   }
+
+  const displayedRoles = useMemo(() => {
+    return roles.filter((r) => {
+      const name = (r.name || '').toLowerCase();
+      if (name === 'super admin' || name === 'manager') return true;
+      return assignedRoleIds.has(r._id);
+    });
+  }, [roles, assignedRoleIds]);
 
   useEffect(() => {
     void load();
@@ -330,7 +365,7 @@ export function RolesScreen() {
             <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
               <tr style={{ background: 'var(--surface-muted)' }}>
                 <th style={{ ...thStyle, textAlign: 'left', textTransform: 'uppercase', fontSize: 11, letterSpacing: '0.06em', color: 'var(--text-subtle)' }}>Permission</th>
-                {roles.map((r) => {
+                {displayedRoles.map((r) => {
                   const dirty = dirtyRoleIds.includes(r._id);
                   return (
                     <th key={r._id} style={{ 
@@ -357,7 +392,7 @@ export function RolesScreen() {
                 <PermGroupRows
                   key={group.title}
                   group={group}
-                  roles={roles}
+                  roles={displayedRoles}
                   isChecked={isChecked}
                   onToggle={toggle}
                 />

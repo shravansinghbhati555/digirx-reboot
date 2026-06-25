@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { apiGet, apiPost, AUTH_EXPIRED_EVENT } from './api';
 import { clearContext, isLoggedIn, loadContext, saveContext, type DevContext } from './context';
@@ -20,7 +20,14 @@ export type ScreenKey =
   | 'pharmacy'
   | 'users'
   | 'roles'
-  | 'settings';
+  | 'settings'
+  // Standalone Availability screen — used by doctors, who get it in the
+  // sidebar instead of as a Settings tab. Other roles still edit
+  // availability inside Settings.
+  | 'availability'
+  // Per-user profile: photo, role, clinic, and the user's personal
+  // display-timezone preference + their appointments.
+  | 'profile';
 
 // Per-clinic feature toggles returned alongside /me. Mirrors a slice of
 // the BE's `modules` settings shape — only the flags the FE actually
@@ -62,6 +69,11 @@ type AppState = {
   setSelectedEncounterId: (id: string | undefined) => void;
   selectedDate: string; // YYYY-MM-DD
   setSelectedDate: (d: string) => void;
+  // One-shot signal: the header "+ New" button sets this true and
+  // navigates to the Patients tab; PatientsScreen opens the registration
+  // modal in response and clears the flag.
+  newPatientRequested: boolean;
+  setNewPatientRequested: (v: boolean) => void;
 };
 
 const Ctx = createContext<AppState | null>(null);
@@ -70,6 +82,17 @@ export function useApp(): AppState {
   const v = useContext(Ctx);
   if (!v) throw new Error('useApp must be used inside AppProvider');
   return v;
+}
+
+// Today's date (YYYY-MM-DD) in a given IANA timezone. Falls back to the
+// browser's local date when no/invalid timezone is given. `en-CA` formats
+// as YYYY-MM-DD.
+function todayInTimezone(tz?: string): string {
+  try {
+    return new Intl.DateTimeFormat('en-CA', tz ? { timeZone: tz } : undefined).format(new Date());
+  } catch {
+    return new Intl.DateTimeFormat('en-CA').format(new Date());
+  }
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -106,7 +129,41 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [selectedPatientId, setSelectedPatientId] = useState<string | undefined>();
   const [selectedBillId, setSelectedBillId] = useState<string | undefined>();
   const [selectedEncounterId, setSelectedEncounterId] = useState<string | undefined>();
-  const [selectedDate, setSelectedDate] = useState<string>(() => new Date().toISOString().slice(0, 10));
+  // The header date that drives all date-scoped data filtering. Defaults
+  // to "today" — but in the CLINIC's timezone, not UTC/browser-local — so
+  // when the clinic is in a different timezone the calendar (and the data
+  // it filters) follows the clinic's current day, matching the header
+  // clock. Until the user manually picks a date, it stays synced to the
+  // clinic-local today as the timezone loads from /me.
+  const [selectedDate, setSelectedDateState] = useState<string>(() => todayInTimezone());
+  const dateManuallySet = useRef(false);
+  const prevTz = useRef<string | undefined>(ctx.timezone);
+  const setSelectedDate = useCallback((d: string) => {
+    dateManuallySet.current = true;
+    setSelectedDateState(d);
+  }, []);
+  // Keep the header date aligned with the clinic timezone:
+  //  - On first load (timezone resolving from /me), pin to clinic-local
+  //    today until the user navigates to a specific date.
+  //  - When the clinic timezone actually CHANGES (the operator switched
+  //    the clinic's location in Settings), snap to the new clinic-local
+  //    today and forget any prior manual date — so the day view fetches
+  //    and shows that timezone's current-day appointments.
+  useEffect(() => {
+    const tz = ctx.timezone;
+    const today = todayInTimezone(tz);
+    if (prevTz.current !== undefined && prevTz.current !== tz) {
+      prevTz.current = tz;
+      dateManuallySet.current = false;
+      setSelectedDateState(today);
+      return;
+    }
+    prevTz.current = tz;
+    if (!dateManuallySet.current) {
+      setSelectedDateState((prev) => (prev === today ? prev : today));
+    }
+  }, [ctx.timezone]);
+  const [newPatientRequested, setNewPatientRequested] = useState(false);
 
   function setCtx(next: DevContext) {
     setCtxState(next);
@@ -166,6 +223,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
             primaryColor?: string | null;
           } | null;
         };
+        displayTimezone?: string | null;
+        profileImageUrl?: string | null;
       }>(ctx, '/me');
       setMeData(data);
       // Persist email/fullName/permissions for header display.
@@ -181,7 +240,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // name instead of an id-tail fallback.
         branchName: data.branch?.name ?? ctx.branchName,
         currency: data.clinic?.currency ?? ctx.currency,
-        timezone: data.clinic?.timezone ?? ctx.timezone,
+        // The clinic's authoritative timezone.
+        clinicTimezone: data.clinic?.timezone ?? ctx.clinicTimezone,
+        // This user's personal display-timezone preference (may be empty).
+        displayTimezone: data.displayTimezone ?? undefined,
+        // Effective timezone used for ALL display + date filtering for this
+        // user: their own choice, falling back to the clinic timezone.
+        timezone: (data.displayTimezone || data.clinic?.timezone) ?? ctx.timezone,
+        profileImageUrl: data.profileImageUrl ?? undefined,
         branding: data.clinic?.branding
           ? {
               displayName: data.clinic.branding.displayName ?? null,
@@ -265,6 +331,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setSelectedEncounterId,
     selectedDate,
     setSelectedDate,
+    newPatientRequested,
+    setNewPatientRequested,
   };
 
   return <Ctx.Provider value={value}>{children}</Ctx.Provider>;

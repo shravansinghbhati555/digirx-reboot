@@ -2,7 +2,8 @@ import { useEffect, useMemo, useState } from 'react';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPostMultipart } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Perm, usePerm } from '../../app/permissions';
-import { isValidEmail, normalizeIndianMobile } from '../../app/validators';
+import { isValidEmail } from '../../app/validators';
+import { countryForTimezone, dialCodeForTimezone, isValidPhoneForTimezone, normalizePhoneForTimezone } from '../../app/phone';
 import { Avatar, EmptyState, Field, Spinner, StatusPill, formatDate, formatMoney, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
 import { AnimatedTabs } from '../shared/AnimatedTabs';
@@ -10,6 +11,19 @@ import { Skeleton, ListItemSkeleton } from '../shared/Skeleton';
 import { useShake } from '../shared/useShake';
 import { FaceScanModal } from '../shared/FaceScanModal';
 import { DocumentsScreen } from './DocumentsScreen';
+
+// Readable country label from an ISO 3166-1 alpha-2 code, e.g.
+// "GB" → "United Kingdom (GB)". Uses the built-in Intl.DisplayNames
+// (no extra dependency); falls back to the raw code if unavailable.
+function countryLabel(code?: string): string {
+  if (!code) return '—';
+  try {
+    const name = new Intl.DisplayNames(['en'], { type: 'region' }).of(code);
+    return name && name !== code ? `${name} (${code})` : code;
+  } catch {
+    return code;
+  }
+}
 
 export type Patient = {
   _id: string;
@@ -21,6 +35,8 @@ export type Patient = {
   gender?: 'MALE' | 'FEMALE' | 'OTHER' | string;
   dob?: string;
   phones?: string[];
+  // ISO 3166-1 alpha-2 (e.g. "IN", "GB") — which country the patient is from.
+  countryCode?: string;
   emails?: string[];
   tags?: string[];
   notes?: string;
@@ -121,7 +137,7 @@ function genderLabel(g?: string): string {
   if (!g) return '—';
   if (g === 'MALE' || g === 'M') return 'Male';
   if (g === 'FEMALE' || g === 'F') return 'Female';
-  return 'Other';
+  return '—';
 }
 
 function alphaGroups(list: Patient[]) {
@@ -135,7 +151,7 @@ function alphaGroups(list: Patient[]) {
 }
 
 export function PatientsScreen() {
-  const { ctx } = useApp();
+  const { ctx, newPatientRequested, setNewPatientRequested } = useApp();
   const { has } = usePerm();
   const canCreatePatient = has(Perm.PatientWrite);
   const toast = useToast();
@@ -147,7 +163,14 @@ export function PatientsScreen() {
   const [showNew, setShowNew] = useState(false);
   const [editing, setEditing] = useState<Patient | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
-  const [genderFilter, setGenderFilter] = useState<'ALL' | 'MALE' | 'FEMALE' | 'OTHER'>('ALL');
+
+  // Opened from the header "+ New" button: open the registration modal,
+  // then clear the one-shot flag so it doesn't reopen on revisit.
+  useEffect(() => {
+    if (!newPatientRequested) return;
+    if (canCreatePatient) setShowNew(true);
+    setNewPatientRequested(false);
+  }, [newPatientRequested, canCreatePatient, setNewPatientRequested]);
 
   useEffect(() => {
     let cancelled = false;
@@ -181,15 +204,7 @@ export function PatientsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [query, refreshKey, ctx.branchId]);
 
-  const visibleItems = useMemo(() => {
-    return items.filter((p) => {
-      if (genderFilter !== 'ALL') {
-        const g = (p.gender || '').toUpperCase();
-        if (g !== genderFilter && !(genderFilter === 'OTHER' && g !== 'MALE' && g !== 'FEMALE')) return false;
-      }
-      return true;
-    });
-  }, [items, genderFilter]);
+  const visibleItems = items;
 
   const groups = useMemo(() => alphaGroups(visibleItems), [visibleItems]);
 
@@ -213,18 +228,6 @@ export function PatientsScreen() {
             <Icon name="plus" size={16} strokeWidth={2.5} />
           </button>
         </div>
-        {/* Filters row */}
-        <div style={{ padding: '8px 12px', borderBottom: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: 6 }}>
-          <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 8, padding: 2 }}>
-            {(['ALL', 'MALE', 'FEMALE', 'OTHER'] as const).map((g) => (
-              <button key={g} onClick={() => setGenderFilter(g)} className="press-scale"
-                style={{ flex: 1, padding: '4px 8px', fontSize: 11, fontWeight: genderFilter === g ? 600 : 400, color: genderFilter === g ? 'var(--text)' : 'var(--text-subtle)', background: genderFilter === g ? 'var(--surface)' : 'transparent', border: 'none', borderRadius: 6, cursor: 'pointer' }}>
-                {g === 'ALL' ? 'All' : g[0] + g.slice(1).toLowerCase()}
-              </button>
-            ))}
-          </div>
-        </div>
-
         <div className="scroll-y" style={{ flex: 1 }}>
           {loading ? (
             <div>
@@ -234,7 +237,7 @@ export function PatientsScreen() {
             <>
               {error && <div style={{ padding: 16, color: 'var(--danger-500)', fontSize: 12 }}>{error}</div>}
               {!error && visibleItems.length === 0 && (
-                <EmptyState illustration="patients" title="No patients found" hint={query || genderFilter !== 'ALL' ? 'Try clearing the filters.' : 'Register a new patient to get started.'} />
+                <EmptyState illustration="patients" title="No patients found" hint={query ? 'Try a different search.' : 'Register a new patient to get started.'} />
               )}
               {groups.map(([letter, patients]) => (
                 <div key={letter}>
@@ -402,6 +405,7 @@ function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => vo
               { label: 'Registered', value: formatDate(patient.createdAt), icon: 'calendar' as const },
               { label: 'DOB', value: patient.dob ? formatDate(patient.dob) : '—', icon: 'clock' as const },
               { label: 'Primary phone', value: patient.phones?.[0] ?? '—', icon: 'phone' as const },
+              { label: 'Country', value: countryLabel(patient.countryCode), icon: 'mapPin' as const },
             ].map(({ label, value, icon }) => (
               <div key={label} style={{ flex: '1 1 200px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 16px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 6 }}>
@@ -482,6 +486,8 @@ function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => vo
 
 function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: Patient) => void }) {
   const { ctx, features } = useApp();
+  // Dial code + phone validation follow the clinic's timezone (Settings).
+  const dialCode = dialCodeForTimezone(ctx.timezone);
   const { has } = usePerm();
   const toast = useToast();
   // Face enrollment step shows only when (a) the clinic has face
@@ -506,12 +512,14 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
   const { shakeProps, shake } = useShake();
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const handlePhoneChange = (v: string) => {
-    const digits = v.replace(/\D/g, '').slice(0, 10);
+    // National numbers vary by country; cap at 15 (E.164 max) instead of
+    // forcing India's 10. The dial code is shown separately as a prefix.
+    const digits = v.replace(/\D/g, '').slice(0, 15);
     set('phone', digits);
   };
   const isContinueDisabled =
     (step === 0 && (!form.firstName.trim() || !form.lastName.trim() || !form.dob.trim() || !form.gender)) ||
-    (step === 1 && (!form.phone.trim() || form.phone.trim().length !== 10));
+    (step === 1 && !isValidPhoneForTimezone(form.phone, ctx.timezone));
   // 3-step wizard. Tags have been removed from the product entirely;
   // Notes were dropped from registration (the operator edits notes
   // from the patient detail screen if needed). Documents now upload
@@ -552,8 +560,8 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
     if (!form.dob.trim()) { shake(); setError('Date of birth is required.'); return; }
     if (!form.gender) { shake(); setError('Gender is required.'); return; }
     if (!form.phone.trim()) { shake(); setError('Phone number is required.'); return; }
-    const phoneNormalized = normalizeIndianMobile(form.phone);
-    if (!phoneNormalized) { shake(); setError('Enter a valid 10-digit Indian mobile number.'); return; }
+    const phoneNormalized = normalizePhoneForTimezone(form.phone, ctx.timezone);
+    if (!phoneNormalized) { shake(); setError('Enter a valid phone number.'); return; }
     if (form.email.trim() && !isValidEmail(form.email)) { shake(); setError('Enter a valid email address.'); return; }
     setSaving(true);
     setError(null);
@@ -567,12 +575,9 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
         gender: form.gender.toUpperCase(),
         dob: form.dob,
         phones: [phoneNormalized],
+        // Record the patient's country (ISO) from the clinic's location.
+        countryCode: countryForTimezone(ctx.timezone),
       };
-      if (form.phone.trim()) {
-        const p = form.phone.trim();
-        if (p.length !== 10) { shake(); setError('Phone number must be exactly 10 digits.'); setSaving(false); return; }
-        body.phones = [p];
-      }
       if (form.email.trim()) body.emails = [form.email.trim()];
       const res = await apiPost<any>(ctx, '/patients', body);
       if (res.duplicateCandidate) {
@@ -656,7 +661,7 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
                   Gender
                 </label>
                 <div style={{ display: 'flex', gap: 8 }}>
-                  {['MALE', 'FEMALE', 'OTHER'].map((g) => (
+                  {['MALE', 'FEMALE'].map((g) => (
                     <button key={g} onClick={() => set('gender', g)}
                       style={{ flex: 1, padding: '8px 0', border: `1.5px solid ${form.gender === g ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 10, background: form.gender === g ? 'var(--brand-50)' : 'var(--surface-muted)', color: form.gender === g ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
                       {g[0] + g.slice(1).toLowerCase()}
@@ -668,7 +673,7 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
           )}
           {step === 1 && (
             <>
-              <Field label="Phone number" value={form.phone} onChange={handlePhoneChange} placeholder="98765 43210" prefix="+91" />
+              <Field label="Phone number" value={form.phone} onChange={handlePhoneChange} placeholder="Mobile number" prefix={dialCode} />
               {duplicate && (
                 <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', borderRadius: 10, background: 'var(--warning-bg-soft)', border: '1px solid var(--warning-border-soft)', fontSize: 12, color: 'var(--warning-text)' }}>
                   <Icon name="alertTriangle" size={14} style={{ flexShrink: 0, marginTop: 1 }} />
@@ -790,6 +795,8 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
 }
 export function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; onClose: () => void; onUpdated: (p: Patient) => void }) {
   const { ctx, features } = useApp();
+  // Dial code + phone validation follow the clinic's timezone (Settings).
+  const dialCode = dialCodeForTimezone(ctx.timezone);
   const { has } = usePerm();
   const toast = useToast();
   const canEnrollFace = features.faceRecognition && has(Perm.FaceEnroll);
@@ -806,7 +813,9 @@ export function EditPatientModal({ patient, onClose, onUpdated }: { patient: Pat
   const { shakeProps, shake } = useShake();
   const set = (k: keyof typeof form, v: string) => setForm((f) => ({ ...f, [k]: v }));
   const handlePhoneChange = (v: string) => {
-    const digits = v.replace(/\D/g, '').slice(0, 10);
+    // National numbers vary by country; cap at 15 (E.164 max) instead of
+    // forcing India's 10. The dial code is shown separately as a prefix.
+    const digits = v.replace(/\D/g, '').slice(0, 15);
     set('phone', digits);
   };
 
@@ -860,8 +869,8 @@ export function EditPatientModal({ patient, onClose, onUpdated }: { patient: Pat
   async function submit() {
     if (!form.fullName.trim()) { shake(); setError('Full name is required.'); return; }
     if (!form.phone.trim()) { shake(); setError('Phone number is required.'); return; }
-    const phoneNormalized = normalizeIndianMobile(form.phone);
-    if (!phoneNormalized) { shake(); setError('Enter a valid 10-digit Indian mobile number.'); return; }
+    const phoneNormalized = normalizePhoneForTimezone(form.phone, ctx.timezone);
+    if (!phoneNormalized) { shake(); setError('Enter a valid phone number.'); return; }
     if (form.email.trim() && !isValidEmail(form.email)) { shake(); setError('Enter a valid email address.'); return; }
     setSaving(true);
     setError(null);
@@ -869,13 +878,8 @@ export function EditPatientModal({ patient, onClose, onUpdated }: { patient: Pat
       const body: Record<string, unknown> = { fullName: form.fullName.trim() };
       body.dob = form.dob || null;
       body.gender = form.gender ? form.gender.toUpperCase() : null;
-      if (form.phone.trim()) {
-        const p = form.phone.trim();
-        if (p.length !== 10) { shake(); setError('Phone number must be exactly 10 digits.'); setSaving(false); return; }
-        body.phones = [p];
-      } else {
-        body.phones = [];
-      }
+      body.phones = [phoneNormalized];
+      body.countryCode = countryForTimezone(ctx.timezone);
       body.emails = form.email.trim() ? [form.email.trim()] : [];
       body.notes = form.notes.trim() || null;
 
@@ -915,7 +919,7 @@ export function EditPatientModal({ patient, onClose, onUpdated }: { patient: Pat
                 <span style={{ color: 'var(--text-subtle)', fontWeight: 400, marginLeft: 4 }}>(optional)</span>
               </label>
               <div style={{ display: 'flex', gap: 6 }}>
-                {['MALE', 'FEMALE', 'OTHER'].map((g) => (
+                {['MALE', 'FEMALE'].map((g) => (
                   <button key={g} onClick={() => set('gender', g)}
                     style={{ flex: 1, height: 36, border: `1.5px solid ${form.gender === g ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 9, background: form.gender === g ? 'var(--brand-50)' : 'var(--surface-muted)', color: form.gender === g ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 11, fontWeight: 600, cursor: 'pointer' }}>
                     {g[0] + g.slice(1).toLowerCase()}
@@ -923,7 +927,7 @@ export function EditPatientModal({ patient, onClose, onUpdated }: { patient: Pat
                 ))}
               </div>
             </div>
-            <Field label="Phone number" value={form.phone} onChange={handlePhoneChange} prefix="+91" />
+            <Field label="Phone number" value={form.phone} onChange={handlePhoneChange} prefix={dialCode} />
             <Field label="Email address" value={form.email} onChange={(v) => set('email', v)} />
             <div style={{ gridColumn: 'span 2' }}>
               <label style={labelStyle}>

@@ -25,7 +25,9 @@
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
     "@mediapipe/tasks-vision": "^0.10.35",
+    "countries-and-timezones": "^3.9.0",
     "country-to-currency": "^3.0.1",
+    "libphonenumber-js": "^1.13.7",
     "react": "^19.2.5",
     "react-dom": "^19.2.5",
     "react-hook-form": "^7.75.0",

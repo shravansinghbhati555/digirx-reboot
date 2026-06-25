@@ -191,10 +191,16 @@ const NAV: NavItem[] = [
 ];
 
 export function SettingsScreen() {
-  const { permissions } = useApp();
+  const { permissions, roleNames } = useApp();
+  // Doctors manage availability from a dedicated sidebar screen, so the
+  // Availability tab is removed from their Settings.
+  const isDoctor = roleNames.has('doctor');
   const visibleNav = useMemo(
-    () => NAV.filter((n) => n.perm === null || permissions.has(n.perm)),
-    [permissions],
+    () => NAV.filter((n) =>
+      (n.perm === null || permissions.has(n.perm)) &&
+      !(isDoctor && n.id === 'availability'),
+    ),
+    [permissions, isDoctor],
   );
 
   const [tab, setTab] = useState<SettingsTab>(visibleNav[0]?.id ?? 'about');
@@ -245,6 +251,19 @@ export function SettingsScreen() {
           {activeAllowed && tab === 'audit' && <AuditTab />}
           {activeAllowed && tab === 'about' && <AboutTab />}
         </div>
+      </div>
+    </div>
+  );
+}
+
+// Standalone Availability screen — same editor as the Settings tab, but
+// rendered as its own top-level page (used by doctors via the sidebar).
+export function AvailabilityScreen() {
+  return (
+    <div style={{ flex: 1, minWidth: 0, padding: '24px 32px', height: '100%', overflow: 'auto' }}>
+      <div style={{ maxWidth: 800 }}>
+        <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 20 }}>Availability</h2>
+        <AvailabilityTab />
       </div>
     </div>
   );
@@ -504,10 +523,13 @@ function TimezoneDropdown({
 }
 
 function ClinicTab() {
-  const { ctx, permissions, refreshMe } = useApp();
+  const { ctx, permissions, roleNames, refreshMe } = useApp();
   const toast = useToast();
   const canRead = permissions.has('clinic:read');
   const canWrite = permissions.has('clinic:write');
+  // The clinic NAME is editable only by Manager / Super Admin (enforced
+  // on the backend too). Other clinic settings still need clinic:write.
+  const canEditName = roleNames.has('manager') || roleNames.has('super admin');
   const [data, setData] = useState<ClinicSettingsResp | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -669,25 +691,43 @@ function ClinicTab() {
       // the S3 key straight to the clinic doc. Including it in this
       // PATCH would hit the URL-validator and reject any uploaded-logo
       // value ("branding.logoUrl must be a URL address").
-      const body: Record<string, unknown> = {
-        appointments: { mode: apptMode, slotMinutesDefault: Number(slotMinutes) || 15 },
-        branding: {
-          displayName: displayName.trim() || null,
-          primaryColor: primaryColor.trim() || null,
-        },
-        modules: {
-          faceRecognition: { enabled: faceRecognitionEnabled },
-        },
-      };
-      if (name.trim() && name.trim() !== data?.clinic.name) body.name = name.trim();
-      if (timezone.trim() && timezone.trim() !== data?.clinic.timezone) body.timezone = timezone.trim();
-      const newCurrency = currency.trim().toUpperCase();
-      const isCurrencyChanged = newCurrency && newCurrency !== data?.clinic.currency;
-      if (isCurrencyChanged) {
-        body.currency = newCurrency;
+      // Clinic NAME + branding DISPLAY NAME are the clinic's identity and
+      // are edited via a dedicated, role-gated endpoint (Manager / Super
+      // Admin only). They are NOT sent in the general settings PATCH —
+      // the backend ignores them there.
+      const nameChanged = name.trim() && name.trim() !== data?.clinic.name;
+      const displayNameChanged = displayName.trim() !== (data?.settings.branding?.displayName ?? '');
+      if ((nameChanged || displayNameChanged) && canEditName) {
+        const identity: Record<string, unknown> = {};
+        if (nameChanged) identity.name = name.trim();
+        if (displayNameChanged) identity.displayName = displayName.trim() || null;
+        await apiPatch(ctx, `/clinics/${encodeURIComponent(ctx.clinicId)}/identity`, identity);
       }
 
-      const updated = await apiPatch<ClinicSettingsResp>(ctx, settingsPath(), body);
+      const newCurrency = currency.trim().toUpperCase();
+      const isCurrencyChanged = newCurrency && newCurrency !== data?.clinic.currency;
+
+      // The rest of the clinic settings require clinic:write. A Manager
+      // (no clinic:write) can still rename above; we just skip this PATCH
+      // for them and re-fetch to refresh the view.
+      let updated: ClinicSettingsResp;
+      if (canWrite) {
+        const body: Record<string, unknown> = {
+          appointments: { mode: apptMode, slotMinutesDefault: Number(slotMinutes) || 15 },
+          // displayName is handled by the role-gated identity endpoint above.
+          branding: {
+            primaryColor: primaryColor.trim() || null,
+          },
+          modules: {
+            faceRecognition: { enabled: faceRecognitionEnabled },
+          },
+        };
+        if (timezone.trim() && timezone.trim() !== data?.clinic.timezone) body.timezone = timezone.trim();
+        if (isCurrencyChanged) body.currency = newCurrency;
+        updated = await apiPatch<ClinicSettingsResp>(ctx, settingsPath(), body);
+      } else {
+        updated = await apiGet<ClinicSettingsResp>(ctx, settingsPath());
+      }
       hydrate(updated);
 
       if (isCurrencyChanged && ctx.userId) {
@@ -718,7 +758,7 @@ function ClinicTab() {
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Clinic profile</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <Field label="Name" value={name} onChange={setName} placeholder="Demo Clinic" />
+              <Field label="Name" value={name} onChange={setName} placeholder="Demo Clinic" disabled={!canEditName} />
               <div>
                 <label style={labelStyle}>Timezone (IANA)</label>
                 <TimezoneDropdown
@@ -753,7 +793,7 @@ function ClinicTab() {
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Branding</div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <Field label="Display name" value={displayName} onChange={setDisplayName} placeholder="Shown on prescriptions & receipts" />
+              <Field label="Display name" value={displayName} onChange={setDisplayName} placeholder="Shown on prescriptions & receipts" disabled={!canEditName} />
               <div>
                 <label style={labelStyle}>Logo</label>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: 12, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10 }}>
@@ -1049,7 +1089,13 @@ function AvailabilityTab() {
     }
   }
 
-  useEffect(() => { if (canRead && doctorId.trim() && ctx.branchId) void load(); }, [canRead, ctx.branchId]);
+  // Auto-load whenever the selected doctor (or branch) changes — no manual
+  // "Load" click needed. `doctorId` in the deps is what makes picking a
+  // user from the dropdown immediately pull their schedule.
+  useEffect(() => {
+    if (canRead && doctorId.trim() && ctx.branchId) void load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canRead, ctx.branchId, doctorId]);
 
   // Pull the user list so we can show doctor names instead of raw ObjectIds.
   // Falls back gracefully if the caller lacks user:read.
@@ -1282,7 +1328,7 @@ function AvailabilityTab() {
       {/* Doctor + branch picker */}
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Doctor & branch</div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr auto', gap: 10, alignItems: 'flex-end' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10, alignItems: 'flex-end' }}>
           <div>
             <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', marginBottom: 6 }}>Doctor</label>
             {canEditOthers ? (
@@ -1302,18 +1348,12 @@ function AvailabilityTab() {
                 {ctx.fullName ? `Dr. ${ctx.fullName}` : 'You'}
               </div>
             )}
+            {/* Selecting a doctor auto-loads their schedule (see effect
+                above) — no manual Load button. This is just the cue. */}
+            {loading && (
+              <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-subtle)' }}>Loading availability…</div>
+            )}
           </div>
-          {/* Load button is redundant for doctors — their own schedule
-              auto-loads on mount and they can't switch to other
-              doctors, so there's nothing else to load. Admins / managers
-              keep the button so they can switch doctors and pull a
-              different schedule. */}
-          {!isDoctor && (
-            <button onClick={() => void load()} disabled={loading || !doctorId.trim() || !ctx.branchId}
-              style={{ height: 40, padding: '0 18px', background: 'var(--brand-50)', border: '1px solid var(--brand-100)', borderRadius: 10, color: 'var(--brand-600)', fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
-              {loading ? 'Loading…' : 'Load'}
-            </button>
-          )}
         </div>
         <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text-subtle)' }}>
           Branch: {ctx.branchName ?? (ctx.branchId ? <code style={{ fontFamily: 'monospace' }}>{ctx.branchId}</code> : '— none in context —')}
@@ -1624,6 +1664,20 @@ function RuleRow({
     !!onCopyTo &&
     !!copyTargets;
 
+  // Local text state for the slot-minutes input so the operator can type
+  // freely (clear it, type "120", etc.). The old code clamped on every
+  // keystroke, which made it impossible to edit — typing "3" jumped to 5,
+  // clearing snapped back to 15. We clamp + commit to the rule only on blur.
+  const [slotText, setSlotText] = useState(String(rule.slotMinutes ?? 15));
+  useEffect(() => {
+    setSlotText(String(rule.slotMinutes ?? 15));
+  }, [rule.slotMinutes]);
+  const commitSlot = () => {
+    const n = Math.max(5, Math.min(180, Number(slotText) || 15));
+    setSlotText(String(n));
+    if (n !== (rule.slotMinutes ?? 15)) onChange({ slotMinutes: n });
+  };
+
   return (
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', background: rule.active ? 'var(--surface-muted)' : 'transparent', border: '1px solid var(--border)', borderRadius: 10 }}>
       <button onClick={() => onChange({ active: !rule.active })} disabled={disabled}
@@ -1635,8 +1689,10 @@ function RuleRow({
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Slot minutes</span>
-            <input type="number" min={5} max={180} value={rule.slotMinutes ?? 15}
-              onChange={(e) => onChange({ slotMinutes: Math.max(5, Math.min(180, Number(e.target.value) || 15)) })}
+            <input type="number" min={5} max={180} value={slotText}
+              onChange={(e) => setSlotText(e.target.value)}
+              onBlur={commitSlot}
+              onKeyDown={(e) => { if (e.key === 'Enter') (e.target as HTMLInputElement).blur(); }}
               disabled={disabled || !rule.active}
               style={{ width: 64, height: 28, padding: '0 8px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7, fontSize: 12, color: 'var(--text)', outline: 'none' }} />
           </div>
@@ -1706,6 +1762,7 @@ function WindowsEditor({ value, onChange, disabled, compact }: { value: Availabi
       )}
       {value.map((w, i) => (
         <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: compact ? '3px 6px' : '6px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
+          <Icon name="clock" size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
           <input type="time" value={toHHMM(w.startMinutes)} disabled={disabled}
             onChange={(e) => update(i, { startMinutes: fromHHMM(e.target.value) })}
             style={{ height: compact ? 24 : 30, padding: '0 4px', border: 'none', background: 'transparent', fontSize: 12, color: 'var(--text)', outline: 'none', fontFamily: 'monospace' }} />
@@ -1877,7 +1934,6 @@ function BranchesTab() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div>
-          <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 17, fontWeight: 700, color: 'var(--text)' }}>Branches</div>
           <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>
             {loading ? 'Loading…' : `${branches.length} branch${branches.length === 1 ? '' : 'es'} · ${activeCount} active`}
           </div>
@@ -1943,9 +1999,6 @@ function BranchCard({ branch, canWrite, onEdit, onToggle }: { branch: BranchAdmi
         </div>
         <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 6 }}>{branch.addressLine ?? '—'}</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, fontSize: 11, color: 'var(--text-subtle)' }}>
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <Icon name="users" size={12} /> {branch.doctorCount} doctor{branch.doctorCount === 1 ? '' : 's'}
-          </span>
           {branch.phone && (
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
               <Icon name="phone" size={12} /> {branch.phone}
@@ -2540,7 +2593,11 @@ function formatAuditTime(iso: string): string {
 
 function AuditTab() {
   const { ctx, permissions } = useApp();
-  const canRead = permissions.has('clinic:write');
+  // Audit log access is governed by audit:read (what the backend
+  // /audit-logs endpoint requires) — NOT clinic:write. Gating on
+  // clinic:write wrongly blocked Managers, who have audit:read but not
+  // clinic:write.
+  const canRead = permissions.has('audit:read');
   const [rows, setRows] = useState<AuditRow[]>([]);
   const [users, setUsers] = useState<Map<string, string>>(new Map());
   const [nextBefore, setNextBefore] = useState<string | undefined>();
@@ -2589,7 +2646,7 @@ function AuditTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [actionFilter, actorFilter, ctx.clinicId, ctx.accessToken]);
 
-  if (!canRead) return <PermissionGate perm="clinic:write" />;
+  if (!canRead) return <PermissionGate perm="audit:read" />;
 
   // Same visual language as BillingScreen: a single rounded card with a
   // pill-chip toolbar on top, a brand-coloured primary action button on

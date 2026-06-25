@@ -1536,8 +1536,7 @@ function formatGender(g: string): string {
   const u = (g ?? '').toUpperCase();
   if (u === 'MALE') return 'Male';
   if (u === 'FEMALE') return 'Female';
-  if (u === 'OTHER') return 'Other';
-  return g;
+  return '';
 }
 
 /**

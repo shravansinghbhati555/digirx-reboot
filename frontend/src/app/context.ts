@@ -10,8 +10,18 @@ export type DevContext = {
   accessToken?: string;
   email?: string;
   fullName?: string;
-  /** IANA timezone string (Asia/Kolkata, …). Drives date calculations. */
+  /**
+   * EFFECTIVE display timezone (IANA) for this user — their personal
+   * `displayTimezone` if set, otherwise the clinic timezone. Drives all
+   * time/date display and filtering in the app.
+   */
   timezone?: string;
+  /** The clinic's authoritative timezone (governs booking/scoping). */
+  clinicTimezone?: string;
+  /** This user's personal display-timezone preference (empty = use clinic). */
+  displayTimezone?: string;
+  /** Presigned URL of the user's profile photo (set by a Manager). */
+  profileImageUrl?: string;
   permissions?: string[];
   /**
    * Clinic branding mirror, populated from /me. The prescription print

@@ -14,6 +14,15 @@ importers:
       '@mediapipe/tasks-vision':
         specifier: ^0.10.35
         version: 0.10.35
+      countries-and-timezones:
+        specifier: ^3.9.0
+        version: 3.9.0
+      country-to-currency:
+        specifier: ^3.0.1
+        version: 3.0.1
+      libphonenumber-js:
+        specifier: ^1.13.7
+        version: 1.13.7
       react:
         specifier: ^19.2.5
         version: 19.2.5
@@ -302,6 +311,13 @@ packages:
     resolution: {integrity: sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ==}
     engines: {node: '>=18'}
 
+  countries-and-timezones@3.9.0:
+    resolution: {integrity: sha512-3upkVtUfZgdp5xOQI/Deg1ye73ae6bygJMO4UvtUi6wLjwcj7cBqx2PzSZ1VL8i5iveBbjhsQp2Judx7kPKivA==}
+    engines: {node: '>=8.x', npm: '>=5.x'}
+
+  country-to-currency@3.0.1:
+    resolution: {integrity: sha512-FAo2ga8296d0Ra6vj9TB4Kax36AmqrGEc0aoLflCx5ijMtifNwA8lCqQsFfTLP2lRVKHWh/DedSpqI6v9VHyjw==}
+
   cssesc@3.0.0:
     resolution: {integrity: sha512-/Tb/JcjK111nNScGob5MNtsntNM1aCNUDipB/TkwZFhyDrrE47SOx/18wF2bbjgc3ZzCSKW1T5nt5EbFoAz/Vg==}
     engines: {node: '>=4'}
@@ -402,6 +418,9 @@ packages:
   jiti@1.21.7:
     resolution: {integrity: sha512-/imKNG4EbWNrVjoNC/1H5/9GFy+tqjGBHCaSsN+P2RnPqjsLmv6UD3Ej+Kj8nBWaRAwyk7kK5ZUc+OEatnTR3A==}
     hasBin: true
+
+  libphonenumber-js@1.13.7:
+    resolution: {integrity: sha512-rvr3HIMdOgzhz1RFGjftji+wjoAFlzhqCNqJOU/MKTZQ8d9NZxAR/tI+0weDicyoucqVR0U1GCniqHJ0f8aM2A==}
 
   lightningcss-android-arm64@1.32.0:
     resolution: {integrity: sha512-YK7/ClTt4kAK0vo6w3X+Pnm0D2cf2vPHbhOXdoNti1Ga0al1P4TBZhwjATvjNwLEBCnKvjJc2jQgHXH0NEwlAg==}
@@ -950,6 +969,10 @@ snapshots:
 
   cookie@1.1.1: {}
 
+  countries-and-timezones@3.9.0: {}
+
+  country-to-currency@3.0.1: {}
+
   cssesc@3.0.0: {}
 
   csstype@3.2.3: {}
@@ -1025,6 +1048,8 @@ snapshots:
   is-number@7.0.0: {}
 
   jiti@1.21.7: {}
+
+  libphonenumber-js@1.13.7: {}
 
   lightningcss-android-arm64@1.32.0:
     optional: true

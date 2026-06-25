@@ -31,6 +31,7 @@ export function DatePickerChip({
   size = 'md',
   fullWidth,
   allowClear,
+  today,
 }: {
   value: string;
   onChange: (iso: string) => void;
@@ -42,11 +43,15 @@ export function DatePickerChip({
   fullWidth?: boolean;
   /** Show a clear (×) action on the chip when value is set. Useful for optional dates like follow-up. */
   allowClear?: boolean;
+  /** "Today" anchor (YYYY-MM-DD) for the highlight + Today button. Pass the
+   *  clinic-local today so the calendar follows the clinic timezone; falls
+   *  back to the browser-local date when omitted. */
+  today?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [showYearPicker, setShowYearPicker] = useState(false);
   const [openUpwards, setOpenUpwards] = useState(false);
-  const todayIso = dateToIso(new Date());
+  const todayIso = today ?? dateToIso(new Date());
   // Empty value is permitted (optional date fields like follow-up). We
   // still need a valid "viewing month" so the calendar grid renders —
   // fall back to today.

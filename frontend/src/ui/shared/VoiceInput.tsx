@@ -5,9 +5,13 @@ import { useToast } from './primitives';
 interface VoiceInputProps {
   onTranscript: (text: string) => void;
   lang?: string;
+  // Compact mode: render only the mic button (no inline "Listening…"
+  // text) so it fits in tight layouts like the vitals grid. The button
+  // still pulses red while listening.
+  compact?: boolean;
 }
 
-export function VoiceInput({ onTranscript, lang = 'en-IN' }: VoiceInputProps) {
+export function VoiceInput({ onTranscript, lang = 'en-IN', compact = false }: VoiceInputProps) {
   const toast = useToast();
 
   const { isListening, supported, start, stop } = useSpeechRecognition({
@@ -32,8 +36,8 @@ export function VoiceInput({ onTranscript, lang = 'en-IN' }: VoiceInputProps) {
   };
 
   return (
-    <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-      {isListening && (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+      {isListening && !compact && (
         <span
           style={{
             fontSize: 11,

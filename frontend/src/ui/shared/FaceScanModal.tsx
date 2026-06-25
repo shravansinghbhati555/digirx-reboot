@@ -50,6 +50,12 @@ export function FaceScanModal({
   // bbox state drives the SVG overlay; it's updated by the detection
   // loop. The "score" feeds an optional confidence chip in the corner.
   const [bbox, setBbox] = useState<DetectedFace | null>(null);
+  // Status of the in-browser face detector. While it's 'loading' or
+  // 'ready' the capture button is gated on an actual face being in frame
+  // (you can't scan an empty frame). If it ends up 'unavailable' (CDN
+  // blocked / no WebGL / old browser) the gate is dropped and we fall back
+  // to server-side detection on the full frame.
+  const [detectorStatus, setDetectorStatus] = useState<'loading' | 'ready' | 'unavailable'>('loading');
   const [videoDims, setVideoDims] = useState<{ w: number; h: number }>({ w: 640, h: 480 });
   const [phoneNumber, setPhoneNumber] = useState('');
   const [verifyingPhone, setVerifyingPhone] = useState(false);
@@ -150,9 +156,12 @@ export function FaceScanModal({
           return;
         }
         detectorRef.current = detector as unknown as MediaPipeDetector;
+        setDetectorStatus('ready');
       } catch (e) {
         // Any failure (CDN blocked, no WebGL, old browser) just disables
-        // pre-detection — the server-side fallback handles it.
+        // pre-detection — the server-side fallback handles it, and the
+        // capture button's face gate is dropped so it stays usable.
+        if (!cancelled) setDetectorStatus('unavailable');
         // eslint-disable-next-line no-console
         console.warn('[FaceScanModal] MediaPipe detector unavailable, falling back to server-side detection:', e);
       }
@@ -229,6 +238,10 @@ export function FaceScanModal({
   async function triggerCapture() {
     if (busy) return;
     if (permission !== 'ok') return;
+    // Face gate: when the in-browser detector is working, refuse to scan
+    // an empty frame — a face must be present. Dropped when the detector
+    // is unavailable (server-side detection handles the full frame).
+    if (detectorStatus !== 'unavailable' && !lastDetectionRef.current) return;
     setError(null);
     // Short countdown so the patient has time to face the camera.
     // Trimmed from the older 1.8s flow — at 600ms total it stays useful
@@ -433,24 +446,39 @@ export function FaceScanModal({
               </button>
               {/* Capture / match only appears once the camera is live
                   (permission === 'ok'). Disabled while busy, mid-
-                  countdown, or offline. */}
-              {permission === 'ok' && (
-                <button onClick={triggerCapture}
-                  disabled={busy || countdown !== null || !online}
-                  title={!online ? 'No internet connection' : undefined}
-                  style={{
-                    flex: 2, height: 42, border: 'none', borderRadius: 10,
-                    background: !online ? 'rgba(99,102,241,0.4)' : (bbox ? 'rgb(34,197,94)' : 'var(--brand-500)'),
-                    color: 'var(--brand-text)', fontSize: 13, fontWeight: 600,
-                    cursor: (busy || !online) ? 'not-allowed' : 'pointer',
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
-                    transition: 'background 200ms',
-                    opacity: !online ? 0.7 : 1,
-                  }}>
-                  <Icon name="camera" size={14} strokeWidth={2.5} />
-                  {captureLabel}
-                </button>
-              )}
+                  countdown, offline, or — when the detector is working —
+                  until a face is actually in frame. */}
+              {permission === 'ok' && (() => {
+                // Gate on a detected face whenever the detector isn't
+                // 'unavailable'. While it's still 'loading' there's no bbox
+                // yet, so the button stays disabled until detection starts.
+                const noFace = detectorStatus !== 'unavailable' && !bbox;
+                const captureDisabled = busy || countdown !== null || !online || noFace;
+                const title = !online
+                  ? 'No internet connection'
+                  : noFace
+                    ? (detectorStatus === 'loading'
+                        ? 'Starting face detection…'
+                        : 'Position your face in the frame to continue')
+                    : undefined;
+                return (
+                  <button onClick={triggerCapture}
+                    disabled={captureDisabled}
+                    title={title}
+                    style={{
+                      flex: 2, height: 42, border: 'none', borderRadius: 10,
+                      background: captureDisabled ? 'rgba(99,102,241,0.4)' : (bbox ? 'rgb(34,197,94)' : 'var(--brand-500)'),
+                      color: 'var(--brand-text)', fontSize: 13, fontWeight: 600,
+                      cursor: captureDisabled ? 'not-allowed' : 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                      transition: 'background 200ms',
+                      opacity: captureDisabled ? 0.7 : 1,
+                    }}>
+                    <Icon name="camera" size={14} strokeWidth={2.5} />
+                    {detectorStatus === 'ready' && !bbox ? 'No face detected' : captureLabel}
+                  </button>
+                );
+              })()}
             </>
           )}
         </div>

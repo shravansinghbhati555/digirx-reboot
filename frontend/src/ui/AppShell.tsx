@@ -11,6 +11,9 @@ type NavItem = { id: ScreenKey; label: string; icon: IconName };
 
 const NAV_ITEMS: NavItem[] = [
   { id: 'dashboard', label: 'Dashboard', icon: 'dashboard' },
+  // Availability is allowlisted to doctors (see permissions.ts), so it
+  // only appears for them; other roles edit availability in Settings.
+  { id: 'availability', label: 'Availability', icon: 'clock' },
   { id: 'patients', label: 'Patients', icon: 'users' },
   { id: 'appointments', label: 'Appointments', icon: 'calendar' },
   { id: 'encounters', label: 'Consultations', icon: 'clipboard' },
@@ -21,6 +24,11 @@ const NAV_ITEMS: NavItem[] = [
   { id: 'reports', label: 'Reports', icon: 'barChart' },
   { id: 'notifications', label: 'Notifications', icon: 'bell' },
 ];
+
+// Doctors get a tailored sidebar order: their day starts with their
+// availability, then their appointments, consultations, and patients.
+// Anything else they can see follows in NAV_ITEMS order.
+const DOCTOR_NAV_ORDER: ScreenKey[] = ['availability', 'appointments', 'encounters', 'patients'];
 
 const ADMIN_ITEMS: NavItem[] = [
   { id: 'users', label: 'Users', icon: 'users' },
@@ -94,7 +102,7 @@ function CommandPalette({ commands, onNavigate, onClose }: { commands: typeof AL
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { screen, setScreen, theme, toggleTheme, ctx, setCtx, logout, selectedDate, setSelectedDate, permissions, roleNames, refreshMe } = useApp();
+  const { screen, setScreen, theme, toggleTheme, ctx, setCtx, logout, selectedDate, setSelectedDate, permissions, roleNames, refreshMe, setNewPatientRequested } = useApp();
   const toast = useToast();
   const [collapsed, setCollapsed] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
@@ -224,6 +232,15 @@ export function AppShell({ children }: { children: ReactNode }) {
   }, [ctx.userId, ctx.clinicId, ctx.timezone, ctx.currency, refreshMe, toast]);
 
   const rail = collapsed ? 56 : 208;
+  // Today's date (YYYY-MM-DD) in the clinic's timezone — drives the header
+  // date picker's "Today" anchor so the calendar follows the clinic tz.
+  const clinicToday = useMemo(() => {
+    try {
+      return new Intl.DateTimeFormat('en-CA', ctx.timezone ? { timeZone: ctx.timezone } : undefined).format(new Date());
+    } catch {
+      return new Intl.DateTimeFormat('en-CA').format(new Date());
+    }
+  }, [ctx.timezone]);
   const userName = ctx.fullName ?? 'User';
   const userEmail = ctx.email ?? '';
 
@@ -240,14 +257,34 @@ export function AppShell({ children }: { children: ReactNode }) {
       .catch(() => setBranches([]));
   }, [canSwitchBranch, ctx.clinicId, ctx.accessToken]);
 
-  const visibleNav = useMemo(
-    () => NAV_ITEMS.filter((i) => canAccessScreen(permissions, i.id) && isScreenAllowedForRoles(roleNames, i.id)),
-    [permissions, roleNames],
-  );
-  const visibleAdmin = useMemo(
-    () => ADMIN_ITEMS.filter((i) => canAccessScreen(permissions, i.id) && isScreenAllowedForRoles(roleNames, i.id)),
-    [permissions, roleNames],
-  );
+  const visibleNav = useMemo(() => {
+    // Fully permission-driven — a tab appears whenever the user's role
+    // grants its permission. Nothing is hard-limited per role, so if a
+    // Manager later grants a Doctor (say) billing:read, the Billing tab
+    // shows up automatically.
+    const items = NAV_ITEMS.filter((i) => canAccessScreen(permissions, i.id) && isScreenAllowedForRoles(roleNames, i.id));
+    if (!roleNames.has('doctor')) return items;
+    // For doctors we only change the ORDER: their day-to-day tabs
+    // (Availability → Appointments → Consultations → Patients) come first;
+    // any other tab they're granted follows in NAV_ITEMS order. Stable sort.
+    return [...items].sort((a, b) => {
+      const ia = DOCTOR_NAV_ORDER.indexOf(a.id);
+      const ib = DOCTOR_NAV_ORDER.indexOf(b.id);
+      return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+    });
+  }, [permissions, roleNames]);
+  const visibleAdmin = useMemo(() => {
+    const isDoc = roleNames.has('doctor');
+    return ADMIN_ITEMS.filter((i) =>
+      canAccessScreen(permissions, i.id) &&
+      isScreenAllowedForRoles(roleNames, i.id) &&
+      // Doctors manage availability from its own top-level tab, so the
+      // Settings tab is hidden for them (it would otherwise show via the
+      // clinic:read they need for availability data). Users/Roles are
+      // already role-restricted to admins.
+      !(isDoc && i.id === 'settings'),
+    );
+  }, [permissions, roleNames]);
   const visibleCmd = useMemo(
     () => ALL_CMD.filter((c) => canAccessScreen(permissions, c.action) && isScreenAllowedForRoles(roleNames, c.action)),
     [permissions, roleNames],
@@ -272,18 +309,25 @@ export function AppShell({ children }: { children: ReactNode }) {
       canAccessScreen(permissions, screen) &&
       isScreenAllowedForRoles(roleNames, screen);
     if (allowed) return;
-    const fallback = [...visibleNav, ...visibleAdmin][0];
+    // Doctors default to the Consultations tab (their main workspace),
+    // even though Availability sits first in their sidebar. Everyone else
+    // falls back to their first accessible screen.
+    const items = [...visibleNav, ...visibleAdmin];
+    const fallback = isDoctor
+      ? (items.find((i) => i.id === 'encounters') ?? items[0])
+      : items[0];
     if (fallback) setScreen(fallback.id);
-  }, [permissions, roleNames, screen, visibleNav, visibleAdmin, setScreen]);
+  }, [permissions, roleNames, screen, visibleNav, visibleAdmin, setScreen, isDoctor]);
 
   useEffect(() => {
+    if (isDoctor) return;
     const handler = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setCmdOpen(true); }
       if ((e.metaKey || e.ctrlKey) && e.key === '/') { e.preventDefault(); setHelpOpen(true); }
     };
     window.addEventListener('keydown', handler);
     return () => window.removeEventListener('keydown', handler);
-  }, []);
+  }, [isDoctor]);
 
   const NavItemBtn = ({ item }: { item: NavItem }) => {
     const active = screen === item.id;
@@ -389,16 +433,21 @@ export function AppShell({ children }: { children: ReactNode }) {
               <Icon name="chevronRight" size={15} />
             </button>
           )}
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, padding: collapsed ? '4px 0' : '6px 6px', borderRadius: 9, justifyContent: collapsed ? 'center' : 'flex-start' }}>
-            <Avatar name={userName} size={32} />
+          <div onClick={() => setScreen('profile')} title="Your profile"
+            style={{ display: 'flex', alignItems: 'center', gap: 8, padding: collapsed ? '4px 0' : '6px 6px', borderRadius: 9, justifyContent: collapsed ? 'center' : 'flex-start', cursor: 'pointer', background: screen === 'profile' ? 'var(--brand-50)' : 'transparent' }}>
+            {ctx.profileImageUrl ? (
+              <img src={ctx.profileImageUrl} alt="" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
+            ) : (
+              <Avatar name={userName} size={32} />
+            )}
             {!collapsed && (
               <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{userName}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, color: screen === 'profile' ? 'var(--brand-600)' : 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{userName}</div>
                 <div style={{ fontSize: 11, color: 'var(--text-subtle)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{userEmail}</div>
               </div>
             )}
             {!collapsed && (
-              <button onClick={() => { void logout(); }} title="Sign out"
+              <button onClick={(e) => { e.stopPropagation(); void logout(); }} title="Sign out"
                 style={{ width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-subtle)', flexShrink: 0 }}>
                 <Icon name="logOut" size={14} />
               </button>
@@ -417,22 +466,32 @@ export function AppShell({ children }: { children: ReactNode }) {
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Topbar */}
         <div style={{ height: 48, flexShrink: 0, background: 'var(--surface)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', padding: '0 16px', gap: 10 }}>
-          <button onClick={() => setCmdOpen(true)}
-            style={{ display: 'flex', alignItems: 'center', gap: 6, height: 30, padding: '0 10px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-subtle)', fontSize: 12, cursor: 'pointer', flex: '0 0 200px' }}>
-            <Icon name="search" size={13} />
-            <span>Search…</span>
-            <span style={{ marginLeft: 'auto', display: 'flex', gap: 2 }}>
-              <kbd style={{ padding: '1px 5px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 10 }}>⌘</kbd>
-              <kbd style={{ padding: '1px 5px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 10 }}>K</kbd>
-            </span>
-          </button>
+          {!isDoctor && (
+            <button onClick={() => setCmdOpen(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: 6, height: 30, padding: '0 10px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-subtle)', fontSize: 12, cursor: 'pointer', flex: '0 0 200px' }}>
+              <Icon name="search" size={13} />
+              <span>Search…</span>
+              <span style={{ marginLeft: 'auto', display: 'flex', gap: 2 }}>
+                <kbd style={{ padding: '1px 5px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 10 }}>⌘</kbd>
+                <kbd style={{ padding: '1px 5px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 4, fontSize: 10 }}>K</kbd>
+              </span>
+            </button>
+          )}
 
-          <DatePickerChip value={selectedDate} onChange={setSelectedDate} />
+          {screen !== 'appointments' && (
+            <DatePickerChip value={selectedDate} onChange={setSelectedDate} today={clinicToday} />
+          )}
 
           <div style={{ flex: 1 }} />
 
+          {/* Live clinic-time clock — only shown when the clinic's
+              configured timezone differs from the user's local (location)
+              timezone, so traveling/remote staff see the clinic's local
+              time. 24-hour format. */}
+          <ClinicClock timezone={ctx.timezone} />
+
           {canCreatePatient && (
-            <button onClick={() => setScreen('patients')}
+            <button onClick={() => { setNewPatientRequested(true); setScreen('patients'); }}
               style={{ display: 'flex', alignItems: 'center', gap: 5, height: 30, padding: '0 12px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', transition: 'background 120ms, transform 120ms' }}
               onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.97)')}
               onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
@@ -470,6 +529,64 @@ export function AppShell({ children }: { children: ReactNode }) {
           onClose={() => setShowLocationModal(false)}
         />
       )}
+    </div>
+  );
+}
+
+function ClinicClock({ timezone }: { timezone?: string }) {
+  // The user's local (location) timezone, per the browser.
+  const browserTz = useMemo(() => {
+    try { return Intl.DateTimeFormat().resolvedOptions().timeZone; } catch { return ''; }
+  }, []);
+
+  // Compare by the ACTUAL time each zone shows, not the raw IANA strings —
+  // otherwise aliases like "Asia/Calcutta" (often stored) vs "Asia/Kolkata"
+  // (browser) look different even though they're the same zone. We only
+  // show the clock when the clinic's wall-clock time genuinely differs from
+  // the user's local time.
+  const differsFromLocal = useMemo(() => {
+    if (!timezone || !browserTz) return false;
+    try {
+      const ref = new Date();
+      const opts = { hour: '2-digit', minute: '2-digit', hour12: false } as const;
+      const a = new Intl.DateTimeFormat('en-GB', { timeZone: timezone, ...opts }).format(ref);
+      const b = new Intl.DateTimeFormat('en-GB', { timeZone: browserTz, ...opts }).format(ref);
+      return a !== b;
+    } catch {
+      return false;
+    }
+  }, [timezone, browserTz]);
+  const show = differsFromLocal;
+
+  const [now, setNow] = useState(() => new Date());
+  useEffect(() => {
+    if (!show) return;
+    const id = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(id);
+  }, [show]);
+
+  if (!show) return null;
+
+  let time = '';
+  try {
+    time = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+    }).format(now);
+  } catch {
+    return null; // invalid timezone — don't render a broken chip
+  }
+  const place = (timezone!.split('/').pop() ?? timezone!).replace(/_/g, ' ');
+
+  return (
+    <div title={`Clinic time · ${timezone}`}
+      style={{ display: 'flex', alignItems: 'center', gap: 6, height: 30, padding: '0 10px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap' }}>
+      <Icon name="clock" size={13} style={{ color: 'var(--brand-500)', flexShrink: 0 }} />
+      <span style={{ fontWeight: 700, color: 'var(--text)' }}>{time}</span>
+      <span style={{ color: 'var(--text-subtle)' }}>{place}</span>
     </div>
   );
 }

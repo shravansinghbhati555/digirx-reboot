@@ -8,6 +8,7 @@ import { Icon } from '../shared/Icon';
 import { DatePickerChip } from '../shared/DatePickerChip';
 import { ListItemSkeleton, Skeleton } from '../shared/Skeleton';
 import { FaceScanModal } from '../shared/FaceScanModal';
+import { VoiceInput } from '../shared/VoiceInput';
 import { DocumentsScreen } from './DocumentsScreen';
 
 // Auto-format BP input so the operator only types digits and the "/"
@@ -114,7 +115,7 @@ function patientRefLabel(
   return fallback ? `#${fallback}` : '—';
 }
 
-const HOURS = Array.from({ length: 12 }, (_, i) => i + 8);
+// Dynamic HOURS generated per day to accommodate arbitrary windows
 const EXPANDED_H = 300;
 // Collapsed hours are thin strips; only the selected hour (the current
 // one by default) expands to the full EXPANDED_H so the doctor sees it
@@ -125,7 +126,11 @@ const STATUS_COLORS: Record<string, { bg: string; border: string; text: string }
   DONE: { bg: 'var(--success-bg)', border: 'var(--success-500)', text: 'var(--success-text)' },
   CHECKED_IN: { bg: 'var(--teal-bg)', border: 'var(--accent-500)', text: 'var(--teal-text)' },
   IN_PROGRESS: { bg: 'var(--info-bg)', border: 'var(--info-500)', text: 'var(--info-text)' },
-  BOOKED: { bg: 'var(--brand-bg-soft)', border: 'var(--brand-500)', text: 'var(--brand-text-strong)' },
+  // Not-checked-in. Uses yellow so it can't be confused with red (CANCELLED)
+  // or the indigo IN_PROGRESS. (The brand tokens are off-limits: brand-500 is
+  // now red, and --brand-bg-soft/--brand-text-strong are stale blues that read
+  // as "in progress".)
+  BOOKED: { bg: 'rgba(234, 179, 8, 0.14)', border: '#EAB308', text: '#854D0E' },
   CANCELLED: { bg: 'var(--danger-bg)', border: 'var(--danger-500)', text: 'var(--danger-text)' },
   NO_SHOW: { bg: 'var(--warning-bg)', border: 'var(--warning-500)', text: 'var(--warning-text)' },
 };
@@ -138,25 +143,53 @@ function statusToken(s: string): string {
   return (s || '').toLowerCase().replace(/_/g, '-');
 }
 
+// The clinic's timezone, set by the component each render. All the time
+// helpers below format/compute in THIS zone so appointment times, slots,
+// and the day grid reflect the clinic's local time — not the operator's
+// browser timezone (which may differ when the clinic is set to another
+// region, e.g. London while the operator is in India).
+let CLINIC_TZ: string | undefined;
+
+// Hour/minute of an instant in the clinic timezone (falls back to the
+// browser-local time when no/invalid timezone is set).
+function tzHM(d: Date): { h: number; m: number } {
+  if (CLINIC_TZ) {
+    try {
+      const parts = new Intl.DateTimeFormat('en-GB', {
+        timeZone: CLINIC_TZ, hour: '2-digit', minute: '2-digit', hour12: false,
+      }).formatToParts(d);
+      const h = Number(parts.find((p) => p.type === 'hour')?.value ?? 0);
+      const m = Number(parts.find((p) => p.type === 'minute')?.value ?? 0);
+      return { h: h === 24 ? 0 : h, m };
+    } catch { /* fall through to local */ }
+  }
+  return { h: d.getHours(), m: d.getMinutes() };
+}
+
 function isoToTime(iso: string | undefined): string {
   if (!iso) return '—';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
-  return d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const { h, m } = tzHM(d);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
-
-
 
 function isoToMin(iso: string | undefined): number {
   if (!iso) return 0;
   const d = new Date(iso);
   if (isNaN(d.getTime())) return 0;
-  return d.getHours() * 60 + d.getMinutes();
+  const { h, m } = tzHM(d);
+  return h * 60 + m;
 }
 
-// Local YYYY-MM-DD (matches how the grid reads `getHours()` in local
-// time, so "is the picked date today?" lines up with the clock).
+// YYYY-MM-DD of an instant in the clinic timezone, so "is the picked date
+// today?" lines up with the clinic clock (and the header date).
 function localYmd(d: Date): string {
+  if (CLINIC_TZ) {
+    try {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: CLINIC_TZ }).format(d);
+    } catch { /* fall through */ }
+  }
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, '0');
   const day = String(d.getDate()).padStart(2, '0');
@@ -230,7 +263,19 @@ function computeDayLayout(appts: Appointment[]) {
 
 
 export function AppointmentsScreen() {
-  const { ctx, selectedPatientId, setSelectedPatientId, setScreen, setSelectedBillId, selectedDate, setSelectedDate } = useApp();
+  const { ctx, selectedPatientId, setSelectedPatientId, setScreen, setSelectedBillId, selectedDate, setSelectedDate, roleNames } = useApp();
+  // All appointment time rendering happens in the clinic's timezone.
+  CLINIC_TZ = ctx.timezone;
+  // Friendly label for the clinic timezone (e.g. "Kolkata"), shown beside the
+  // appointment headings so staff know which zone the times are in.
+  const tzLabel = useMemo(() => {
+    const tz = ctx.timezone;
+    if (!tz) return '';
+    let city = (tz.split('/').pop() ?? tz).replace(/_/g, ' ');
+    // Asia/Calcutta is the legacy IANA id; show the modern city name.
+    if (city === 'Calcutta') city = 'Kolkata';
+    return city;
+  }, [ctx.timezone]);
   const { has } = usePerm();
   const canBook = has(Perm.AppointmentWrite);
   const toast = useToast();
@@ -245,6 +290,147 @@ export function AppointmentsScreen() {
   const [patients, setPatients] = useState<Map<string, PatientLite>>(new Map());
   const [doctors, setDoctors] = useState<Map<string, string>>(new Map());
 
+  // Doctor filter states
+  const isDoctorUser = roleNames.has('doctor');
+  const [filterDoctorId, setFilterDoctorId] = useState<string>(() => {
+    return isDoctorUser ? (ctx.userId ?? 'all') : 'all';
+  });
+  const [doctorList, setDoctorList] = useState<Array<{ _id: string; name: string }>>([]);
+  const [availability, setAvailability] = useState<Array<{ startHour: number; endHour: number }>>([]);
+  const [loadingAvailability, setLoadingAvailability] = useState(false);
+
+  useEffect(() => {
+    if (isDoctorUser && filterDoctorId === 'all' && ctx.userId) {
+      setFilterDoctorId(ctx.userId);
+    }
+  }, [isDoctorUser, ctx.userId]);
+
+  useEffect(() => {
+    if (filterDoctorId === 'all' || !ctx.branchId || !date) {
+      setAvailability([]);
+      return;
+    }
+    setLoadingAvailability(true);
+    apiGet<{
+      windows?: Array<{ startAt: string; endAt: string }>;
+    }>(ctx, `/availability/doctors/${filterDoctorId}/day?branchId=${encodeURIComponent(ctx.branchId)}&date=${date}`)
+      .then((res) => {
+        if (res && res.windows) {
+          const hours = res.windows.map(w => {
+            // Compute window hours in the CLINIC timezone, not the
+            // operator's browser zone (which may differ).
+            const s = tzHM(new Date(w.startAt));
+            const e = tzHM(new Date(w.endAt));
+            const startHour = s.h;
+            const isExactHour = e.m === 0;
+            const endHour = isExactHour ? e.h : e.h + 1;
+            return { startHour, endHour };
+          });
+          setAvailability(hours);
+        } else {
+          setAvailability([]);
+        }
+      })
+      .catch(() => setAvailability([]))
+      .finally(() => setLoadingAvailability(false));
+  }, [filterDoctorId, date, ctx.branchId]);
+
+  const dayAppts = useMemo(() => {
+    let filtered = items.filter((a) => a.type === 'TIME');
+    if (filterDoctorId !== 'all') {
+      filtered = filtered.filter((a) => a.doctorId === filterDoctorId);
+    }
+    if (showCancelled) {
+      filtered = filtered.filter(a => statusKey(a.status) === 'CANCELLED');
+    } else {
+      filtered = filtered.filter(a => statusKey(a.status) !== 'CANCELLED');
+    }
+    return filtered;
+  }, [items, showCancelled, filterDoctorId]);
+
+  const queueAppts = useMemo(() => {
+    let filtered = items.filter((a) => a.type === 'QUEUE');
+    if (filterDoctorId !== 'all') {
+      filtered = filtered.filter((a) => a.doctorId === filterDoctorId);
+    }
+    if (showCancelled) {
+      filtered = filtered.filter(a => statusKey(a.status) === 'CANCELLED');
+    } else {
+      filtered = filtered.filter(a => statusKey(a.status) !== 'CANCELLED');
+    }
+    return filtered.sort((a, b) => (a.queueNumber ?? 0) - (b.queueNumber ?? 0));
+  }, [items, showCancelled, filterDoctorId]);
+
+  // When a specific doctor is selected and we know their availability, the
+  // day grid is bounded STRICTLY by their availability — appointments outside
+  // those hours aren't shown (an off-hours booking would otherwise drag the
+  // grid down to e.g. 4 AM). Without availability (e.g. the "all doctors"
+  // view) we fall back to expanding the grid so every appointment stays
+  // visible.
+  const boundedByAvailability = filterDoctorId !== 'all' && availability.length > 0;
+
+  // Availability windows for the day, earliest first. A doctor can have more
+  // than one (e.g. a morning and an evening clinic); the grid shows ONE window
+  // at a time and the doctor cycles between them with the window switcher.
+  const sortedWindows = useMemo(
+    () => [...availability].sort((a, b) => a.startHour - b.startHour),
+    [availability],
+  );
+
+  // Index of the window currently shown in the grid. Defaulted to the window
+  // covering "now" by the effect below; the switcher buttons move it.
+  const [activeWindowIdx, setActiveWindowIdx] = useState(0);
+  const activeWindow =
+    boundedByAvailability && sortedWindows.length > 0
+      ? sortedWindows[Math.min(activeWindowIdx, sortedWindows.length - 1)]
+      : null;
+
+  const HOURS = useMemo(() => {
+    let minHour = 8;
+    let maxHour = 19;
+
+    if (activeWindow) {
+      // Show just the active availability window.
+      minHour = activeWindow.startHour;
+      maxHour = Math.max(activeWindow.startHour, activeWindow.endHour - 1);
+    } else if (!boundedByAvailability) {
+      // No availability to anchor to — grow the grid to fit every appointment.
+      for (const appt of dayAppts) {
+        if (appt.startAt) {
+          const h = Math.floor(isoToMin(appt.startAt) / 60);
+          if (h < minHour) minHour = h;
+          if (h > maxHour) maxHour = h;
+        }
+        if (appt.endAt) {
+          const endMin = isoToMin(appt.endAt);
+          if (endMin > 0) {
+            const h = Math.floor((endMin - 1) / 60);
+            if (h > maxHour) maxHour = h;
+            if (h < minHour) minHour = h;
+          }
+        }
+      }
+    }
+
+    minHour = Math.max(0, minHour);
+    maxHour = Math.min(23, maxHour);
+    return Array.from({ length: Math.max(1, maxHour - minHour + 1) }, (_, i) => minHour + i);
+  }, [dayAppts, activeWindow, boundedByAvailability]);
+
+  // Count of BOOKED appointments within the visible window (the grid range),
+  // so the header tally matches what's actually on screen — and reflects the
+  // active window when the doctor has several.
+  const scheduledCount = useMemo(() => {
+    if (HOURS.length === 0) return 0;
+    const minH = HOURS[0];
+    const maxH = HOURS[HOURS.length - 1];
+    return dayAppts.filter((a) => {
+      if (statusKey(a.status) !== 'BOOKED' || !a.startAt) return false;
+      const h = Math.floor(isoToMin(a.startAt) / 60);
+      return h >= minH && h <= maxH;
+    }).length;
+  }, [dayAppts, HOURS]);
+
   // Scroll container for the time-based day grid + a once-a-minute clock
   // tick so the "now" marker tracks the current time and the grid lands
   // on the current hour for the doctor without manual scrolling.
@@ -256,7 +442,31 @@ export function AppointmentsScreen() {
   }, []);
 
   const isToday = date === localYmd(nowTick);
-  const nowMin = nowTick.getHours() * 60 + nowTick.getMinutes();
+  // "now" in the clinic timezone so the current-hour logic matches the grid.
+  const nowHM = tzHM(nowTick);
+
+  // Default the visible window to the one covering "now" (clinic time) on
+  // today's view; otherwise the first window. Re-runs only when the windows
+  // or selected date change — NOT every minute — so it never overrides the
+  // doctor's manual switch while they're viewing a window.
+  useEffect(() => {
+    if (!boundedByAvailability || sortedWindows.length === 0) return;
+    let idx = 0;
+    if (isToday) {
+      const h = nowHM.h;
+      const inWin = sortedWindows.findIndex((w) => h >= w.startHour && h < w.endHour);
+      if (inWin >= 0) {
+        idx = inWin;
+      } else if (h >= sortedWindows[sortedWindows.length - 1].endHour) {
+        idx = sortedWindows.length - 1; // past every window → last
+      } else {
+        const next = sortedWindows.findIndex((w) => h < w.startHour);
+        idx = next >= 0 ? next : 0; // before the day / in a gap → next upcoming
+      }
+    }
+    setActiveWindowIdx(idx);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sortedWindows, date, boundedByAvailability]);
 
   // Accordion: exactly one hour is expanded at a time. Default = current
   // hour on today's view; the doctor can tap any hour strip to expand it.
@@ -274,16 +484,24 @@ export function AppointmentsScreen() {
       acc += h === selectedHour ? EXPANDED_H : COLLAPSED_H;
     }
     return { tops, total: acc };
-  }, [selectedHour]);
+  }, [selectedHour, HOURS]);
 
-  const getHourTop = (h: number) => hourGeom.tops[h] ?? 0;
+  // Returns -1 for hours outside the current grid so callers (getTimeTop)
+  // can detect and skip out-of-window appointments rather than collapsing
+  // them onto the top row (tops[unknownHour] would otherwise read as 0).
+  const getHourTop = (h: number) => hourGeom.tops[h] ?? -1;
 
   const getTimeTop = (iso: string | undefined) => {
     if (!iso) return 0;
     const min = isoToMin(iso);
     const h = Math.floor(min / 60);
     const m = min % 60;
-    return getHourTop(h) + (m / 60) * getHourH(h);
+    const hourTop = getHourTop(h);
+    // Hour isn't part of the current grid (e.g. an off-hours booking when the
+    // grid is bounded to availability) — signal "off-grid" so the renderer's
+    // `top < 0` guard skips it instead of pinning it to the top row.
+    if (hourTop < 0) return -1;
+    return hourTop + (m / 60) * getHourH(h);
   };
 
   // Auto-select the current hour when opening today's schedule. For other
@@ -293,17 +511,19 @@ export function AppointmentsScreen() {
   // every minute.
   useEffect(() => {
     if (loading) return;
-    if (isToday && nowMin >= 8 * 60 && nowMin < 20 * 60) {
-      setSelectedHour(Math.floor(nowMin / 60));
+    const minH = HOURS[0];
+    const maxH = HOURS[HOURS.length - 1];
+    if (isToday && nowHM.h >= minH && nowHM.h <= maxH) {
+      setSelectedHour(nowHM.h);
     } else {
       const firstApptHour = dayAppts
         .map((a) => Math.floor(isoToMin(a.startAt) / 60))
-        .filter((h) => h >= 8 && h <= 19)
+        .filter((h) => h >= minH && h <= maxH)
         .sort((a, b) => a - b)[0];
       setSelectedHour(firstApptHour ?? null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, loading]);
+  }, [date, loading, activeWindowIdx]);
 
   // Scroll the expanded hour into view whenever the selection changes
   // (auto on open, or after a tap). A small margin keeps the hour above
@@ -328,6 +548,8 @@ export function AppointmentsScreen() {
     setError(null);
     try {
       const qs = new URLSearchParams({ branchId: ctx.branchId, date });
+      // Send the viewer's effective timezone so the day window follows it.
+      if (ctx.timezone) qs.set('tz', ctx.timezone);
       const data = await apiGet<Appointment[]>(ctx, `/appointments?${qs.toString()}`);
       setItems(data);
       // Populate the patients map from the already-populated data if available,
@@ -366,8 +588,10 @@ export function AppointmentsScreen() {
 
   useEffect(() => {
     void load();
+    // ctx.timezone in deps so switching the clinic timezone refetches and
+    // the day list re-scopes to the new timezone's appointments.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [date, ctx.branchId, ctx.clinicId]);
+  }, [date, ctx.branchId, ctx.clinicId, ctx.timezone]);
 
   // Two refresh sources beyond the date/branch deps above:
   //   1) availability-changed events — admin saved/removed an override
@@ -387,38 +611,29 @@ export function AppointmentsScreen() {
   }, [date, ctx.branchId, ctx.clinicId]);
 
   useEffect(() => {
-    apiGet<Array<{ _id: string; name: string }>>(ctx, '/users')
+    apiGet<UserListItem[]>(ctx, '/users')
       .then((list) => {
         const next = new Map<string, string>();
         for (const u of list) next.set(u._id, u.name);
         setDoctors(next);
+
+        // Filter doctors for the dropdown
+        const branchDoctors = list.filter((u) => {
+          const hasBranch = u.branchIds?.includes(ctx.branchId ?? '');
+          const isDoctor = u.roles?.some((r) => r.name.toLowerCase() === 'doctor');
+          return hasBranch && isDoctor;
+        });
+        setDoctorList(branchDoctors);
       })
       .catch(() => undefined);
-  }, [ctx.clinicId, ctx.accessToken]);
+  }, [ctx.clinicId, ctx.accessToken, ctx.branchId]);
 
   // Auto-open booking sheet when patient is referred from another screen
   useEffect(() => {
     if (selectedPatientId) setShowBook(true);
   }, [selectedPatientId]);
 
-  const dayAppts = useMemo(() => {
-    let filtered = items.filter((a) => a.type === 'TIME');
-    if (showCancelled) {
-      filtered = filtered.filter(a => statusKey(a.status) === 'CANCELLED');
-    } else {
-      filtered = filtered.filter(a => statusKey(a.status) !== 'CANCELLED');
-    }
-    return filtered;
-  }, [items, showCancelled]);
-  const queueAppts = useMemo(() => {
-    let filtered = items.filter((a) => a.type === 'QUEUE');
-    if (showCancelled) {
-      filtered = filtered.filter(a => statusKey(a.status) === 'CANCELLED');
-    } else {
-      filtered = filtered.filter(a => statusKey(a.status) !== 'CANCELLED');
-    }
-    return filtered.sort((a, b) => (a.queueNumber ?? 0) - (b.queueNumber ?? 0));
-  }, [items, showCancelled]);
+
 
   function shiftDate(deltaDays: number) {
     const d = new Date(date);
@@ -446,6 +661,35 @@ export function AppointmentsScreen() {
           style={{ width: 32, height: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)' }}>
           <Icon name="chevronRight" size={16} />
         </button>
+
+        {!isDoctorUser && (
+          <select
+            value={filterDoctorId}
+            disabled={loadingAvailability}
+            onChange={(e) => setFilterDoctorId(e.target.value)}
+            style={{
+              height: 32,
+              padding: '0 12px',
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 8,
+              fontSize: 12,
+              fontWeight: 500,
+              color: 'var(--text)',
+              outline: 'none',
+              cursor: loadingAvailability ? 'wait' : 'pointer',
+              marginLeft: 8,
+              opacity: loadingAvailability ? 0.7 : 1,
+            }}
+          >
+            <option value="all">All Doctors</option>
+            {doctorList.map((d) => (
+              <option key={d._id} value={d._id}>
+                {formatDrName(d.name)}
+              </option>
+            ))}
+          </select>
+        )}
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
           <button onClick={() => setShowCancelled(!showCancelled)}
@@ -490,7 +734,10 @@ export function AppointmentsScreen() {
           <div style={{ padding: '24px', overflowY: 'auto', flex: 1 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
               <div>
-                <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Walk-in queue</h2>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                  <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Walk-in queue</h2>
+                  {tzLabel && <TzChip label={tzLabel} />}
+                </div>
                 <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{loading ? '—' : queueAppts.filter((a) => statusKey(a.status) === 'BOOKED').length} waiting</p>
               </div>
             </div>
@@ -531,9 +778,47 @@ export function AppointmentsScreen() {
         <div style={{ flex: 1.2, display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
           <div style={{ padding: '24px 24px 0 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
             <div>
-              <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Time-based appointments</h2>
-              <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{loading ? '—' : dayAppts.filter((a) => statusKey(a.status) === 'BOOKED').length} scheduled</p>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Time-based appointments</h2>
+                {tzLabel && <TzChip label={tzLabel} />}
+              </div>
+              <p style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{loading ? '—' : scheduledCount} scheduled</p>
             </div>
+            {boundedByAvailability && sortedWindows.length > 1 && activeWindow && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
+                <button type="button" aria-label="Previous time window" title="Previous time window"
+                  disabled={activeWindowIdx <= 0}
+                  onClick={() => setActiveWindowIdx((i) => Math.max(0, i - 1))}
+                  style={{
+                    width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)',
+                    color: 'var(--text)', cursor: activeWindowIdx <= 0 ? 'not-allowed' : 'pointer',
+                    opacity: activeWindowIdx <= 0 ? 0.4 : 1,
+                  }}>
+                  <Icon name="chevronLeft" size={16} />
+                </button>
+                <div title={`Window ${Math.min(activeWindowIdx, sortedWindows.length - 1) + 1} of ${sortedWindows.length}`}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 5, padding: '4px 10px', borderRadius: 8,
+                    border: '1px solid var(--border)', background: 'var(--surface)', fontSize: 12, fontWeight: 700,
+                    color: 'var(--text)', fontVariantNumeric: 'tabular-nums', whiteSpace: 'nowrap',
+                  }}>
+                  <Icon name="clock" size={13} color="var(--text-subtle)" />
+                  {String(activeWindow.startHour).padStart(2, '0')}:00–{String(activeWindow.endHour).padStart(2, '0')}:00
+                </div>
+                <button type="button" aria-label="Next time window" title="Next time window"
+                  disabled={activeWindowIdx >= sortedWindows.length - 1}
+                  onClick={() => setActiveWindowIdx((i) => Math.min(sortedWindows.length - 1, i + 1))}
+                  style={{
+                    width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                    borderRadius: 8, border: '1px solid var(--border)', background: 'var(--surface)',
+                    color: 'var(--text)', cursor: activeWindowIdx >= sortedWindows.length - 1 ? 'not-allowed' : 'pointer',
+                    opacity: activeWindowIdx >= sortedWindows.length - 1 ? 0.4 : 1,
+                  }}>
+                  <Icon name="chevronRight" size={16} />
+                </button>
+              </div>
+            )}
           </div>
           <div style={{ flex: 1, position: 'relative', display: 'flex', flexDirection: 'column', minHeight: 0, marginTop: 16, borderTop: '1px solid var(--border)' }}>
             <div ref={gridScrollRef} style={{ flex: 1, overflowY: 'auto', display: 'flex', background: 'var(--bg)', position: 'relative' }}>
@@ -597,10 +882,6 @@ export function AppointmentsScreen() {
                     const col = STATUS_COLORS[statusKey(a.status)] ?? STATUS_COLORS.BOOKED;
                     const layout = dayLayout.get(a._id) ?? { left: '8px', width: 'calc(100% - 16px)' };
 
-                    // Tiny dot in the corner whenever the appointment has an
-                    // unpaid auto-issued bill — keeps the calendar block compact
-                    // but still flags "needs payment before check-in" at a glance.
-                    const unpaid = !!a.billId && statusKey(a.status) === 'BOOKED';
                     return (
                       <div key={a._id} onClick={(e) => { e.stopPropagation(); setSelected(a); }}
                         title={inExpanded ? undefined : `${getName(a.patientId)} · ${isoToTime(a.startAt)}`}
@@ -612,14 +893,6 @@ export function AppointmentsScreen() {
                           boxShadow: 'var(--e1)', display: 'flex', flexDirection: 'column', gap: 2,
                           justifyContent: 'center',
                         }}>
-                        {unpaid && (
-                          <span title="Unpaid · pay before check-in"
-                            style={{
-                              position: 'absolute', top: 6, right: 8,
-                              width: 8, height: 8, borderRadius: 999,
-                              background: '#f59e0b', boxShadow: '0 0 0 2px var(--surface)',
-                            }} />
-                        )}
                         <div style={{ fontSize: inExpanded ? 12 : 10, fontWeight: 700, color: col.text, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                           {getName(a.patientId)}
                         </div>
@@ -661,6 +934,7 @@ export function AppointmentsScreen() {
         <BookSheet
           defaultDate={date}
           defaultPatientId={selectedPatientId}
+          defaultDoctorId={filterDoctorId}
           onClose={() => { setShowBook(false); setSelectedPatientId(undefined); }}
           onCreated={() => { setShowBook(false); setSelectedPatientId(undefined); toast('Appointment booked', 'success'); void load(); }}
         />
@@ -680,6 +954,7 @@ function ApptSheet({
   onChanged: () => void;
 }) {
   const { ctx, setScreen, setSelectedAppointmentId, setSelectedBillId } = useApp();
+  CLINIC_TZ = ctx.timezone;
   const toast = useToast();
   const [busy, setBusy] = useState(false);
   const [bill, setBill] = useState<any>(null);
@@ -984,16 +1259,19 @@ function TriageModal({
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
-              <ModalInput label="Weight (kg)" value={vitals.weight} onChange={v => setVitals({ ...vitals, weight: v })} type="number" />
-              <ModalInput label="Height (cm)" value={vitals.height} onChange={v => setVitals({ ...vitals, height: v })} type="number" />
-              <ModalInput label="Temp (°F)" value={vitals.temp} onChange={v => setVitals({ ...vitals, temp: v })} type="number" />
-              <ModalInput label="Pulse (bpm)" value={vitals.pulse} onChange={v => setVitals({ ...vitals, pulse: v })} type="number" />
-              <ModalInput label="SpO2 (%)" value={vitals.spo2} onChange={v => setVitals({ ...vitals, spo2: v })} type="number" />
-              <ModalInput label="RR (/min)" value={vitals.rr} onChange={v => setVitals({ ...vitals, rr: v })} type="number" />
-              <ModalInput label="BP (mmHg)" value={vitals.bp} onChange={v => setVitals({ ...vitals, bp: formatBpInput(v, vitals.bp) })} placeholder="120/80" />
+              <ModalInput label="Weight (kg)" value={vitals.weight} onChange={v => setVitals({ ...vitals, weight: v })} type="number" voice />
+              <ModalInput label="Height (cm)" value={vitals.height} onChange={v => setVitals({ ...vitals, height: v })} type="number" voice />
+              <ModalInput label="Temp (°F)" value={vitals.temp} onChange={v => setVitals({ ...vitals, temp: v })} type="number" voice />
+              <ModalInput label="Pulse (bpm)" value={vitals.pulse} onChange={v => setVitals({ ...vitals, pulse: v })} type="number" voice />
+              <ModalInput label="SpO2 (%)" value={vitals.spo2} onChange={v => setVitals({ ...vitals, spo2: v })} type="number" voice />
+              <ModalInput label="RR (/min)" value={vitals.rr} onChange={v => setVitals({ ...vitals, rr: v })} type="number" voice />
+              <ModalInput label="BP (mmHg)" value={vitals.bp} onChange={v => setVitals({ ...vitals, bp: formatBpInput(v, vitals.bp) })} placeholder="120/80" voice />
             </div>
             <div>
-              <label style={labelStyle}>Chief Complaint</label>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
+                <label style={{ ...labelStyle, marginBottom: 0 }}>Chief Complaint</label>
+                <VoiceInput onTranscript={(text) => setComplaint((c) => c ? c.trim() + ' ' + text.trim() : text.trim())} />
+              </div>
               <textarea
                 value={complaint} onChange={e => setComplaint(e.target.value)}
                 placeholder="Optional notes..."
@@ -1033,13 +1311,33 @@ function TriageModal({
   );
 }
 
-function ModalInput({ label, value, onChange, type = 'text', placeholder }: { label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string }) {
+// Small muted chip showing the clinic timezone, displayed beside the
+// appointment headings so staff know which zone the times are shown in.
+function TzChip({ label }: { label: string }) {
+  return (
+    <span title={`Times shown in clinic timezone: ${label}`}
+      style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 100, background: 'var(--surface-muted)', border: '1px solid var(--border)', color: 'var(--text-subtle)', fontSize: 11, fontWeight: 600, whiteSpace: 'nowrap' }}>
+      <Icon name="clock" size={11} style={{ color: 'var(--brand-500)' }} />
+      {label}
+    </span>
+  );
+}
+
+function ModalInput({ label, value, onChange, type = 'text', placeholder, voice }: { label: string; value: string; onChange: (v: string) => void; type?: string; placeholder?: string; voice?: boolean }) {
   return (
     <div>
       <label style={labelStyle}>{label}</label>
-      <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
-        style={{ width: '100%', height: 38, padding: '0 10px', borderRadius: 8, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', fontSize: 13, color: 'var(--text)', outline: 'none' }}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <input type={type} value={value} onChange={e => onChange(e.target.value)} placeholder={placeholder}
+          style={{ flex: 1, minWidth: 0, height: 38, padding: '0 10px', borderRadius: 8, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', fontSize: 13, color: 'var(--text)', outline: 'none' }}
+        />
+        {voice && (
+          // Dictate the number — we keep digits (and a decimal point), so
+          // "one twenty over eighty" / "98" fills numeric vitals. BP's parent
+          // onChange runs formatBpInput, which turns "12080" into "120/80".
+          <VoiceInput compact onTranscript={(t) => { const cleaned = t.replace(/[^\d.]/g, ''); if (cleaned) onChange(cleaned); }} />
+        )}
+      </div>
     </div>
   );
 }
@@ -1093,32 +1391,27 @@ function genderInitial(g?: string): string {
   const u = (g ?? '').toUpperCase();
   if (u === 'MALE') return 'M';
   if (u === 'FEMALE') return 'F';
-  if (u === 'OTHER') return 'O';
-  return u.slice(0, 1);
-}
-
-function combineToIso(d: string, hm: string): Date {
-  const [h, m] = hm.split(':').map(Number);
-  const dt = new Date(`${d}T00:00:00`);
-  dt.setHours(h, m, 0, 0);
-  return dt;
+  return '';
 }
 
 function fmtSlotLabel(iso: string): string {
   const d = new Date(iso);
   if (isNaN(d.getTime())) return iso;
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+  const { h, m } = tzHM(d);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
 
 function BookSheet({
-  defaultDate, defaultPatientId, onClose, onCreated,
+  defaultDate, defaultPatientId, defaultDoctorId, onClose, onCreated,
 }: {
   defaultDate: string;
   defaultPatientId?: string;
+  defaultDoctorId?: string;
   onClose: () => void;
   onCreated: () => void;
 }) {
   const { ctx, features } = useApp();
+  CLINIC_TZ = ctx.timezone;
   const { has } = usePerm();
   const toast = useToast();
   // 4-step wizard: 1 Patient → 2 Details → 3 Payment → 4 Confirm.
@@ -1173,6 +1466,11 @@ function BookSheet({
   const [visitTypes, setVisitTypes] = useState<Array<{ _id: string; name: string; price: number; currency: string }>>([]);
   const [visitTypeId, setVisitTypeId] = useState<string>('');
   const [duration, setDuration] = useState<number>(30);
+  // Default the appointment duration to the doctor's configured slot
+  // minutes (from the slots response) so "5-min slots in Availability"
+  // actually yields 5-min appointment slots here — unless the operator
+  // manually picks a different duration. Reset when the doctor changes.
+  const durationTouched = useRef(false);
   // Bumped by the manual refresh button AND by the availability-changed
   // event so the slot useEffect re-runs and pulls a fresh view. Without
   // this, an admin updating doctor rules / overrides while the sheet is
@@ -1260,18 +1558,24 @@ function BookSheet({
         });
         setDoctors(branchDoctors);
 
-        // Pick a default doctor: either the first one in the list, 
-        // or the current user if they happen to be a doctor in this branch.
-        const meAsDoctor = branchDoctors.find(d => d._id === ctx.userId);
-        if (meAsDoctor) {
-          setDoctorId(meAsDoctor._id);
-        } else if (branchDoctors.length > 0) {
-          setDoctorId(branchDoctors[0]._id);
+        // Pick a default doctor: either defaultDoctorId (if provided),
+        // or the current user if they happen to be a doctor in this branch,
+        // or the first doctor in the list.
+        const preselected = defaultDoctorId && defaultDoctorId !== 'all' ? branchDoctors.find(d => d._id === defaultDoctorId) : null;
+        if (preselected) {
+          setDoctorId(preselected._id);
+        } else {
+          const meAsDoctor = branchDoctors.find(d => d._id === ctx.userId);
+          if (meAsDoctor) {
+            setDoctorId(meAsDoctor._id);
+          } else if (branchDoctors.length > 0) {
+            setDoctorId(branchDoctors[0]._id);
+          }
         }
       })
       .catch(() => setDoctors([]))
       .finally(() => setDoctorsLoading(false));
-  }, [ctx.clinicId, ctx.accessToken, ctx.branchId, ctx.userId]);
+  }, [ctx.clinicId, ctx.accessToken, ctx.branchId, ctx.userId, defaultDoctorId]);
 
   // Pull the picked doctor's visit-type catalog. We only ask for active
   // rows because the picker is a *choose-to-bill* surface — deactivated
@@ -1310,6 +1614,10 @@ function BookSheet({
     if (doctorId === ctx.userId && ctx.fullName) return formatDrName(ctx.fullName);
     return 'Doctor';
   }, [doctorId, doctors, ctx.userId, ctx.fullName]);
+
+  // New doctor → forget any manual duration choice so we re-default to
+  // the new doctor's configured slot minutes.
+  useEffect(() => { durationTouched.current = false; }, [doctorId]);
 
   // Load slots (step 2) when doctor / date / duration changes (TIME only).
   // The duration is sent to the backend so each slot's status reflects
@@ -1352,7 +1660,15 @@ function BookSheet({
         const futureSlots = labeled.filter(s => s.status !== 'past');
         setSlots(futureSlots);
 
-        if (typeof r.slotMinutes === 'number' && r.slotMinutes > 0) setSlotMinutes(r.slotMinutes);
+        if (typeof r.slotMinutes === 'number' && r.slotMinutes > 0) {
+          setSlotMinutes(r.slotMinutes);
+          // Sync the default appointment duration to the doctor's saved
+          // slot minutes (unless the operator already picked one). This is
+          // what makes a 5-min Availability setting produce 5-min slots.
+          if (!durationTouched.current && r.slotMinutes !== duration) {
+            setDuration(r.slotMinutes);
+          }
+        }
 
         // Auto-pick the first AVAILABLE slot
         const firstAvail = futureSlots.find((s) => s.status === 'available');
@@ -1535,7 +1851,13 @@ function BookSheet({
         };
       } else {
         if (!slotStart) { setError('Time slot is required.'); setSaving(false); return; }
-        const start = combineToIso(date, slotStart);
+        // Use the selected slot's backend-provided UTC start (already
+        // computed in the clinic timezone) rather than reconstructing it
+        // from the "HH:MM" label in the operator's browser timezone —
+        // those differ when the clinic is in another region.
+        const chosenSlot = slots.find((s) => s.label === slotStart);
+        if (!chosenSlot) { setError('Pick a valid time slot.'); setSaving(false); return; }
+        const start = new Date(chosenSlot.startAt);
         const end = new Date(start.getTime() + duration * 60_000);
         if (start.getTime() < Date.now()) {
           setError('That time slot is in the past — pick a future slot.');
@@ -1649,7 +1971,7 @@ function BookSheet({
               doctorsLoading={doctorsLoading}
               apptType={apptType} setApptType={setApptType}
               visitTypes={visitTypes} visitTypeId={visitTypeId} setVisitTypeId={setVisitTypeId}
-              duration={duration} setDuration={setDuration}
+              duration={duration} setDuration={(v) => { durationTouched.current = true; setDuration(v); }}
               room={room} setRoom={setRoom}
               notes={notes} setNotes={setNotes}
               onRefreshSlots={() => setSlotsRefreshKey((k) => k + 1)}
@@ -1914,7 +2236,7 @@ function DetailsStep({
   notes: string; setNotes: (v: string) => void;
   onRefreshSlots: () => void;
 }) {
-  const meta = patient ? [genderInitial(patient.gender) === 'M' ? 'Male' : genderInitial(patient.gender) === 'F' ? 'Female' : 'Other', getAge(patient.dob) != null ? `${getAge(patient.dob)}y` : null].filter(Boolean).join(' · ') : '';
+  const meta = patient ? [genderInitial(patient.gender) === 'M' ? 'Male' : genderInitial(patient.gender) === 'F' ? 'Female' : '', getAge(patient.dob) != null ? `${getAge(patient.dob)}y` : null].filter(Boolean).join(' · ') : '';
 
   return (
     <>
@@ -2045,7 +2367,10 @@ function DetailsStep({
             <div>
               <label style={labelStyle}>Duration</label>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 6 }}>
-                {DURATIONS.map((d) => (
+                {Array.from(new Set([...DURATIONS, slotMinutes]))
+                  .filter((d) => d > 0)
+                  .sort((a, b) => a - b)
+                  .map((d) => (
                   <button key={d} onClick={() => setDuration(d)}
                     style={{
                       padding: '6px 14px', minWidth: 56,

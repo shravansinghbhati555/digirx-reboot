@@ -62,7 +62,11 @@ export type PermName = typeof Perm[keyof typeof Perm];
 // Permissions required to access each screen. `null` = open to any signed-in user.
 // "Any one suffices" semantics.
 export const SCREEN_REQUIRED: Record<ScreenKey, PermName[] | null> = {
-  dashboard: [Perm.ClinicWrite, Perm.DashboardRead],
+  // The Dashboard tab is shown ONLY when the role is explicitly granted
+  // the Dashboard permission — clinic:write no longer implicitly surfaces
+  // it (that made the Dashboard appear for roles like a doctor that had
+  // clinic:write but were never given the Dashboard tab).
+  dashboard: [Perm.DashboardRead],
   patients: [Perm.PatientRead],
   appointments: [Perm.AppointmentRead],
   encounters: [Perm.EncounterRead],
@@ -75,6 +79,9 @@ export const SCREEN_REQUIRED: Record<ScreenKey, PermName[] | null> = {
   users: [Perm.UserRead],
   roles: [Perm.UserRead],
   settings: [Perm.ClinicRead],
+  availability: [Perm.SettingsAvailabilityRead],
+  // Own profile — available to any signed-in user.
+  profile: null,
 };
 
 export function hasPerm(set: Set<string>, perm: PermName): boolean {
@@ -103,6 +110,9 @@ export function canAccessScreen(set: Set<string>, screen: ScreenKey): boolean {
 const ROLE_SCREEN_ALLOWLIST: Partial<Record<ScreenKey, ReadonlySet<string>>> = {
   users: new Set(['super admin', 'manager']),
   roles: new Set(['super admin', 'manager']),
+  // Availability is a sidebar screen for doctors only; every other role
+  // still manages availability from the Settings → Availability tab.
+  availability: new Set(['doctor']),
 };
 
 const ROLE_SCREEN_BLOCKLIST: Partial<Record<ScreenKey, ReadonlySet<string>>> = {
