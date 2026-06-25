@@ -6,8 +6,6 @@ export type PatientDocument = HydratedDocument<Patient>;
 export enum PatientGender {
   Male = 'MALE',
   Female = 'FEMALE',
-  Other = 'OTHER',
-  Unknown = 'UNKNOWN',
 }
 
 @Schema({ timestamps: true })
@@ -33,7 +31,7 @@ export class Patient {
   @Prop({ type: String, trim: true, index: true })
   mrn?: string;
 
-  @Prop({ enum: PatientGender, default: PatientGender.Unknown })
+  @Prop({ enum: PatientGender, default: PatientGender.Male })
   gender!: PatientGender;
 
   @Prop()
@@ -44,6 +42,13 @@ export class Patient {
 
   @Prop({ type: [String], default: [], index: true })
   normalizedPhones!: string[];
+
+  // ISO 3166-1 alpha-2 country the patient belongs to (e.g. "IN", "GB"),
+  // captured from the clinic's location (timezone) at registration. Lets
+  // us tell which country a phone number belongs to and render its dial
+  // code reliably even if the clinic later changes location.
+  @Prop({ type: String, trim: true, uppercase: true, index: true })
+  countryCode?: string;
 
   @Prop({ type: [String], default: [] })
   emails!: string[];

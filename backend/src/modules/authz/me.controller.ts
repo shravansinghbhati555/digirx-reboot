@@ -1,4 +1,4 @@
-import { Controller, Get, Req } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Patch, Req } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import type { AppRequest } from '../../common/types';
@@ -6,7 +6,19 @@ import { AuthzService } from './authz.service';
 import { RequirePermissions } from './require-permissions.decorator';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
 import { Branch } from '../tenancy/schemas/branch.schema';
+import { User } from './schemas/user.schema';
+import { StorageService } from '../storage/storage.service';
 import { mergeClinicSettings } from '../tenancy/clinic-settings.types';
+
+// Reject obviously-invalid IANA zones cheaply before persisting.
+function isValidIanaZone(tz: string): boolean {
+  try {
+    new Intl.DateTimeFormat('en-US', { timeZone: tz });
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 @Controller()
 export class MeController {
@@ -14,7 +26,26 @@ export class MeController {
     private readonly authz: AuthzService,
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
     @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
+    @InjectModel(User.name) private readonly userModel: Model<User>,
+    private readonly storage: StorageService,
   ) {}
+
+  // Self-service: any authenticated user sets their OWN display timezone
+  // (or clears it to fall back to the clinic timezone). This does NOT
+  // touch the clinic's authoritative timezone.
+  @Patch('me/timezone')
+  @RequirePermissions()
+  async setMyTimezone(@Req() req: AppRequest, @Body('timezone') timezone?: string | null) {
+    const tz = (timezone ?? '').trim();
+    if (tz && !isValidIanaZone(tz)) {
+      throw new BadRequestException(`Invalid timezone: ${tz}`);
+    }
+    await this.userModel.updateOne(
+      { _id: req.context!.actorUserId, clinicId: req.context!.clinicId },
+      tz ? { $set: { displayTimezone: tz } } : { $unset: { displayTimezone: '' } },
+    );
+    return { displayTimezone: tz || null };
+  }
 
   @Get('me')
   @RequirePermissions()
@@ -77,6 +108,19 @@ export class MeController {
       user: actor.user,
       roles: actor.roles,
       permissions: actor.permissions,
+      // Per-user display timezone (empty → FE falls back to the clinic tz).
+      displayTimezone: (actor.user as { displayTimezone?: string }).displayTimezone ?? null,
+      // Presigned URL for the user's profile photo (uploaded by a Manager).
+      profileImageUrl: await this.presignUserPhoto(actor.user as { profileImageKey?: string }),
     };
+  }
+
+  private async presignUserPhoto(user: { profileImageKey?: string }): Promise<string | null> {
+    if (!user.profileImageKey) return null;
+    try {
+      return await this.storage.presignGet({ key: user.profileImageKey });
+    } catch {
+      return null;
+    }
   }
 }

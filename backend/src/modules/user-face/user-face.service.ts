@@ -1,44 +1,45 @@
-import { BadRequestException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
-import { FaceClient } from '../face/face-client.service';
 import { User, UserStatus } from '../authz/schemas/user.schema';
-import { UserFaceEmbedding } from './schemas/user-face-embedding.schema';
+import { StorageService } from '../storage/storage.service';
+import { LocalUserFaceProvider } from './providers/local-user-face.provider';
+import { AzureUserFaceProvider } from './providers/azure-user-face.provider';
+import { UserFaceMatch, UserFaceProvider } from './user-face-provider.interface';
 
-// Cosine cutoff for staff face LOGIN. Stricter than the patient
-// recognition default (0.65 high) because a false accept here is an
-// account takeover, not just a wrong chart. Override via env.
-const LOGIN_THRESHOLD = parseFloat(process.env.USER_FACE_LOGIN_THRESHOLD ?? '0.62');
-const MIN_ENROLL_CONFIDENCE = parseFloat(
-  process.env.USER_FACE_MIN_ENROLL_CONFIDENCE ?? '0.7',
-);
-
-export interface UserFaceMatch {
-  userId: Types.ObjectId;
-  clinicId: Types.ObjectId;
-  score: number;
-}
+// Re-exported for callers that import the match shape from here.
+export type { UserFaceMatch } from './user-face-provider.interface';
 
 /**
  * Staff face login. Distinct from the patient face system:
  *   - Patient face → identify a patient at the front desk (per-clinic).
  *   - Staff face   → log a user in (pre-auth, cross-clinic scan).
  *
- * Uses the same face-svc embedding pipeline (YuNet + SFace, with
- * anti-spoofing in the embed path) as the local patient provider, but
- * keeps its own embedding collection keyed by userId.
+ * The actual enroll / identify / remove is delegated to a UserFaceProvider
+ * chosen by the SAME `FACE_PROVIDER` env var the patient face system uses:
+ *
+ *     FACE_PROVIDER=local  → face-svc embeddings + cosine            [default]
+ *     FACE_PROVIDER=azure  → Azure Face API, one global staff group
+ *
+ * This service keeps the shared concerns: user existence, the active-user
+ * gate, and the `faceEnrolledAt` marker.
  */
 @Injectable()
 export class UserFaceService {
   private readonly logger = new Logger(UserFaceService.name);
 
   constructor(
-    @InjectModel(UserFaceEmbedding.name)
-    private readonly embeddingModel: Model<UserFaceEmbedding>,
-    @InjectModel(User.name)
-    private readonly userModel: Model<User>,
-    private readonly faceClient: FaceClient,
+    @InjectModel(User.name) private readonly userModel: Model<User>,
+    private readonly storage: StorageService,
+    private readonly localProvider: LocalUserFaceProvider,
+    private readonly azureProvider: AzureUserFaceProvider,
   ) {}
+
+  /** Active provider — flip FACE_PROVIDER to switch (same env as patients). */
+  private get provider(): UserFaceProvider {
+    const choice = (process.env.FACE_PROVIDER ?? 'local').toLowerCase();
+    return choice === 'azure' ? this.azureProvider : this.localProvider;
+  }
 
   /** Enroll / re-enroll a staff member's face. */
   async enroll(input: {
@@ -52,53 +53,40 @@ export class UserFaceService {
       throw new NotFoundException('User not found');
     }
     const userObjId = new Types.ObjectId(input.userId);
-    const user = await this.userModel.findOne({
-      _id: userObjId,
-      clinicId: input.clinicId,
-    });
+    const user = await this.userModel.findOne({ _id: userObjId, clinicId: input.clinicId });
     if (!user) throw new NotFoundException('User not found');
 
-    // ALWAYS use server-side detection + alignment (preDetected=false),
-    // exactly like identify() at login time. SFace embeddings from an
-    // aligned face vs a naively-resized browser crop don't compare well,
-    // so enroll and login MUST use the same path or the same person's
-    // embeddings won't match. We ignore the FE's pre_detected flag here
-    // on purpose.
-    const embed = await this.faceClient.embed({
-      ...input.image,
-      preDetected: false,
-    });
-
-    if (embed.faceConfidence < MIN_ENROLL_CONFIDENCE) {
-      throw new BadRequestException(
-        `Face detection too weak (confidence ${embed.faceConfidence.toFixed(2)}) — retake the photo with better lighting`,
-      );
-    }
-    if (embed.facesDetected > 1) {
-      throw new BadRequestException(
-        'Multiple faces detected — only one person should be in the frame',
-      );
-    }
-
-    // One embedding per user — replace any prior on re-enroll.
-    await this.embeddingModel.deleteMany({ userId: userObjId });
-    await this.embeddingModel.create({
+    const result = await this.provider.enrollUserFace({
       clinicId: input.clinicId,
       userId: userObjId,
-      embedding: embed.embedding,
-      model: embed.model,
-      detector: embed.detector,
-      faceConfidence: embed.faceConfidence,
-      capturedBy: input.actorUserId,
+      actorUserId: input.actorUserId,
+      image: input.image,
     });
+
+    // The captured frame doubles as the user's profile photo, so staff
+    // never have to upload one separately. Non-fatal: the face template is
+    // the critical artifact, so a storage hiccup must not fail enrollment.
+    const setFields: Record<string, unknown> = { faceEnrolledAt: new Date() };
+    const profileImageKey = `clinic/${input.clinicId.toHexString()}/user/${userObjId.toHexString()}/profile.jpg`;
+    try {
+      await this.storage.putObject({
+        key: profileImageKey,
+        body: new Uint8Array(input.image.buffer),
+        contentType: input.image.mimeType,
+      });
+      setFields.profileImageKey = profileImageKey;
+    } catch (e) {
+      this.logger.warn(
+        `[user-face] failed to save profile image for ${input.userId} (template kept): ${e instanceof Error ? e.message : e}`,
+      );
+    }
 
     await this.userModel.updateOne(
       { _id: userObjId, clinicId: input.clinicId },
-      { $set: { faceEnrolledAt: new Date() } },
+      { $set: setFields },
     );
-
-    this.logger.log(`[user-face] enrolled user ${input.userId} confidence=${embed.faceConfidence.toFixed(2)}`);
-    return { enrolled: true, faceConfidence: embed.faceConfidence };
+    this.logger.log(`[user-face] enrolled user ${input.userId} via ${this.provider.name}`);
+    return { enrolled: true, faceConfidence: result.faceConfidence };
   }
 
   /** Remove a staff member's face template. */
@@ -107,73 +95,34 @@ export class UserFaceService {
       throw new NotFoundException('User not found');
     }
     const userObjId = new Types.ObjectId(userId);
-    const res = await this.embeddingModel.deleteMany({ userId: userObjId });
+    await this.provider.removeUserFace({ clinicId, userId: userObjId });
     await this.userModel.updateOne(
       { _id: userObjId, clinicId },
       { $unset: { faceEnrolledAt: '' } },
     );
-    return { removed: res.deletedCount ?? 0 };
+    return { removed: 1 };
   }
 
   /**
-   * Identify a user from a login face scan. Cross-clinic scan (login is
-   * pre-auth). Returns the best match above LOGIN_THRESHOLD, or null.
-   * Anti-spoofing is enforced upstream in face-svc's /embed.
+   * Identify a user from a login face scan. Cross-clinic (login is
+   * pre-auth). Returns the best provider match, or null. Confirms the
+   * matched user is still active before letting them in.
    */
   async identify(image: {
     buffer: Buffer;
     mimeType: string;
     filename: string;
   }): Promise<UserFaceMatch | null> {
-    const probe = await this.faceClient.embed({ ...image, preDetected: false });
-    if (probe.facesDetected === 0) return null;
+    const match = await this.provider.identifyUser(image);
+    if (!match) return null;
 
-    const rows = await this.embeddingModel
-      .find({})
-      .select({ userId: 1, clinicId: 1, embedding: 1 })
-      .lean();
-    if (rows.length === 0) return null;
-
-    let best: UserFaceMatch | null = null;
-    for (const row of rows) {
-      const score = cosineSimilarity(probe.embedding, row.embedding as number[]);
-      if (!best || score > best.score) {
-        best = {
-          userId: row.userId as Types.ObjectId,
-          clinicId: row.clinicId as Types.ObjectId,
-          score,
-        };
-      }
-    }
-
-    this.logger.log(
-      `[user-face] login scan: gallery=${rows.length} best=${best?.score.toFixed(4) ?? '-'} threshold=${LOGIN_THRESHOLD}`,
-    );
-
-    if (!best || best.score < LOGIN_THRESHOLD) return null;
-
-    // Confirm the matched user is still active before letting them in.
     const user = await this.userModel
-      .findOne({ _id: best.userId, clinicId: best.clinicId })
+      .findOne({ _id: match.userId, clinicId: match.clinicId })
       .select({ status: 1 })
       .lean();
     if (!user || (user as { status?: string }).status !== UserStatus.Active) {
       return null;
     }
-    return best;
+    return match;
   }
-}
-
-function cosineSimilarity(a: number[], b: number[]): number {
-  if (a.length !== b.length) return 0;
-  let dot = 0;
-  let na = 0;
-  let nb = 0;
-  for (let i = 0; i < a.length; i++) {
-    dot += a[i] * b[i];
-    na += a[i] * a[i];
-    nb += b[i] * b[i];
-  }
-  const denom = Math.sqrt(na) * Math.sqrt(nb);
-  return denom === 0 ? 0 : dot / denom;
 }

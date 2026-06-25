@@ -162,8 +162,12 @@ export class ReportsService {
       {
         $addFields: {
           currency: { $ifNull: [{ $arrayElemAt: ['$bill.currency', 0] }, target] },
+          billStatus: { $arrayElemAt: ['$bill.status', 0] },
         },
       },
+      // Exclude cash collected on bills that were later VOIDED — the
+      // invoice is cancelled, so its payments no longer count as revenue.
+      { $match: { billStatus: { $ne: BillStatus.Void } } },
       {
         $group: {
           _id: '$currency',
@@ -260,6 +264,7 @@ export class ReportsService {
     const byDoctor: Record<
       string,
       {
+        doctorName: string;
         total: number;
         byStatus: Record<string, number>;
         byType: Record<string, number>;
@@ -268,7 +273,8 @@ export class ReportsService {
 
     for (const a of items) {
       const d = String((a.doctorId as any)?._id || a.doctorId);
-      if (!byDoctor[d]) byDoctor[d] = { total: 0, byStatus: {}, byType: {} };
+      const name = (a.doctorId as any)?.name || 'Unknown Doctor';
+      if (!byDoctor[d]) byDoctor[d] = { doctorName: name, total: 0, byStatus: {}, byType: {} };
       byDoctor[d].total += 1;
       byDoctor[d].byStatus[a.status] =
         (byDoctor[d].byStatus[a.status] ?? 0) + 1;
@@ -505,8 +511,12 @@ export class ReportsService {
       {
         $addFields: {
           currency: { $ifNull: [{ $arrayElemAt: ['$bill.currency', 0] }, 'INR'] },
+          billStatus: { $arrayElemAt: ['$bill.status', 0] },
         },
       },
+      // Exclude payments on VOIDED bills — the cancelled invoice's cash
+      // no longer counts toward revenue.
+      { $match: { billStatus: { $ne: BillStatus.Void } } },
       {
         $group: {
           _id: {

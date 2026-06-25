@@ -9,7 +9,7 @@ describe('CreatePatientDto', () => {
       fullName: 'Ada Lovelace',
       gender: 'FEMALE',
       dob: '1815-12-10',
-      phones: ['+911234567890'],
+      phones: ['9876543210'],
     });
   });
 
@@ -18,7 +18,7 @@ describe('CreatePatientDto', () => {
       fullName: 'Ada Lovelace',
       gender: 'FEMALE',
       dob: '1815-12-10',
-      phones: ['+911234567890'],
+      phones: ['9876543210'],
       emails: ['ada@example.com'],
       primaryBranchId: ID,
       tags: ['vip'],
@@ -26,10 +26,28 @@ describe('CreatePatientDto', () => {
     });
   });
 
+  it('accepts an international (non-Indian) length number', async () => {
+    // 12-digit national number — would have failed the old /^\d{10}$/.
+    await expectValid(CreatePatientDto, {
+      fullName: 'Ada Lovelace',
+      gender: 'FEMALE',
+      dob: '1815-12-10',
+      phones: ['441234567890'],
+    });
+  });
+
+  it('rejects a phone with non-digit characters', async () => {
+    await expectInvalid(
+      CreatePatientDto,
+      { fullName: 'Ada', gender: 'FEMALE', dob: '1815-12-10', phones: ['+44 1234'] },
+      'phones',
+    );
+  });
+
   it('rejects missing gender', async () => {
     await expectInvalid(
       CreatePatientDto,
-      { fullName: 'Ada', dob: '1815-12-10', phones: ['+911234567890'] },
+      { fullName: 'Ada', dob: '1815-12-10', phones: ['9876543210'] },
       'gender',
     );
   });
@@ -37,7 +55,7 @@ describe('CreatePatientDto', () => {
   it('rejects missing dob', async () => {
     await expectInvalid(
       CreatePatientDto,
-      { fullName: 'Ada', gender: 'FEMALE', phones: ['+911234567890'] },
+      { fullName: 'Ada', gender: 'FEMALE', phones: ['9876543210'] },
       'dob',
     );
   });
@@ -45,7 +63,7 @@ describe('CreatePatientDto', () => {
   it('rejects empty fullName', async () => {
     await expectInvalid(
       CreatePatientDto,
-      { fullName: '', gender: 'FEMALE', dob: '1815-12-10', phones: ['+911234567890'] },
+      { fullName: '', gender: 'FEMALE', dob: '1815-12-10', phones: ['9876543210'] },
       'fullName',
     );
   });
@@ -69,7 +87,7 @@ describe('CreatePatientDto', () => {
   it('rejects unknown gender', async () => {
     await expectInvalid(
       CreatePatientDto,
-      { fullName: 'Ada', gender: 'DRAGON' as any, dob: '1815-12-10', phones: ['+911234567890'] },
+      { fullName: 'Ada', gender: 'DRAGON' as any, dob: '1815-12-10', phones: ['9876543210'] },
       'gender',
     );
   });
@@ -77,7 +95,7 @@ describe('CreatePatientDto', () => {
   it('rejects malformed email in emails[]', async () => {
     await expectInvalid(
       CreatePatientDto,
-      { fullName: 'Ada', gender: 'FEMALE', dob: '1815-12-10', phones: ['+911234567890'], emails: ['not-an-email'] },
+      { fullName: 'Ada', gender: 'FEMALE', dob: '1815-12-10', phones: ['9876543210'], emails: ['not-an-email'] },
       'emails',
     );
   });
@@ -85,7 +103,7 @@ describe('CreatePatientDto', () => {
   it('rejects non-mongo primaryBranchId', async () => {
     await expectInvalid(
       CreatePatientDto,
-      { fullName: 'Ada', gender: 'FEMALE', dob: '1815-12-10', phones: ['+911234567890'], primaryBranchId: 'x' },
+      { fullName: 'Ada', gender: 'FEMALE', dob: '1815-12-10', phones: ['9876543210'], primaryBranchId: 'x' },
       'primaryBranchId',
     );
   });

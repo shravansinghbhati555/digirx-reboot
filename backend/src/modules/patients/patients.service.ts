@@ -65,7 +65,7 @@ export class PatientsService {
     @InjectModel(Prescription.name)
     private readonly rxModel: Model<Prescription>,
     private readonly storage: StorageService,
-  ) {}
+  ) { }
 
   async create(
     clinicId: Types.ObjectId,
@@ -111,10 +111,11 @@ export class PatientsService {
       fullName,
       normalizedName,
       namePhonetic,
-      gender: dto.gender ?? PatientGender.Unknown,
+      gender: dto.gender ?? PatientGender.Male,
       dob: dto.dob ? new Date(dto.dob) : undefined,
       phones,
       normalizedPhones,
+      countryCode: dto.countryCode,
       emails,
       tags: dedupeTags(dto.tags),
       notes: dto.notes,
@@ -181,6 +182,9 @@ export class PatientsService {
     }
     if (dto.tags !== undefined) patient.tags = dedupeTags(dto.tags);
     if (dto.notes !== undefined) patient.notes = dto.notes;
+    if (dto.countryCode !== undefined) {
+      (patient as unknown as { countryCode?: string }).countryCode = dto.countryCode;
+    }
     if (dto.faceConsent !== undefined) {
       // Stamp the consent timestamp on the leading edge (false → true).
       // Revoking (true → false) leaves the historical timestamp alone so
@@ -253,27 +257,27 @@ export class PatientsService {
     const [doctors, branches, paymentTotals, prescriptions] = await Promise.all([
       doctorIds.length
         ? this.userModel
-            .find({ clinicId, _id: { $in: doctorIds } }, { name: 1 })
-            .lean()
+          .find({ clinicId, _id: { $in: doctorIds } }, { name: 1 })
+          .lean()
         : Promise.resolve([]),
       branchIds.length
         ? this.branchModel
-            .find({ clinicId, _id: { $in: branchIds } }, { name: 1 })
-            .lean()
+          .find({ clinicId, _id: { $in: branchIds } }, { name: 1 })
+          .lean()
         : Promise.resolve([]),
       billIds.length
         ? this.paymentModel.aggregate<{ _id: Types.ObjectId; totalPaid: number }>([
-            { $match: { clinicId, billId: { $in: billIds } } },
-            { $group: { _id: '$billId', totalPaid: { $sum: '$amount' } } },
-          ])
+          { $match: { clinicId, billId: { $in: billIds } } },
+          { $group: { _id: '$billId', totalPaid: { $sum: '$amount' } } },
+        ])
         : Promise.resolve([]),
       encounterIds.length
         ? this.rxModel
-            .find(
-              { clinicId, encounterId: { $in: encounterIds } },
-              { encounterId: 1, items: 1, createdAt: 1 },
-            )
-            .lean()
+          .find(
+            { clinicId, encounterId: { $in: encounterIds } },
+            { encounterId: 1, items: 1, createdAt: 1 },
+          )
+          .lean()
         : Promise.resolve([]),
     ]);
 

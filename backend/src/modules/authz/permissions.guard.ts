@@ -47,6 +47,12 @@ export class PermissionsGuard implements CanActivate {
       actorUserId: req.context.actorUserId,
     });
 
+    // Expose the actor's role names (lowercased) so handlers can do
+    // role-based authorization on top of permissions.
+    req.actorRoleNames = new Set(
+      (actor.roles ?? []).map((r) => (r.name ?? '').toLowerCase()),
+    );
+
     const have = new Set(actor.permissions);
     for (const p of required) {
       if (!have.has(p)) throw new ForbiddenException('Missing permission');

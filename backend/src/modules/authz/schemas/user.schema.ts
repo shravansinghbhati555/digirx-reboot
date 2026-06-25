@@ -54,11 +54,34 @@ export class User {
   @Prop({ trim: true })
   qualifications?: string;
 
-  // Set when a face template lands in the UserFaceEmbedding collection.
-  // Lets the FE show a "face login enabled" badge and gate the
+  // Personal DISPLAY timezone (IANA, e.g. "Europe/London"). Per-user
+  // preference for how times/dates are shown to THIS user — it does NOT
+  // change the clinic's authoritative timezone (which still governs
+  // appointment booking/scoping). Empty → fall back to the clinic tz.
+  @Prop({ trim: true })
+  displayTimezone?: string;
+
+  // S3/MinIO key of the user's profile photo. Set by a Manager / Super
+  // Admin during user creation or edit (the user can't change it
+  // themselves). Surfaced as a presigned URL on /me and the user list.
+  @Prop({ trim: true })
+  profileImageKey?: string;
+
+  // Set when a face template is enrolled (local embedding OR Azure
+  // person). Lets the FE show a "face login enabled" badge and gate the
   // re-enroll / remove actions without a second round-trip.
   @Prop()
   faceEnrolledAt?: Date;
+
+  // Azure Face staff login. Unlike patients (one PersonGroup per clinic),
+  // staff login is cross-clinic/pre-auth, so all staff live in a single
+  // global "staff" PersonGroup. These hold this user's Person id + its
+  // persisted face ids within that group. Only used when FACE_PROVIDER=azure.
+  @Prop({ type: String, index: true, sparse: true })
+  azureStaffPersonId?: string;
+
+  @Prop({ type: [String], default: undefined })
+  azureStaffFaceIds?: string[];
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);

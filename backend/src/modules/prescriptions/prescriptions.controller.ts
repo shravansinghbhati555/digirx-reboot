@@ -116,6 +116,9 @@ export class PrescriptionsController {
     return {
       _id: rx._id,
       createdAt: (rx as any).createdAt,
+      // Needed so the share page can load the logo from the public
+      // GET /clinics/:id/logo endpoint (same source the invoice uses).
+      clinicId: clinic?._id,
       clinicName: clinic?.name,
       clinicDisplayName: branding?.displayName,
       clinicLogoUrl: branding?.logoUrl,

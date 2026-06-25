@@ -82,7 +82,11 @@ export class BillingController {
   @Post('bills/:id/issue')
   @RequirePermissions(Permission.BillingWrite)
   async issue(@Req() req: AppRequest, @Param('id') id: string) {
-    return await this.billing.issueBill(req.context!.clinicId, id);
+    return await this.billing.issueBill(
+      req.context!.clinicId,
+      id,
+      req.context!.actorUserId,
+    );
   }
 
   @Post('bills/:id/void')
@@ -194,6 +198,29 @@ export class BillingController {
     );
     const url = await this.storage.presignGet({ key: doc.storageKey });
     return { url, expiresInSeconds: 300, documentId: doc._id };
+  }
+
+  // Mint a public, token-protected link to the invoice PDF so staff can
+  // send it to the patient over WhatsApp / SMS / email. Reuses the
+  // document-share infra: the bill PDF (a Document) is made shareable and
+  // a 60-day DocumentShare token is created; the public, unauthenticated
+  // GET /share/:token endpoint then serves the PDF.
+  @Post('bills/:id/share')
+  @RequirePermissions(Permission.BillingRead)
+  async shareBill(@Req() req: AppRequest, @Param('id') id: string) {
+    const docId = await this.billing.ensurePdfGenerated(
+      req.context!.clinicId,
+      id,
+      req.context!.actorUserId,
+    );
+    await this.documents.makeShareable(req.context!.clinicId, docId!.toHexString());
+    const share = await this.documents.createShare({
+      clinicId: req.context!.clinicId,
+      documentId: docId!.toHexString(),
+      expiresInSeconds: 60 * 24 * 60 * 60, // 60 days, same as prescription shares
+      createdBy: req.context!.actorUserId,
+    });
+    return { token: share.token, expiresAt: share.expiresAt };
   }
 
   @Get('catalog/services')

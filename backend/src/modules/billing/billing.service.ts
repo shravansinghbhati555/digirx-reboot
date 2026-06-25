@@ -3,6 +3,7 @@ import {
   forwardRef,
   Inject,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -30,11 +31,30 @@ import { Prescription } from '../prescriptions/schemas/prescription.schema';
 import { Patient } from '../patients/schemas/patient.schema';
 import { InventoryItem } from '../inventory/schemas/inventory-item.schema';
 import { InventoryService } from '../inventory/inventory.service';
+import { NotificationsService } from '../notifications/notifications.service';
+import { NotificationChannel } from '../notifications/schemas/notification-template.schema';
+import { renderTemplate } from '../notifications/template.utils';
 
 const CURRENCY_RE = /^[A-Z]{3}$/;
 
+// Default invoice message used when the clinic hasn't configured an
+// `invoice_issued` notification template. {{url}} is a 60-day public link
+// to the PDF (the backend's GET /share/:token, which redirects to the file).
+const FALLBACK_INVOICE_TEMPLATE =
+  'Hi {{patientName}}, your invoice {{billNo}} from {{clinicName}} is ready: {{url}}';
+
+// Public link to the bill PDF. Points at the BACKEND's unauthenticated
+// GET /share/:token endpoint (not the SPA), so set PUBLIC_API_URL to the
+// backend's externally reachable origin in production.
+function buildInvoiceShareUrl(token: string): string {
+  const base = (process.env.PUBLIC_API_URL || 'http://localhost:4000').replace(/\/+$/, '');
+  return `${base}/share/${token}`;
+}
+
 @Injectable()
 export class BillingService {
+  private readonly logger = new Logger(BillingService.name);
+
   constructor(
     @InjectModel(Bill.name) private readonly billModel: Model<Bill>,
     @InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
@@ -62,6 +82,9 @@ export class BillingService {
     private readonly pdf: PdfService,
     private readonly storage: StorageService,
     private readonly documents: DocumentsService,
+    // Global module — used to auto-deliver the invoice to the patient on
+    // issue (WhatsApp + email).
+    private readonly notifications: NotificationsService,
     // forwardRef breaks the BillingModule ↔ CreditNotesModule cycle: each
     // depends on the other (this for void-blocking; CN service for the Bill
     // schema). Nest resolves it after both modules have initialized.
@@ -351,7 +374,7 @@ export class BillingService {
     return bill;
   }
 
-  async issueBill(clinicId: Types.ObjectId, id: string) {
+  async issueBill(clinicId: Types.ObjectId, id: string, actorUserId?: Types.ObjectId) {
     const bill = await this.getBill(clinicId, id);
     if (bill.status !== BillStatus.Draft) {
       throw new BadRequestException('Only draft bills can be issued');
@@ -375,11 +398,127 @@ export class BillingService {
       { new: true },
     );
     if (updated) {
-      void this.ensurePdfGenerated(clinicId, updated._id.toHexString());
+      // Fire-and-forget: generate the PDF and auto-deliver the invoice to
+      // the patient (WhatsApp always; email too when on file). Runs through
+      // sendInvoiceToPatient — which generates the PDF first — so issuing
+      // never fails on a storage/send hiccup, and there's no double PDF gen.
+      void this.sendInvoiceToPatient(clinicId, updated._id.toHexString(), actorUserId);
       return updated;
     }
 
     return await this.getBill(clinicId, id);
+  }
+
+  /**
+   * Deliver an issued invoice to the patient: mints a 60-day public link to
+   * the PDF (same document-share infra as the manual "Share" button) and
+   * sends it over WhatsApp (when the patient has a phone) AND email (when
+   * they have an email). Both channels are independent and best-effort — a
+   * disabled/failing channel never blocks the other, and the whole method
+   * swallows errors so it's safe to call fire-and-forget from issueBill.
+   *
+   * Whether a message is actually delivered depends on the clinic's channel
+   * toggles + the configured NOTIFICATION_PROVIDER (console in dev = logged
+   * only; twilio in prod = real WhatsApp/email). The PDF is generated
+   * regardless, so the invoice always exists even if there's no one to send
+   * it to.
+   */
+  async sendInvoiceToPatient(
+    clinicId: Types.ObjectId,
+    id: string,
+    actorUserId?: Types.ObjectId,
+  ): Promise<void> {
+    try {
+      const bill = await this.getBill(clinicId, id);
+      // Only a real invoice (issued or paid) is ever sent.
+      if (bill.status !== BillStatus.Issued && bill.status !== BillStatus.Paid) {
+        return;
+      }
+
+      // Generate the PDF up front (idempotent) so the invoice exists even
+      // when the patient has no contact details to receive it.
+      const docId = await this.ensurePdfGenerated(clinicId, id, actorUserId);
+
+      const [patient, clinic] = await Promise.all([
+        this.patientModel.findOne({ _id: bill.patientId, clinicId }),
+        this.clinicModel.findById(clinicId),
+      ]);
+
+      const phone = (patient?.phones ?? [])
+        .map((p) => String(p ?? '').trim())
+        .find(Boolean);
+      const email = (patient?.emails ?? [])
+        .map((e) => String(e ?? '').trim())
+        .find(Boolean);
+      if (!phone && !email) {
+        this.logger.warn(
+          `[bill ${id}] patient has no phone/email — invoice PDF generated but not sent`,
+        );
+        return;
+      }
+
+      // 60-day public link to the PDF (same as the manual share button).
+      await this.documents.makeShareable(clinicId, docId.toHexString());
+      const share = await this.documents.createShare({
+        clinicId,
+        documentId: docId.toHexString(),
+        expiresInSeconds: 60 * 24 * 60 * 60,
+        createdBy: actorUserId,
+      });
+      const url = buildInvoiceShareUrl(share.token);
+
+      const body = renderTemplate(FALLBACK_INVOICE_TEMPLATE, {
+        patientName: patient?.fullName ?? 'there',
+        clinicName: clinic?.name ?? 'the clinic',
+        billNo: bill.billNo ?? 'Invoice',
+        url,
+      });
+
+      // dedupeKey is scoped to bill + token + channel so retries / a re-issue
+      // (which rotates the token) don't double-send the same link.
+      if (phone) {
+        await this.notifications
+          .enqueueSend({
+            clinicId,
+            branchId: bill.branchId,
+            channel: NotificationChannel.WhatsApp,
+            to: phone,
+            body,
+            dedupeKey: `bill:${id}:send:${share.token}:WHATSAPP`,
+            templateKey: 'invoice_issued',
+          })
+          .catch((e) =>
+            this.logger.warn(
+              `[bill ${id}] WhatsApp invoice send failed: ${e instanceof Error ? e.message : e}`,
+            ),
+          );
+      }
+      if (email) {
+        await this.notifications
+          .enqueueSend({
+            clinicId,
+            branchId: bill.branchId,
+            channel: NotificationChannel.Email,
+            to: email,
+            body,
+            dedupeKey: `bill:${id}:send:${share.token}:EMAIL`,
+            templateKey: 'invoice_issued',
+          })
+          .catch((e) =>
+            this.logger.warn(
+              `[bill ${id}] Email invoice send failed: ${e instanceof Error ? e.message : e}`,
+            ),
+          );
+      }
+
+      this.logger.log(
+        `[bill ${id}] invoice auto-sent (whatsapp=${!!phone} email=${!!email})`,
+      );
+    } catch (e) {
+      this.logger.warn(
+        `[bill ${id}] auto-send invoice failed: ${e instanceof Error ? e.message : e}`,
+      );
+    }
   }
 
   /**

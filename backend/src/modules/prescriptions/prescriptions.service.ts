@@ -258,7 +258,7 @@ export class PrescriptionsService {
 
   private async mapItems(clinicId: Types.ObjectId, dto: CreatePrescriptionDto) {
     if (!Array.isArray(dto.items) || dto.items.length === 0) {
-      throw new BadRequestException('items is required');
+      return [];
     }
     return await Promise.all(
       dto.items.map(async (it) => {

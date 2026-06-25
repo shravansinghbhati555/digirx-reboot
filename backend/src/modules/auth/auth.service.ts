@@ -162,6 +162,7 @@ export class AuthService {
           Permission.DashboardRead,
           Permission.ClinicRead,
           Permission.BranchRead,
+          Permission.UserRead,
           Permission.PatientRead,
           Permission.PatientWrite,
           Permission.AppointmentRead,
@@ -177,6 +178,18 @@ export class AuthService {
       // appointments, upload encounter / prescription documents.
       // No billing write (front desk handles money) and no inventory.
       {
+        // Default doctor: the four day-to-day tabs only — Availability,
+        // Appointments, Consultations, Patients. This is just the DEFAULT;
+        // a Manager / Super Admin can grant more (Billing, Reports, etc.)
+        // from Roles & Permissions and those tabs then appear for the
+        // doctor automatically.
+        //   - ClinicRead/BranchRead: needed for availability + branch context
+        //   - Patient*: Patients tab + register/edit
+        //   - Appointment*: Appointments tab + book/check-in
+        //   - Encounter*: Consultations tab
+        //   - Document*: view/attach prescription docs (no Documents tab —
+        //     doctors are blocklisted from that tab)
+        //   - SettingsAvailabilityRead: the Availability tab
         name: 'Doctor',
         permissions: [
           Permission.ClinicRead,
@@ -185,13 +198,10 @@ export class AuthService {
           Permission.PatientWrite,
           Permission.AppointmentRead,
           Permission.AppointmentWrite,
-          Permission.BillingRead,
           Permission.DocumentRead,
           Permission.DocumentWrite,
-          Permission.NotificationRead,
           Permission.EncounterRead,
           Permission.EncounterWrite,
-          Permission.ReportsRead,
           Permission.SettingsAvailabilityRead,
         ],
       },

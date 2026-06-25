@@ -47,6 +47,14 @@ export class Appointment {
   @Prop({ type: Date })
   endAt?: Date;
 
+  // The clinic timezone in effect when this appointment was booked. An
+  // appointment is a fixed UTC instant, so switching the clinic's
+  // timezone would otherwise re-show every appointment under the new
+  // zone. Tagging the booking timezone lets the day view scope to
+  // appointments booked under the CURRENT clinic timezone.
+  @Prop({ type: String, index: true })
+  bookingTimezone?: string;
+
   // QUEUE appointment fields
   @Prop({ type: String })
   queueDate?: string; // YYYY-MM-DD in clinic timezone

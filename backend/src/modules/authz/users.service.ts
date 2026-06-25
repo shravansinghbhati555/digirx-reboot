@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
@@ -13,6 +14,8 @@ import { Role } from './schemas/role.schema';
 import { User, UserStatus } from './schemas/user.schema';
 import { CreateUserDto } from './dto/create-user.dto';
 import { UpdateUserDto } from './dto/update-user.dto';
+import { DoctorAvailabilityRule } from '../availability/schemas/doctor-availability-rule.schema';
+import { StorageService } from '../storage/storage.service';
 
 // Roadmap 0.7: every new admin endpoint hashes at cost 12. The seed script
 // still uses 10 because changing it would invalidate existing dev passwords.
@@ -31,15 +34,20 @@ export type UserListItem = {
   registrationNumber?: string;
   qualifications?: string;
   faceEnrolledAt?: string;
+  profileImageUrl?: string;
 };
 
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(Role.name) private readonly roleModel: Model<Role>,
     @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
+    @InjectModel(DoctorAvailabilityRule.name) private readonly ruleModel: Model<DoctorAvailabilityRule>,
+    private readonly storage: StorageService,
   ) {}
 
   async list(clinicId: Types.ObjectId, query?: string): Promise<UserListItem[]> {
@@ -65,7 +73,17 @@ export class UsersService {
       roles.map((r) => [String(r._id), { _id: String(r._id), name: r.name }]),
     );
 
-    return users.map((u) => this.toListItem(u, roleMap));
+    const items = users.map((u) => this.toListItem(u, roleMap));
+    // Presign profile photos so the Manager sees current pictures in the
+    // user list / edit modal.
+    await Promise.all(
+      items.map(async (item, i) => {
+        const key = (users[i] as { profileImageKey?: string }).profileImageKey;
+        if (!key) return;
+        item.profileImageUrl = await this.storage.presignGet({ key }).catch(() => undefined);
+      }),
+    );
+    return items;
   }
 
   async create(
@@ -124,6 +142,20 @@ export class UsersService {
         );
       }
       throw err;
+    }
+
+    const roles = await this.roleModel.find({ _id: { $in: roleObjIds } });
+    const isDocOrManager = roles.some((r) => {
+      const name = (r.name || '').toLowerCase();
+      return name === 'doctor' || name === 'manager';
+    });
+
+    if (isDocOrManager) {
+      await this.createDefaultAvailabilityRules(
+        clinicId,
+        user._id,
+        branchObjIds,
+      );
     }
 
     return await this.findOneItem(clinicId, String(user._id));
@@ -323,5 +355,38 @@ export class UsersService {
         ? new Date(u.faceEnrolledAt).toISOString()
         : undefined,
     };
+  }
+
+  private async createDefaultAvailabilityRules(
+    clinicId: Types.ObjectId,
+    userId: Types.ObjectId,
+    branchIds: Types.ObjectId[],
+  ) {
+    // Weekdays Monday (1) through Friday (5)
+    // 9:00 AM (540 mins) to 5:00 PM (1020 mins)
+    const weekdays = [1, 2, 3, 4, 5];
+    const rulesToInsert = [];
+
+    for (const branchId of branchIds) {
+      for (const weekday of weekdays) {
+        rulesToInsert.push({
+          clinicId,
+          branchId,
+          doctorUserId: userId,
+          weekday,
+          windows: [{ startMinutes: 540, endMinutes: 1020 }],
+          slotMinutes: 15,
+          active: true,
+        });
+      }
+    }
+
+    if (rulesToInsert.length > 0) {
+      try {
+        await this.ruleModel.insertMany(rulesToInsert, { ordered: false });
+      } catch (err) {
+        this.logger.error('Error seeding default availability rules:', err);
+      }
+    }
   }
 }

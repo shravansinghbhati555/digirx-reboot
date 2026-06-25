@@ -247,7 +247,7 @@ function drawText(page: PDFPage, text: string, opts: DrawOpts) {
 
 @Injectable()
 export class PdfService {
-  constructor(private readonly storage: StorageService) {}
+  constructor(private readonly storage: StorageService) { }
 
   private async loadLogoFromStorage(key: string): Promise<Uint8Array | null> {
     try {
@@ -571,7 +571,11 @@ export class PdfService {
     const MINT_BG = rgb(240 / 255, 255 / 255, 240 / 255);
     const ACCENT_TEAL = brandPrimary ?? rgb(10 / 255, 185 / 255, 140 / 255);
     const TEXT_LIGHT = rgb(1, 1, 1);
-    const TEXT_DARK = DARK_TEAL;
+    // Invoice CONTENT (descriptions, amounts, totals, payment status) is
+    // always near-black for legibility — it must NOT follow the clinic's
+    // brand/theme color. The brand color (DARK_TEAL / ACCENT_TEAL) is used
+    // only for the header band, patterns, and accents.
+    const TEXT_DARK = rgb(0.1, 0.1, 0.1);
 
     const headerName = (input.clinicDisplayName || '').trim() || input.clinicName;
 
@@ -693,7 +697,7 @@ export class PdfService {
 
         drawText(page, 'FROM:', { x: MARGIN_X + 220, y: hy, size: 9, font: bold, color: TEXT_LIGHT });
         drawText(page, headerName, { x: MARGIN_X + 220, y: hy - 14, size: 10, font: bold, color: TEXT_LIGHT });
-        
+
         let fromY = hy - 26;
         if (input.branchName) {
           drawText(page, input.branchName, { x: MARGIN_X + 220, y: fromY, size: 9, font, color: TEXT_LIGHT });

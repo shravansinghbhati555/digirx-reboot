@@ -57,8 +57,8 @@ export class CreatePrescriptionItemDto {
 
 export class CreatePrescriptionDto {
   @IsArray()
-  @ArrayMinSize(1)
+  @IsOptional()
   @ValidateNested({ each: true })
   @Type(() => CreatePrescriptionItemDto)
-  items!: CreatePrescriptionItemDto[];
+  items?: CreatePrescriptionItemDto[];
 }

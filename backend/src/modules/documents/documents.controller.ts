@@ -1,4 +1,5 @@
-import { Body, Controller, Delete, Get, Param, Post, Query, Req } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Post, Query, Req, Res } from '@nestjs/common';
+import type { Response } from 'express';
 import type { AppRequest } from '../../common/types';
 import { RequirePermissions } from '../authz/require-permissions.decorator';
 import { Permission } from '../authz/permissions';
@@ -152,8 +153,8 @@ export class DocumentsController {
   @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async shareDownload(
     @Req() req: AppRequest,
+    @Res() res: Response,
     @Param('token') token: string,
-    @Query('inline') inline?: string,
   ) {
     const share = await this.documents.shareDownload(token, {
       ip: req.ip,
@@ -161,6 +162,6 @@ export class DocumentsController {
     });
     const doc = await this.documents.getById(share.clinicId, share.documentId.toHexString());
     const url = await this.storage.presignGet({ key: doc.storageKey });
-    return { url, expiresInSeconds: 300, inline: inline === 'true' };
+    return res.redirect(url);
   }
 }

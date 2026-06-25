@@ -145,10 +145,18 @@ export class AzureFaceProvider implements FaceProvider {
     if (!res.ok) {
       let detail = `HTTP ${res.status}`;
       try {
-        const j = (await res.json()) as { error?: { message?: string } };
-        if (j?.error?.message) detail = j.error.message;
-      } catch {
-        /* ignore */
+        const j = await res.json();
+
+        console.log(
+          'AZURE ERROR FULL:',
+          JSON.stringify(j, null, 2)
+        );
+
+        if (j?.error?.message) {
+          detail = j.error.message;
+        }
+      } catch (e) {
+        console.log('AZURE ERROR PARSE FAILED');
       }
       this.logger.error(`[azure] ✗ ${method} ${path} → ${res.status}: ${detail}`);
       // Map the common "no face" case to a 400 so the FE shows a
@@ -317,8 +325,7 @@ export class AzureFaceProvider implements FaceProvider {
       Array.isArray(ident) ? ident : [];
     const azureCandidates = result[0]?.candidates ?? [];
     this.logger.log(
-      `[azure] Identify returned ${azureCandidates.length} candidate(s): ${
-        azureCandidates.map((c) => `personId=${c.personId} confidence=${round4(c.confidence)}`).join(', ') || 'none'
+      `[azure] Identify returned ${azureCandidates.length} candidate(s): ${azureCandidates.map((c) => `personId=${c.personId} confidence=${round4(c.confidence)}`).join(', ') || 'none'
       }`,
     );
     if (azureCandidates.length === 0) {

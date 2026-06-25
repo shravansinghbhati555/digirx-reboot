@@ -1,8 +1,14 @@
-import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  Logger,
+} from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { FaceClient } from '../face-client.service';
 import { FaceEmbedding } from '../schemas/face-embedding.schema';
+import { UserFaceEmbedding } from '../../user-face/schemas/user-face-embedding.schema';
 import {
   FaceCandidate,
   FaceConfidenceBand,
@@ -22,6 +28,12 @@ const LOW_CONFIDENCE_THRESHOLD = parseFloat(process.env.FACE_LOW_THRESHOLD ?? '0
 const MIN_ENROLLMENT_FACE_CONFIDENCE = parseFloat(
   process.env.FACE_MIN_ENROLLMENT_CONFIDENCE ?? '0.7',
 );
+// At enroll time, a face this close to an ALREADY-registered face (another
+// patient in the clinic, or any staff account) is treated as the same
+// person and rejected — one physical face maps to exactly one identity.
+const DUPLICATE_THRESHOLD = parseFloat(
+  process.env.FACE_DUPLICATE_THRESHOLD ?? '0.62',
+);
 
 /**
  * OpenCV YuNet + SFace face provider. Talks to the face-svc Python
@@ -36,6 +48,11 @@ export class LocalFaceProvider implements FaceProvider {
   constructor(
     @InjectModel(FaceEmbedding.name)
     private readonly embeddingModel: Model<FaceEmbedding>,
+    // Staff gallery — same SFace embeddings, so a patient face can be
+    // checked against it directly to block "register as a patient when
+    // already registered as staff" (and vice versa).
+    @InjectModel(UserFaceEmbedding.name)
+    private readonly userEmbeddingModel: Model<UserFaceEmbedding>,
     private readonly faceClient: FaceClient,
   ) {}
 
@@ -57,6 +74,15 @@ export class LocalFaceProvider implements FaceProvider {
         'Multiple faces detected — only one person should be in the frame at enrollment',
       );
     }
+
+    // One physical face = one identity. Reject if this face is already
+    // registered to a DIFFERENT patient in this clinic, or to any staff
+    // account. (The current patient is excluded so re-enrollment works.)
+    await this.assertFaceNotAlreadyRegistered(
+      input.clinicId,
+      input.patientId,
+      embed.embedding,
+    );
 
     // One embedding per patient. Replace any prior so re-enrollment
     // overwrites the old vector cleanly.
@@ -128,6 +154,44 @@ export class LocalFaceProvider implements FaceProvider {
       clinicId: input.clinicId,
       patientId: input.patientId,
     });
+  }
+
+  /**
+   * Throw 409 if `embedding` matches a face already registered to another
+   * patient in this clinic, or to any staff account. Patient-vs-patient is
+   * scoped to the clinic (the same person may legitimately be a patient at
+   * two independent clinics); the staff gallery is global.
+   */
+  private async assertFaceNotAlreadyRegistered(
+    clinicId: Types.ObjectId,
+    patientId: Types.ObjectId,
+    embedding: number[],
+  ): Promise<void> {
+    // Another patient in this clinic (excluding this patient).
+    const patientRows = await this.embeddingModel
+      .find({ clinicId, patientId: { $ne: patientId } })
+      .select({ embedding: 1 })
+      .lean();
+    for (const row of patientRows) {
+      if (cosineSimilarity(embedding, row.embedding) >= DUPLICATE_THRESHOLD) {
+        throw new ConflictException(
+          'This face is already registered to another patient.',
+        );
+      }
+    }
+
+    // Any staff account (cross-system check).
+    const staffRows = await this.userEmbeddingModel
+      .find({})
+      .select({ embedding: 1 })
+      .lean();
+    for (const row of staffRows) {
+      if (cosineSimilarity(embedding, row.embedding as number[]) >= DUPLICATE_THRESHOLD) {
+        throw new ConflictException(
+          'This face is already registered to a staff account.',
+        );
+      }
+    }
   }
 }
 

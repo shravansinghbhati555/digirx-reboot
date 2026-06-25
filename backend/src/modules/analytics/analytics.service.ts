@@ -263,6 +263,17 @@ export class AnalyticsService {
           paidAt: { $gte: startUtc, $lte: endUtc },
         },
       },
+      // Drop payments whose bill was voided — a cancelled invoice's cash
+      // no longer counts toward collected revenue.
+      {
+        $lookup: {
+          from: 'bills',
+          localField: 'billId',
+          foreignField: '_id',
+          as: 'bill',
+        },
+      },
+      { $match: { 'bill.0.status': { $ne: BillStatus.Void } } },
       { $group: { _id: null, totalPaid: { $sum: '$amount' } } },
     ]);
     return out[0] ?? { totalPaid: 0 };

@@ -31,13 +31,20 @@ export class UpdatePatientDto {
   @IsOptional()
   @IsArray()
   @IsString({ each: true })
-  @Matches(/^\d{10}$/, { each: true, message: 'Each phone number must be exactly 10 digits' })
+  // See CreatePatientDto — country-agnostic 6–15 digit guard.
+  @Matches(/^\d{6,15}$/, { each: true, message: 'Each phone number must be 6 to 15 digits' })
   phones?: string[];
 
   @IsOptional()
   @IsArray()
   @IsEmail({}, { each: true })
   emails?: string[];
+
+  // ISO 3166-1 alpha-2 (e.g. "IN", "GB") — which country the patient is from.
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Z]{2}$/, { message: 'countryCode must be a 2-letter ISO code' })
+  countryCode?: string;
 
   @IsOptional()
   @IsMongoId()

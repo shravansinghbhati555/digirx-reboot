@@ -155,6 +155,11 @@ export class AppointmentsService {
     await this.assertDoctorAtBranch(clinicId, doctorId, branchId);
     await this.assertPatientInClinic(clinicId, patientId);
 
+    // Tag the appointment with the clinic timezone in effect at booking so
+    // the day view can scope appointments to the current clinic timezone.
+    const clinicForTz = await this.clinicModel.findById(clinicId).select({ timezone: 1 }).lean();
+    const bookingTimezone = (clinicForTz as { timezone?: string } | null)?.timezone || undefined;
+
     if (dto.type === AppointmentType.Time) {
       if (!dto.startAt || !dto.endAt)
         throw new BadRequestException(
@@ -285,6 +290,7 @@ export class AppointmentsService {
         source,
         notes: dto.notes,
         createdBy: actorUserId,
+        bookingTimezone,
       });
       return await this.finalizeBookingBill({
         appt: createdTime,
@@ -392,6 +398,7 @@ export class AppointmentsService {
         source,
         notes: dto.notes,
         createdBy: actorUserId,
+        bookingTimezone,
       });
       return await this.finalizeBookingBill({
         appt: createdQueue,
@@ -524,25 +531,47 @@ export class AppointmentsService {
     branchId: string,
     date: string,
     doctorId?: string,
+    viewerTz?: string,
   ) {
     const bId = new Types.ObjectId(branchId);
     const dId = doctorId ? new Types.ObjectId(doctorId) : undefined;
 
     const clinic = await this.clinicModel.findById(clinicId);
-    const tz = clinic?.timezone || 'UTC';
-    const { startUtc, endUtc } = computeClinicDayRange(date, tz);
+    const clinicTz = clinic?.timezone || 'UTC';
+    // The day WINDOW follows the viewer's display timezone (Option B);
+    // the bookingTimezone SCOPE below stays the clinic's authoritative tz.
+    let dayTz = clinicTz;
+    if (viewerTz) {
+      try { new Intl.DateTimeFormat('en-US', { timeZone: viewerTz }); dayTz = viewerTz; } catch { /* keep clinic tz */ }
+    }
+    const tz = clinicTz; // used for the bookingTimezone scope
+    const { startUtc, endUtc } = computeClinicDayRange(date, dayTz);
 
     return await this.apptModel
       .find({
         clinicId,
         branchId: bId,
         ...(dId ? { doctorId: dId } : {}),
-        $or: [
+        $and: [
           {
-            type: AppointmentType.Time,
-            startAt: { $gte: startUtc, $lte: endUtc },
+            $or: [
+              {
+                type: AppointmentType.Time,
+                startAt: { $gte: startUtc, $lte: endUtc },
+              },
+              { type: AppointmentType.Queue, queueDate: date },
+            ],
           },
-          { type: AppointmentType.Queue, queueDate: date },
+          // Scope to appointments booked under the CURRENT clinic timezone.
+          // Legacy/untagged appointments (no bookingTimezone) are still
+          // shown so nothing disappears before they're backfilled.
+          {
+            $or: [
+              { bookingTimezone: tz },
+              { bookingTimezone: { $exists: false } },
+              { bookingTimezone: null },
+            ],
+          },
         ],
       })
       .sort({ startAt: 1, queueNumber: 1 })

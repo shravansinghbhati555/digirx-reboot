@@ -200,10 +200,11 @@ export class TenancyService {
         },
       },
       branding: {
-        displayName:
-          patch.branding && 'displayName' in patch.branding
-            ? (patch.branding.displayName ?? null)
-            : current.branding.displayName,
+        // The branding DISPLAY NAME is part of the clinic's identity and is
+        // changed only via `updateClinicIdentity` (Manager / Super Admin).
+        // It is intentionally NOT editable through this general settings
+        // PATCH — always keep the current value here.
+        displayName: current.branding.displayName,
         logoUrl:
           patch.branding && 'logoUrl' in patch.branding
             ? (patch.branding.logoUrl ?? null)
@@ -218,7 +219,9 @@ export class TenancyService {
     clinic.settings = mergeClinicSettings(nextRaw) as any;
 
     // Top-level clinic profile fields (live on the Clinic doc, not settings).
-    if (patch.name !== undefined) clinic.name = patch.name;
+    // NOTE: the clinic `name` is intentionally NOT updated here — it is
+    // renamed only via `renameClinic`, which is role-gated to Manager /
+    // Super Admin. Ignore any `name` sent to this endpoint.
     if (patch.timezone !== undefined) {
       if (!isValidIanaZone(patch.timezone)) {
         throw new BadRequestException(`Invalid IANA timezone: ${patch.timezone}`);
@@ -226,6 +229,40 @@ export class TenancyService {
       clinic.timezone = patch.timezone;
     }
     if (patch.currency !== undefined) clinic.currency = patch.currency.toUpperCase();
+
+    await clinic.save();
+    return await this.getSettings(clinicId);
+  }
+
+  /**
+   * Update the clinic's identity — its `name` and/or branding display
+   * name. Authorization (Manager / Super Admin only) is enforced at the
+   * controller via the actor's roles; this method validates and persists.
+   */
+  async updateClinicIdentity(
+    clinicId: Types.ObjectId,
+    input: { name?: string; displayName?: string | null },
+  ) {
+    const clinic = await this.clinicModel.findById(clinicId);
+    if (!clinic) throw new NotFoundException('Clinic not found');
+
+    if (input.name !== undefined) {
+      const trimmed = (input.name ?? '').trim();
+      if (!trimmed) throw new BadRequestException('Clinic name is required');
+      if (trimmed.length > 120) throw new BadRequestException('Clinic name is too long');
+      clinic.name = trimmed;
+    }
+
+    if (input.displayName !== undefined) {
+      const dn = input.displayName === null ? null : String(input.displayName).trim();
+      if (dn && dn.length > 120) throw new BadRequestException('Display name is too long');
+      const settings = mergeClinicSettings(clinic.settings);
+      const nextRaw = {
+        ...(clinic.settings as Record<string, unknown>),
+        branding: { ...settings.branding, displayName: dn || null },
+      };
+      clinic.settings = mergeClinicSettings(nextRaw) as any;
+    }
 
     await clinic.save();
     return await this.getSettings(clinicId);

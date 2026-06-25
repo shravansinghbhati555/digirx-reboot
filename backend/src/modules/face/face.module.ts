@@ -9,6 +9,10 @@ import {
   FaceEmbedding,
   FaceEmbeddingSchema,
 } from './schemas/face-embedding.schema';
+import {
+  UserFaceEmbedding,
+  UserFaceEmbeddingSchema,
+} from '../user-face/schemas/user-face-embedding.schema';
 import { Patient, PatientSchema } from '../patients/schemas/patient.schema';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 import { AuthzModule } from '../authz/authz.module';
@@ -18,6 +22,9 @@ import { StorageModule } from '../storage/storage.module';
   imports: [
     MongooseModule.forFeature([
       { name: FaceEmbedding.name, schema: FaceEmbeddingSchema },
+      // Read-only access to the staff gallery for the enroll-time
+      // duplicate-face check (a patient face must not also be staff).
+      { name: UserFaceEmbedding.name, schema: UserFaceEmbeddingSchema },
       { name: Patient.name, schema: PatientSchema },
       { name: Clinic.name, schema: ClinicSchema },
     ]),

@@ -21,6 +21,11 @@ import {
   DocumentAccessAction,
   DocumentAccessLog,
 } from './schemas/document-access-log.schema';
+import { Patient } from '../patients/schemas/patient.schema';
+import { User } from '../authz/schemas/user.schema';
+import { Encounter } from '../encounters/schemas/encounter.schema';
+import { Prescription } from '../prescriptions/schemas/prescription.schema';
+import { Bill } from '../billing/schemas/bill.schema';
 
 const DEFAULT_SHARE_EXPIRY_SECONDS = 7 * 24 * 60 * 60;
 
@@ -39,6 +44,11 @@ export class DocumentsService {
     private readonly storageService: StorageService,
     @InjectModel(DocumentAccessLog.name)
     private readonly accessLogModel: Model<DocumentAccessLog>,
+    @InjectModel(Patient.name) private readonly patientModel: Model<Patient>,
+    @InjectModel(User.name) private readonly userModel: Model<User>,
+    @InjectModel(Encounter.name) private readonly encounterModel: Model<Encounter>,
+    @InjectModel(Prescription.name) private readonly prescriptionModel: Model<Prescription>,
+    @InjectModel(Bill.name) private readonly billModel: Model<Bill>,
     private readonly retention: RetentionService,
   ) { }
 
@@ -90,11 +100,106 @@ export class DocumentsService {
       query.$or = [{ fileName: regex }, { ownerName: regex }];
     }
 
-    return await this.docModel
+    const docs = await this.docModel
       .find(query)
       .sort({ createdAt: -1 })
       .limit(50)
+      .lean()
       .exec();
+
+    return await this.attachOwnerNames(clinicId, docs);
+  }
+
+  /**
+   * Resolve the human name for each document's owner. The denormalised
+   * `ownerName` on the doc is often empty (auto-generated PDFs, uploads
+   * that didn't pass a name), which is why the UI was showing
+   * "Unknown user". We resolve the real name and fall back to the stored
+   * value. Owner types map to a name as follows:
+   *   PATIENT      → patient.fullName
+   *   USER         → user.name
+   *   ENCOUNTER    → encounter.patientId → patient.fullName
+   *   PRESCRIPTION → prescription.patientId → patient.fullName
+   *   BILL         → bill.patientId → patient.fullName
+   * All done in batched `$in` queries (no per-doc round-trips).
+   */
+  private async attachOwnerNames<T extends { ownerType: DocumentOwnerType; ownerId: Types.ObjectId; ownerName?: string }>(
+    clinicId: Types.ObjectId,
+    docs: T[],
+  ): Promise<T[]> {
+    const idsByType = (type: DocumentOwnerType) =>
+      docs.filter((d) => d.ownerType === type).map((d) => d.ownerId);
+
+    const userIds = idsByType(DocumentOwnerType.User);
+    const encounterIds = idsByType(DocumentOwnerType.Encounter);
+    const prescriptionIds = idsByType(DocumentOwnerType.Prescription);
+    const billIds = idsByType(DocumentOwnerType.Bill);
+
+    // Resolve encounter/prescription/bill owners to their patient id first,
+    // so we can fold them into a single patient-name lookup.
+    const [encounters, prescriptions, bills] = await Promise.all([
+      encounterIds.length
+        ? this.encounterModel.find({ _id: { $in: encounterIds }, clinicId }).select({ patientId: 1 }).lean()
+        : Promise.resolve([]),
+      prescriptionIds.length
+        ? this.prescriptionModel.find({ _id: { $in: prescriptionIds }, clinicId }).select({ patientId: 1 }).lean()
+        : Promise.resolve([]),
+      billIds.length
+        ? this.billModel.find({ _id: { $in: billIds }, clinicId }).select({ patientId: 1 }).lean()
+        : Promise.resolve([]),
+    ]);
+
+    const encounterToPatient = new Map(encounters.map((e) => [String(e._id), String((e as { patientId?: Types.ObjectId }).patientId)]));
+    const prescriptionToPatient = new Map(prescriptions.map((p) => [String(p._id), String((p as { patientId?: Types.ObjectId }).patientId)]));
+    const billToPatient = new Map(bills.map((b) => [String(b._id), String((b as { patientId?: Types.ObjectId }).patientId)]));
+
+    // Every patient id we need a name for: direct PATIENT owners plus the
+    // ones derived from encounters/prescriptions/bills.
+    const patientIdStrings = new Set<string>([
+      ...idsByType(DocumentOwnerType.Patient).map((id) => String(id)),
+      ...encounterToPatient.values(),
+      ...prescriptionToPatient.values(),
+      ...billToPatient.values(),
+    ]);
+
+    const [patients, users] = await Promise.all([
+      patientIdStrings.size
+        ? this.patientModel
+            .find({ _id: { $in: Array.from(patientIdStrings).map((s) => new Types.ObjectId(s)) }, clinicId })
+            .select({ fullName: 1 })
+            .lean()
+        : Promise.resolve([]),
+      userIds.length
+        ? this.userModel.find({ _id: { $in: userIds }, clinicId }).select({ name: 1 }).lean()
+        : Promise.resolve([]),
+    ]);
+
+    const patientName = new Map(patients.map((p) => [String(p._id), (p as { fullName?: string }).fullName]));
+    const userName = new Map(users.map((u) => [String(u._id), (u as { name?: string }).name]));
+
+    const nameForPatientId = (pid?: string) => (pid ? patientName.get(pid) : undefined);
+
+    return docs.map((d) => {
+      let resolved: string | undefined;
+      switch (d.ownerType) {
+        case DocumentOwnerType.Patient:
+          resolved = patientName.get(String(d.ownerId));
+          break;
+        case DocumentOwnerType.User:
+          resolved = userName.get(String(d.ownerId));
+          break;
+        case DocumentOwnerType.Encounter:
+          resolved = nameForPatientId(encounterToPatient.get(String(d.ownerId)));
+          break;
+        case DocumentOwnerType.Prescription:
+          resolved = nameForPatientId(prescriptionToPatient.get(String(d.ownerId)));
+          break;
+        case DocumentOwnerType.Bill:
+          resolved = nameForPatientId(billToPatient.get(String(d.ownerId)));
+          break;
+      }
+      return { ...d, ownerName: resolved || d.ownerName };
+    });
   }
 
   async deleteDocument(clinicId: Types.ObjectId, id: string) {
@@ -159,6 +264,20 @@ export class DocumentsService {
     );
 
     return { ok: true as const, deletedAt: updated.deletedAt };
+  }
+
+  /**
+   * Flip a document to SHAREABLE_WITH_TOKEN so a public share link can be
+   * minted (createShare refuses INTERNAL_ONLY docs). Used by the invoice
+   * share flow to expose a bill PDF to the patient via a token link.
+   */
+  async makeShareable(clinicId: Types.ObjectId, id: string): Promise<void> {
+    if (!Types.ObjectId.isValid(id)) throw new NotFoundException('Document not found');
+    const res = await this.docModel.updateOne(
+      { _id: id, clinicId, deletedAt: null },
+      { $set: { access: DocumentAccess.ShareableWithToken } },
+    );
+    if (!res.matchedCount) throw new NotFoundException('Document not found');
   }
 
   async createShare(input: {

@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Delete, Get, Param, Patch, Post, Query, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Delete, ForbiddenException, Get, Param, Patch, Post, Query, Req, Res, UploadedFile, UseInterceptors } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Throttle } from '@nestjs/throttler';
 import type { Response } from 'express';
@@ -50,6 +50,29 @@ export class TenancyController {
   ) {
     const clinicId = this.tenancy.assertTenantMatch(id, req.context!.clinicId);
     return await this.tenancy.patchSettings(clinicId, body);
+  }
+
+  // The clinic's identity — its name and branding display name — is its
+  // public face, so editing it is restricted to Manager / Super Admin and
+  // kept off the general clinic:write surface. `@RequirePermissions()`
+  // just requires an authenticated tenant context; the role check below
+  // is the real gate.
+  @Patch('clinics/:id/identity')
+  @RequirePermissions()
+  async updateIdentity(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @Body() body: { name?: string; displayName?: string | null },
+  ) {
+    const roles = req.actorRoleNames ?? new Set<string>();
+    if (!roles.has('manager') && !roles.has('super admin')) {
+      throw new ForbiddenException('Only a Manager or Super Admin can edit the clinic name or display name');
+    }
+    const clinicId = this.tenancy.assertTenantMatch(id, req.context!.clinicId);
+    return await this.tenancy.updateClinicIdentity(clinicId, {
+      name: body?.name,
+      displayName: body?.displayName,
+    });
   }
 
   @Get('clinics/:id/branches')

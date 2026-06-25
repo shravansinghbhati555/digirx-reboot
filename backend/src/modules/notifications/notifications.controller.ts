@@ -9,6 +9,8 @@ import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { NotificationLog } from './schemas/notification-log.schema';
 import { NotificationTemplate } from './schemas/notification-template.schema';
+import { Patient } from '../patients/schemas/patient.schema';
+import { normalizePhone } from '../patients/patient.utils';
 
 @Controller('notifications')
 export class NotificationsController {
@@ -18,7 +20,63 @@ export class NotificationsController {
     private readonly logModel: Model<NotificationLog>,
     @InjectModel(NotificationTemplate.name)
     private readonly templateModel: Model<NotificationTemplate>,
+    @InjectModel(Patient.name)
+    private readonly patientModel: Model<Patient>,
   ) {}
+
+  /**
+   * Resolve a patient name for each log's `to` recipient by matching the
+   * phone against patient `normalizedPhones` (and email against `emails`).
+   * Returns plain objects with an added `recipientName` so the UI can show
+   * "Anjali Mehta · 98765…" instead of just the number. Batched into two
+   * `$in` queries — no per-log round trips.
+   */
+  private async attachRecipientNames(
+    clinicId: Types.ObjectId,
+    logs: NotificationLog[],
+  ): Promise<Array<NotificationLog & { recipientName?: string }>> {
+    const phoneKeys = new Set<string>();
+    const emailKeys = new Set<string>();
+    for (const l of logs) {
+      const to = (l.to ?? '').trim();
+      if (!to) continue;
+      if (to.includes('@')) emailKeys.add(to.toLowerCase());
+      else {
+        const np = normalizePhone(to);
+        if (np) phoneKeys.add(np);
+      }
+    }
+
+    const patients = (phoneKeys.size || emailKeys.size)
+      ? await this.patientModel
+          .find({
+            clinicId,
+            $or: [
+              ...(phoneKeys.size ? [{ normalizedPhones: { $in: Array.from(phoneKeys) } }] : []),
+              ...(emailKeys.size ? [{ emails: { $in: Array.from(emailKeys) } }] : []),
+            ],
+          })
+          .select({ fullName: 1, normalizedPhones: 1, emails: 1 })
+          .lean()
+      : [];
+
+    const byPhone = new Map<string, string>();
+    const byEmail = new Map<string, string>();
+    for (const p of patients) {
+      const name = (p as { fullName?: string }).fullName;
+      if (!name) continue;
+      for (const np of ((p as { normalizedPhones?: string[] }).normalizedPhones ?? [])) byPhone.set(np, name);
+      for (const em of ((p as { emails?: string[] }).emails ?? [])) byEmail.set(em.toLowerCase(), name);
+    }
+
+    return logs.map((l) => {
+      const to = (l.to ?? '').trim();
+      let recipientName: string | undefined;
+      if (to.includes('@')) recipientName = byEmail.get(to.toLowerCase());
+      else recipientName = byPhone.get(normalizePhone(to));
+      return { ...(l as any), recipientName };
+    });
+  }
 
   @Post('test')
   @RequirePermissions(Permission.NotificationWrite)
@@ -54,10 +112,12 @@ export class NotificationsController {
         { branchId: null },
       ];
     }
-    return await this.logModel
+    const logs = await this.logModel
       .find(filter)
       .sort({ createdAt: -1 })
-      .limit(limit);
+      .limit(limit)
+      .lean();
+    return await this.attachRecipientNames(req.context!.clinicId, logs as NotificationLog[]);
   }
 
   @Get('logs/:id')
@@ -69,9 +129,10 @@ export class NotificationsController {
     const log = await this.logModel.findOne({
       _id: id,
       clinicId: req.context!.clinicId,
-    });
+    }).lean();
     if (!log) throw new NotFoundException('Notification log not found');
-    return log;
+    const [withName] = await this.attachRecipientNames(req.context!.clinicId, [log as NotificationLog]);
+    return withName;
   }
 
   @Get('templates')

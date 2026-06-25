@@ -24,13 +24,24 @@ export class CreatePatientDto {
   @IsString({ each: true })
   @MinLength(1, { each: true })
   @MaxLength(32, { each: true })
-  @Matches(/^\d{10}$/, { each: true, message: 'Each phone number must be exactly 10 digits' })
+  // Country-agnostic: national numbers vary by country, so accept 6–15
+  // digits (E.164's max). The frontend validates the exact format per the
+  // clinic's country (libphonenumber) before sending; this is the loose
+  // server-side guard.
+  @Matches(/^\d{6,15}$/, { each: true, message: 'Each phone number must be 6 to 15 digits' })
   phones!: string[];
 
   @IsOptional()
   @IsArray()
   @IsEmail({}, { each: true })
   emails?: string[];
+
+  // ISO 3166-1 alpha-2 (e.g. "IN", "GB"). Set by the FE from the clinic's
+  // timezone so we record which country the patient/phone belongs to.
+  @IsOptional()
+  @IsString()
+  @Matches(/^[A-Z]{2}$/, { message: 'countryCode must be a 2-letter ISO code' })
+  countryCode?: string;
 
   @IsOptional()
   @IsMongoId()

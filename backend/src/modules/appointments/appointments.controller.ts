@@ -40,6 +40,10 @@ export class AppointmentsController {
     @Query('patientId') patientId?: string,
     @Query('doctorId') doctorId?: string,
     @Query('limit') limit?: string,
+    // The viewer's display timezone — used to compute the day window so
+    // each user's day view follows their own timezone (Option B). Falls
+    // back to the clinic timezone when omitted.
+    @Query('tz') tz?: string,
   ) {
     if (date && branchId) {
       return await this.appts.listByDate(
@@ -47,6 +51,7 @@ export class AppointmentsController {
         branchId,
         date,
         doctorId,
+        tz,
       );
     }
     return await this.appts.findAll(req.context!.clinicId, {

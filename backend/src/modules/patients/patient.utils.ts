@@ -9,9 +9,11 @@ export function normalizeName(name: string): string {
 }
 
 export function normalizePhone(phone: string): string {
-  // Keep digits only; store last 10 digits to match common local formats.
+  // Keep digits only. Cap at the last 15 (E.164 max) so international
+  // numbers aren't truncated; shorter national numbers pass through as-is.
+  // Used for the normalizedPhones search/dedup field.
   const digits = phone.replace(/[^\d]/g, '');
-  return digits.length > 10 ? digits.slice(-10) : digits;
+  return digits.length > 15 ? digits.slice(-15) : digits;
 }
 
 /**
