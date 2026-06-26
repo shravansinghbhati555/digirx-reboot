@@ -15,6 +15,8 @@ type ClinicBranding = {
   displayName: string | null;
   logoUrl: string | null;
   primaryColor: string | null;
+  upiId: string | null;
+  upiQrUrl: string | null;
 };
 
 type QuietHoursSettings = {
@@ -525,6 +527,8 @@ function ClinicTab() {
   const [displayName, setDisplayName] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
   const [primaryColor, setPrimaryColor] = useState('');
+  const [upiId, setUpiId] = useState('');
+  const [upiQrUrl, setUpiQrUrl] = useState('');
 
   // Modules
   const [faceRecognitionEnabled, setFaceRecognitionEnabled] = useState(false);
@@ -535,6 +539,8 @@ function ClinicTab() {
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoError, setLogoError] = useState<string | null>(null);
   const [logoTick, setLogoTick] = useState(0);
+
+
 
   const [saving, setSaving] = useState(false);
 
@@ -552,6 +558,8 @@ function ClinicTab() {
     setDisplayName(res.settings.branding?.displayName ?? '');
     setLogoUrl(res.settings.branding?.logoUrl ?? '');
     setPrimaryColor(res.settings.branding?.primaryColor ?? '');
+    setUpiId(res.settings.branding?.upiId ?? '');
+    setUpiQrUrl(res.settings.branding?.upiQrUrl ?? '');
     setFaceRecognitionEnabled(res.settings.modules?.faceRecognition?.enabled ?? false);
   }
 
@@ -581,9 +589,11 @@ function ClinicTab() {
       displayName.trim() !== (data.settings.branding?.displayName ?? '') ||
       logoUrl.trim() !== (data.settings.branding?.logoUrl ?? '') ||
       primaryColor.trim() !== (data.settings.branding?.primaryColor ?? '') ||
+      upiId.trim() !== (data.settings.branding?.upiId ?? '') ||
+      upiQrUrl.trim() !== (data.settings.branding?.upiQrUrl ?? '') ||
       faceRecognitionEnabled !== (data.settings.modules?.faceRecognition?.enabled ?? false)
     );
-  }, [data, name, timezone, currency, apptMode, slotMinutes, displayName, logoUrl, primaryColor, faceRecognitionEnabled]);
+  }, [data, name, timezone, currency, apptMode, slotMinutes, displayName, logoUrl, primaryColor, upiId, upiQrUrl, faceRecognitionEnabled]);
 
   // Logo upload is the only field that commits immediately (multipart
   // uploads don't queue cleanly), but we DELIBERATELY do not call full
@@ -605,6 +615,8 @@ function ClinicTab() {
                 displayName: prev.settings.branding?.displayName ?? null,
                 logoUrl: nextLogo || null,
                 primaryColor: prev.settings.branding?.primaryColor ?? null,
+                upiId: prev.settings.branding?.upiId ?? null,
+                upiQrUrl: prev.settings.branding?.upiQrUrl ?? null,
               },
             },
           }
@@ -660,6 +672,8 @@ function ClinicTab() {
     }
   }
 
+
+
   async function save() {
     if (!isDirty) return;
     setSaving(true); setError(null);
@@ -674,6 +688,7 @@ function ClinicTab() {
         branding: {
           displayName: displayName.trim() || null,
           primaryColor: primaryColor.trim() || null,
+          upiId: upiId.trim() || null,
         },
         modules: {
           faceRecognition: { enabled: faceRecognitionEnabled },
@@ -846,6 +861,13 @@ function ClinicTab() {
                   )}
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>UPI payment details</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <Field label="UPI ID" value={upiId} onChange={setUpiId} placeholder="e.g. clinicname@okaxis" />
             </div>
           </div>
 
@@ -1827,6 +1849,8 @@ type BranchAdmin = {
   slotsPerDay?: number;
   active: boolean;
   doctorCount: number;
+  upiId?: string;
+  upiQrUrl?: string;
 };
 
 function BranchesTab() {
@@ -1988,13 +2012,14 @@ function BranchSheet({ mode, initial, onClose, onSaved }: {
   onClose: () => void;
   onSaved: (b: BranchAdmin) => void;
 }) {
-  const { ctx } = useApp();
+  const { ctx, refreshMe } = useApp();
   const [name, setName] = useState(initial?.name ?? '');
   const [addressLine, setAddressLine] = useState(initial?.addressLine ?? '');
   const [phone, setPhone] = useState(initial?.phone ?? '');
   const [open, setOpen] = useState(initial?.open ?? '09:00');
   const [close, setClose] = useState(initial?.close ?? '18:00');
   const [slotsPerDay, setSlotsPerDay] = useState(String(initial?.slotsPerDay ?? 20));
+  const [upiId, setUpiId] = useState(initial?.upiId ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -2006,9 +2031,10 @@ function BranchSheet({ mode, initial, onClose, onSaved }: {
       phone.trim() !== (initial?.phone ?? '') ||
       open !== (initial?.open ?? '09:00') ||
       close !== (initial?.close ?? '18:00') ||
-      Number(slotsPerDay) !== (initial?.slotsPerDay ?? 20)
+      Number(slotsPerDay) !== (initial?.slotsPerDay ?? 20) ||
+      upiId.trim() !== (initial?.upiId ?? '')
     );
-  }, [mode, initial, name, addressLine, phone, open, close, slotsPerDay]);
+  }, [mode, initial, name, addressLine, phone, open, close, slotsPerDay, upiId]);
 
   async function submit() {
     if (!name.trim()) { setError('Branch name is required.'); return; }
@@ -2031,12 +2057,16 @@ function BranchSheet({ mode, initial, onClose, onSaved }: {
         open: open || undefined,
         close: close || undefined,
         slotsPerDay: slotsPerDay.trim() ? Math.max(0, Number(slotsPerDay) || 0) : undefined,
+        upiId: upiId.trim() || undefined,
       };
       const path = `/clinics/${encodeURIComponent(ctx.clinicId)}/branches`;
       const saved = mode === 'create'
         ? await apiPost<BranchAdmin>(ctx, path, body)
         : await apiPatch<BranchAdmin>(ctx, `${path}/${initial!._id}`, body);
       onSaved(saved);
+      if (mode === 'edit' && initial && initial._id === ctx.branchId) {
+        void refreshMe();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -2059,6 +2089,7 @@ function BranchSheet({ mode, initial, onClose, onSaved }: {
           <Field label="Branch name" value={name} onChange={setName} placeholder="e.g. Juhu" />
           <Field label="Full address" value={addressLine} onChange={setAddressLine} placeholder="Street, area, city — pincode" />
           <Field label="Phone number" value={phone} onChange={setPhone} placeholder="+91 22 XXXX XXXX" />
+          <Field label="UPI ID" value={upiId} onChange={setUpiId} placeholder="e.g. branchname@upi" />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
             <div>
               <label style={labelStyle}>Opens at</label>

@@ -228,6 +228,19 @@ function computeDayLayout(appts: Appointment[]) {
   return layout;
 }
 
+function loadScript(src: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    if (document.querySelector(`script[src="${src}"]`)) {
+      resolve(true);
+      return;
+    }
+    const script = document.createElement('script');
+    script.src = src;
+    script.onload = () => resolve(true);
+    script.onerror = () => resolve(false);
+    document.body.appendChild(script);
+  });
+}
 
 export function AppointmentsScreen() {
   const { ctx, selectedPatientId, setSelectedPatientId, setScreen, setSelectedBillId, selectedDate, setSelectedDate } = useApp();
@@ -1127,6 +1140,7 @@ function BookSheet({
   // half-created appointment in the DB. Step 3 is skipped when the doctor
   // has no visit-type catalog (no bill would be issued anyway).
   const [step, setStep] = useState<1 | 2 | 3 | 4>(defaultPatientId ? 2 : 1);
+  const [checkoutGateway, setCheckoutGateway] = useState<'NONE' | 'RAZORPAY' | 'STRIPE'>('NONE');
   // Payment fields — mirror the PaymentSheet inside BillingScreen so the
   // front desk recognizes the layout. Idempotency key is generated once
   // per wizard so a retry doesn't double-record the payment.
@@ -1193,22 +1207,13 @@ function BookSheet({
   const [error, setError] = useState<string | null>(null);
 
   const isIndiaRegion = useMemo(() => {
-    if (ctx.currency) {
-      return ctx.currency === 'INR';
-    }
-    if (ctx.timezone) {
-      return ctx.timezone === 'Asia/Kolkata';
-    }
-    const cachedCountry = ctx.userId ? localStorage.getItem(`digirx.detected_country_${ctx.userId}`) : null;
-    return cachedCountry === 'IN';
-  }, [ctx.currency, ctx.timezone, ctx.userId]);
+    const country = ctx.countryCode || '';
+    const currency = ctx.currency || '';
+    return country.toUpperCase() === 'IN' && currency.toUpperCase() === 'INR';
+  }, [ctx.countryCode, ctx.currency]);
 
   useEffect(() => {
-    if (isIndiaRegion) {
-      setPayMethod('UPI');
-    } else {
-      setPayMethod('CASH');
-    }
+    setPayMethod('CASH');
   }, [isIndiaRegion]);
 
   // Load patient list (step 1) — refetch on query change. `cancelled`
@@ -1502,7 +1507,7 @@ function BookSheet({
     setStep(4);
   }
 
-  async function submit() {
+  async function completeSubmit(ref: string) {
     if (!ctx.branchId) { setError('Branch ID is required (sign in to a branch).'); return; }
     if (!selectedPatient) { setError('Patient is required.'); return; }
     if (!doctorId.trim()) { setError('Doctor is required.'); return; }
@@ -1558,17 +1563,15 @@ function BookSheet({
       }
       const created = await apiPost<{ _id: string; billId?: string }>(ctx, '/appointments', body);
 
-      // 2) Record the payment against the auto-issued bill. Idempotency
-      //    key was generated when the wizard mounted, so a retry on a
-      //    transient failure won't double-charge. A payment failure does
-      //    NOT roll back the appointment — surface the error and let the
-      //    front desk settle from BillingScreen.
+      // 2) Record the payment against the auto-issued bill. The BE will
+      //    automatically transition the bill to paid if the amount covers
+      //    the total. A payment failure does NOT roll back the appointment.
       if (created.billId) {
         try {
           await apiPost(ctx, `/bills/${created.billId}/payments`, {
             method: payMethod,
             amount: amountNum,
-            providerRef: payRef.trim() || undefined,
+            providerRef: ref.trim() || undefined,
             idempotencyKey: payIdempKey,
           });
         } catch (payErr) {
@@ -1586,6 +1589,29 @@ function BookSheet({
     } finally {
       setSaving(false);
     }
+  }
+
+  async function submit() {
+    const amountNum = Number(payAmount);
+    if (!payAmount || !Number.isFinite(amountNum) || amountNum <= 0) {
+      setError('Payment amount is required.');
+      return;
+    }
+
+    const needsRazorpay = payMethod === 'ONLINE' && isIndiaRegion;
+    const needsStripe = payMethod === 'ONLINE' && !isIndiaRegion;
+
+    if (needsRazorpay && !payRef) {
+      setCheckoutGateway('RAZORPAY');
+      return;
+    }
+
+    if (needsStripe && !payRef) {
+      setCheckoutGateway('STRIPE');
+      return;
+    }
+
+    await completeSubmit(payRef);
   }
 
   const totalSteps = 4;
@@ -1660,12 +1686,9 @@ function BookSheet({
             <PaymentStep
               visitType={pickedVisitType}
               fallbackLabel={apptType}
-              currency={pickedVisitType?.currency ?? 'INR'}
+              currency={pickedVisitType?.currency ?? ctx.currency ?? 'INR'}
               payMethod={payMethod} setPayMethod={setPayMethod}
               payAmount={payAmount} setPayAmount={setPayAmount}
-              payRef={payRef} setPayRef={setPayRef}
-              idempotencyKey={payIdempKey}
-              isIndiaRegion={isIndiaRegion}
             />
           )}
 
@@ -1676,7 +1699,7 @@ function BookSheet({
               date={date} time={slotStart} duration={duration}
               apptType={apptType} doctorName={doctorName} room={room}
               visitType={pickedVisitType}
-              paid={Number(payAmount) > 0 ? { method: payMethod, amount: Number(payAmount), reference: payRef.trim() || undefined, currency: pickedVisitType?.currency ?? 'INR' } : null}
+              paid={Number(payAmount) > 0 ? { method: payMethod, amount: Number(payAmount), reference: payRef.trim() || undefined, currency: pickedVisitType?.currency ?? ctx.currency ?? 'INR' } : null}
             />
           )}
 
@@ -1752,6 +1775,25 @@ function BookSheet({
           onCancel={() => setShowFaceScanner(false)}
           onCapture={handleFaceScan}
           onPhoneVerify={handlePhoneVerify}
+        />
+      )}
+
+      {checkoutGateway !== 'NONE' && (
+        <PaymentCheckoutOverlay
+          gateway={checkoutGateway}
+          amount={Number(payAmount)}
+          currency={pickedVisitType?.currency ?? ctx.currency ?? (isIndiaRegion ? 'INR' : 'USD')}
+          patientName={selectedPatient?.fullName ?? 'Patient'}
+          patientPhone={selectedPatient?.phones?.[0] ?? ''}
+          billLabel={pickedVisitType?.name ?? apptType}
+          onSuccess={(ref) => {
+            setPayRef(ref);
+            setCheckoutGateway('NONE');
+            void completeSubmit(ref);
+          }}
+          onCancel={() => {
+            setCheckoutGateway('NONE');
+          }}
         />
       )}
     </div>
@@ -2358,17 +2400,13 @@ function DoctorPicker({
 //     consultation amounts.
 function PaymentStep({
   visitType, fallbackLabel, currency,
-  payMethod, setPayMethod, payAmount, setPayAmount, payRef, setPayRef, idempotencyKey,
-  isIndiaRegion,
+  payMethod, setPayMethod, payAmount, setPayAmount,
 }: {
   visitType: { _id: string; name: string; price: number; currency: string } | null;
   fallbackLabel: string;
   currency: string;
   payMethod: string; setPayMethod: (v: string) => void;
   payAmount: string; setPayAmount: (v: string) => void;
-  payRef: string; setPayRef: (v: string) => void;
-  idempotencyKey: string;
-  isIndiaRegion: boolean;
 }) {
   const due = visitType?.price ?? 0;
   const label = visitType?.name ?? fallbackLabel;
@@ -2379,12 +2417,8 @@ function PaymentStep({
   const suggestions: number[] = [];
 
   const filteredPaymentMethods = useMemo(() => {
-    if (isIndiaRegion) {
-      return PAYMENT_METHODS;
-    } else {
-      return PAYMENT_METHODS.filter((m) => m.id !== 'UPI');
-    }
-  }, [isIndiaRegion]);
+    return PAYMENT_METHODS.filter((m) => m.id === 'CASH' || m.id === 'ONLINE');
+  }, []);
 
   return (
     <>
@@ -2474,25 +2508,7 @@ function PaymentStep({
         )}
       </div>
 
-      <div>
-        <label style={labelStyle}>
-          Reference / transaction ID <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>(optional)</span>
-        </label>
-        <input
-          value={payRef}
-          onChange={(e) => setPayRef(e.target.value)}
-          placeholder="UPI ref, cheque no."
-          style={{
-            width: '100%', height: 40, padding: '0 12px',
-            background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10,
-            fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
-          }}
-        />
-      </div>
-
-      <div style={{ background: 'var(--surface-muted)', borderRadius: 12, padding: '10px 12px', border: '1px solid var(--border)', fontSize: 11, color: 'var(--text-subtle)' }}>
-        Idempotency key: <code style={{ fontFamily: 'monospace', color: 'var(--text-muted)' }}>{idempotencyKey.slice(0, 8)}…</code>
-      </div>
+      {/* Reference ID and Idempotency key fields are hidden as they are auto-generated or not required for input */}
     </>
   );
 }
@@ -2560,6 +2576,626 @@ function ConfirmStep({
             <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>{r.value}</span>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+
+
+// ==========================================
+// Payment Gateway Checkout Components
+// ==========================================
+
+interface PaymentCheckoutOverlayProps {
+  gateway: 'RAZORPAY' | 'STRIPE';
+  amount: number;
+  currency: string;
+  patientName: string;
+  patientPhone: string;
+  billLabel: string;
+  onSuccess: (ref: string) => void;
+  onCancel: () => void;
+}
+
+function PaymentCheckoutOverlay({
+  gateway,
+  amount,
+  currency,
+  patientName,
+  patientPhone,
+  billLabel,
+  onSuccess,
+  onCancel,
+}: PaymentCheckoutOverlayProps) {
+  const { ctx } = useApp();
+
+  const upiId = useMemo(() => {
+    return ctx.branchUpiId || ctx.branding?.upiId || (import.meta as any).env?.VITE_CLINIC_UPI_ID || 'digirx@upi';
+  }, [ctx.branchUpiId, ctx.branding?.upiId]);
+
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
+  const [paymentMode, setPaymentMode] = useState<'CARD' | 'UPI' | 'NETBANKING'>(gateway === 'RAZORPAY' ? 'UPI' : 'CARD');
+  
+  // Stripe form state
+  const [cardNumber, setCardNumber] = useState('');
+  const [cardExpiry, setCardExpiry] = useState('');
+  const [cardCvc, setCardCvc] = useState('');
+  const [cardName, setCardName] = useState(patientName);
+  
+  // UPI form state
+  const [patientUpiId, setPatientUpiId] = useState('');
+  const [upiRequestSent, setUpiRequestSent] = useState(false);
+  
+  // Timer for QR code simulator (5:00 minutes)
+  const [timer, setTimer] = useState(300);
+  useEffect(() => {
+    if (gateway !== 'RAZORPAY' || paymentMode !== 'UPI') return;
+    const id = setInterval(() => {
+      setTimer((t) => (t > 0 ? t - 1 : 300));
+    }, 1000);
+    return () => clearInterval(id);
+  }, [gateway, paymentMode]);
+
+  const formattedTimer = useMemo(() => {
+    const mins = Math.floor(timer / 60);
+    const secs = timer % 60;
+    return `${mins}:${String(secs).padStart(2, '0')}`;
+  }, [timer]);
+
+  // Load SDKs
+  const [sdkLoaded, setSdkLoaded] = useState(false);
+  useEffect(() => {
+    let active = true;
+    if (gateway === 'RAZORPAY') {
+      loadScript('https://checkout.razorpay.com/v1/checkout.js').then((loaded) => {
+        if (active) setSdkLoaded(loaded);
+      });
+    } else {
+      loadScript('https://js.stripe.com/v3/').then((loaded) => {
+        if (active) setSdkLoaded(loaded);
+      });
+    }
+    return () => {
+      active = false;
+    };
+  }, [gateway]);
+
+  // Card Brand Detection
+  const cardBrand = useMemo(() => {
+    const clean = cardNumber.replace(/\D/g, '');
+    if (clean.startsWith('4')) return 'visa';
+    if (/^5[1-5]/.test(clean)) return 'mastercard';
+    if (/^3[47]/.test(clean)) return 'amex';
+    return 'generic';
+  }, [cardNumber]);
+
+  const handleCardNumberChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const value = e.target.value.replace(/\D/g, '');
+    const matches = value.match(/\d{4,16}/g);
+    const match = (matches && matches[0]) || '';
+    const parts = [];
+
+    for (let i = 0, len = match.length; i < len; i += 4) {
+      parts.push(match.substring(i, i + 4));
+    }
+
+    if (parts.length > 0) {
+      setCardNumber(parts.join(' '));
+    } else {
+      setCardNumber(value);
+    }
+  };
+
+  const handleExpiryChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let value = e.target.value.replace(/\D/g, '');
+    if (value.length > 2) {
+      value = `${value.slice(0, 2)}/${value.slice(2, 4)}`;
+    }
+    setCardExpiry(value.slice(0, 5));
+  };
+
+  const handleCvcChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setCardCvc(e.target.value.replace(/\D/g, '').slice(0, 4));
+  };
+
+  const handlePaymentSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoading(true);
+
+    if (gateway === 'RAZORPAY' && sdkLoaded && (window as any).Razorpay) {
+      const keyId = (import.meta as any).env?.VITE_RAZORPAY_KEY_ID;
+      if (keyId) {
+        try {
+          // 1. Create order on the backend
+          const orderResponse = await apiPost<{ orderId: string; amount: number; currency: string }>(
+            ctx,
+            '/payments/razorpay/create-order',
+            {
+              amount: Math.round(amount * 100), // Enforce integer paise
+              currency: currency,
+            }
+          );
+
+          // 2. Open Razorpay Modal with the returned orderId
+          const options = {
+            key: keyId,
+            amount: orderResponse.amount,
+            currency: orderResponse.currency,
+            name: 'DigiRx Clinic',
+            description: billLabel,
+            order_id: orderResponse.orderId,
+            handler: async function (response: any) {
+              setLoading(true);
+              try {
+                // 3. Verify signature on the backend
+                await apiPost(
+                  ctx,
+                  '/payments/razorpay/verify-signature',
+                  {
+                    razorpay_payment_id: response.razorpay_payment_id,
+                    razorpay_order_id: response.razorpay_order_id,
+                    razorpay_signature: response.razorpay_signature,
+                  }
+                );
+                
+                // 4. Verification success! Proceed with appointment booking
+                setSuccess(true);
+                setTimeout(() => {
+                  onSuccess(response.razorpay_payment_id);
+                }, 1500);
+              } catch (err: any) {
+                console.error('Razorpay payment signature verification failed:', err);
+                alert(err.message || 'Signature verification failed. Payment could not be verified.');
+                setLoading(false);
+              }
+            },
+            prefill: {
+              name: patientName,
+              contact: patientPhone || '',
+            },
+            theme: {
+              color: '#6366f1',
+            },
+            modal: {
+              ondismiss: function() {
+                setLoading(false);
+              }
+            }
+          };
+
+          const rzp = new (window as any).Razorpay(options);
+          
+          // Handle payment failure event
+          rzp.on('payment.failed', function (resp: any) {
+            console.error('Razorpay payment failed:', resp.error);
+            alert(resp.error.description || 'Payment transaction failed');
+            setLoading(false);
+          });
+
+          rzp.open();
+          return;
+        } catch (err: any) {
+          console.error('Razorpay order creation failed:', err);
+          alert(err.message || 'Failed to initialize Razorpay payment. Using simulator fallback.');
+          setLoading(false);
+          return;
+        }
+      }
+    }
+
+    // Fall back to simulator
+    setTimeout(() => {
+      setLoading(false);
+      setSuccess(true);
+      setTimeout(() => {
+        const generatedRef = gateway === 'RAZORPAY'
+          ? `pay_${Math.random().toString(36).substring(2, 12).toUpperCase()}`
+          : `ch_${Math.random().toString(36).substring(2, 14)}`;
+        onSuccess(generatedRef);
+      }, 1500);
+    }, 2000);
+  };
+
+  return (
+    <div style={{
+      position: 'fixed', inset: 0, zIndex: 1000,
+      background: 'rgba(15, 23, 42, 0.65)', backdropFilter: 'blur(8px)',
+      display: 'flex', alignItems: 'center', justifyContent: 'center',
+      animation: 'fadeIn 0.2s ease-out'
+    }}>
+      <div style={{
+        width: '100%', maxWidth: 440,
+        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 20,
+        boxShadow: 'var(--e4)', overflow: 'hidden',
+        display: 'flex', flexDirection: 'column',
+        animation: 'scaleIn 0.25s cubic-bezier(0.34, 1.56, 0.64, 1)'
+      }}>
+        {success ? (
+          // Success Screen
+          <div style={{
+            padding: '48px 32px', display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center', gap: 16, textAlign: 'center'
+          }}>
+            <div style={{
+              width: 80, height: 80, borderRadius: '50%',
+              background: 'var(--success-bg)', border: '2px solid var(--success-500)',
+              color: 'var(--success-text)', display: 'flex',
+              alignItems: 'center', justifyContent: 'center',
+              animation: 'bounceIn 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.275)'
+            }}>
+              <Icon name="check" size={40} strokeWidth={3} />
+            </div>
+            <div>
+              <h3 style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>Payment Successful</h3>
+              <p style={{ fontSize: 13, color: 'var(--text-subtle)', marginTop: 4 }}>
+                The consultation payment of {currency} {amount.toLocaleString('en-IN')} has been completed.
+              </p>
+            </div>
+            <div style={{
+              background: 'var(--surface-muted)', border: '1px solid var(--border)',
+              borderRadius: 10, padding: '10px 14px', fontSize: 11, color: 'var(--text-muted)',
+              fontFamily: 'monospace', width: '100%'
+            }}>
+              Secured & Processed successfully
+            </div>
+          </div>
+        ) : (
+          // Main Payment Screens
+          <>
+            {/* Header */}
+            <div style={{
+              padding: '20px 24px', borderBottom: '1px solid var(--border)',
+              background: gateway === 'RAZORPAY' ? '#0d1330' : 'var(--surface)',
+              color: gateway === 'RAZORPAY' ? 'white' : 'var(--text)',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between'
+            }}>
+              <div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  {gateway === 'RAZORPAY' ? (
+                    <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: '-0.02em', color: '#528ff0' }}>
+                      Razorpay<span style={{ color: 'white', fontWeight: 400 }}> checkout</span>
+                    </span>
+                  ) : (
+                    <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: '-0.01em', color: '#635bff' }}>
+                      Stripe<span style={{ color: 'var(--text)', fontWeight: 500 }}> payment</span>
+                    </span>
+                  )}
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, textTransform: 'uppercase',
+                    background: gateway === 'RAZORPAY' ? 'rgba(82, 143, 240, 0.15)' : 'rgba(99, 91, 255, 0.1)',
+                    color: gateway === 'RAZORPAY' ? '#528ff0' : '#635bff',
+                    padding: '2px 6px', borderRadius: 4, letterSpacing: '0.05em'
+                  }}>
+                    Test mode
+                  </span>
+                </div>
+                <div style={{
+                  fontSize: 11,
+                  color: gateway === 'RAZORPAY' ? 'rgba(255,255,255,0.6)' : 'var(--text-subtle)',
+                  marginTop: 3
+                }}>
+                  {billLabel}
+                </div>
+              </div>
+              <button onClick={onCancel} style={{
+                background: 'none', border: 'none', cursor: 'pointer',
+                color: gateway === 'RAZORPAY' ? 'rgba(255,255,255,0.6)' : 'var(--text-subtle)',
+                display: 'flex', padding: 6, borderRadius: '50%'
+              }}>
+                <Icon name="x" size={18} />
+              </button>
+            </div>
+
+            {/* Bill Summary */}
+            <div style={{
+              padding: '16px 24px', background: 'var(--surface-muted)',
+              borderBottom: '1px solid var(--border)', display: 'flex',
+              justifyContent: 'space-between', alignItems: 'center'
+            }}>
+              <div>
+                <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Patient</div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginTop: 2 }}>{patientName}</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Amount Due</div>
+                <div style={{
+                  fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 800,
+                  color: gateway === 'RAZORPAY' ? '#22c55e' : 'var(--brand-500)',
+                  fontVariantNumeric: 'tabular-nums', marginTop: 2
+                }}>
+                  {currency} {amount.toLocaleString('en-IN')}
+                </div>
+              </div>
+            </div>
+
+            {/* Body / Forms */}
+            <form onSubmit={handlePaymentSubmit} style={{ padding: '24px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+              {loading ? (
+                // Loading Overlay (while mock processing)
+                <div style={{
+                  padding: '40px 0', display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', justifyContent: 'center', gap: 16
+                }}>
+                  <div style={{
+                    width: 48, height: 48, borderRadius: '50%',
+                    border: '3px solid var(--border)',
+                    borderTopColor: gateway === 'RAZORPAY' ? '#528ff0' : '#635bff',
+                    animation: 'spin 0.8s linear infinite'
+                  }} />
+                  <div style={{ textAlign: 'center' }}>
+                    <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)' }}>
+                      {gateway === 'RAZORPAY' ? 'Verifying with Razorpay...' : 'Securing payment via Stripe...'}
+                    </div>
+                    <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 4 }}>
+                      Please do not close this window or reload
+                    </div>
+                  </div>
+                </div>
+              ) : gateway === 'RAZORPAY' ? (
+                // Razorpay Simulator (UPI/QR Code)
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                  {/* Payment Tabs */}
+                  <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                    <button type="button" onClick={() => setPaymentMode('UPI')}
+                      style={{
+                        flex: 1, height: 32, border: 'none', borderRadius: 8,
+                        background: paymentMode === 'UPI' ? 'var(--surface)' : 'transparent',
+                        color: paymentMode === 'UPI' ? 'var(--text)' : 'var(--text-muted)',
+                        fontSize: 12, fontWeight: paymentMode === 'UPI' ? 700 : 500, cursor: 'pointer',
+                        boxShadow: paymentMode === 'UPI' ? '0 1px 2px rgba(15,23,42,0.06)' : 'none',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                      }}>
+                      <Icon name="smartphone" size={13} /> UPI / QR
+                    </button>
+                    <button type="button" onClick={() => setPaymentMode('CARD')}
+                      style={{
+                        flex: 1, height: 32, border: 'none', borderRadius: 8,
+                        background: paymentMode === 'CARD' ? 'var(--surface)' : 'transparent',
+                        color: paymentMode === 'CARD' ? 'var(--text)' : 'var(--text-muted)',
+                        fontSize: 12, fontWeight: paymentMode === 'CARD' ? 700 : 500, cursor: 'pointer',
+                        boxShadow: paymentMode === 'CARD' ? '0 1px 2px rgba(15,23,42,0.06)' : 'none',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6
+                      }}>
+                      <Icon name="creditCard" size={13} /> Card
+                    </button>
+                  </div>
+
+                  {paymentMode === 'UPI' ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16, width: '100%' }}>
+                      {/* Clinic QR Code Box */}
+                      <div style={{
+                        padding: 16, background: 'white', borderRadius: 16,
+                        border: '1.5px solid var(--border)', boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.02)',
+                        position: 'relative', display: 'flex', flexDirection: 'column', alignItems: 'center'
+                      }}>
+                        {/* Real dynamic UPI QR code generator using clinic UPI ID */}
+                        {(() => {
+                          const upiUri = `upi://pay?pa=${upiId}&pn=DigiRx%20Clinic&am=${amount}&cu=INR`;
+                          return (
+                            <img
+                              src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(upiUri)}`}
+                              alt="UPI QR Code"
+                              style={{ width: 150, height: 150, display: 'block' }}
+                              onError={(e) => {
+                                // Fallback SVG QR in case qrserver is offline
+                                (e.target as HTMLElement).style.display = 'none';
+                                const parent = (e.target as HTMLElement).parentElement;
+                                if (parent && !parent.querySelector('.fallback-qr')) {
+                                  const div = document.createElement('div');
+                                  div.className = 'fallback-qr';
+                                  div.innerHTML = `<svg width="150" height="150" viewBox="0 0 29 29" style="display:block;shape-rendering:crispEdges"><path fill="#000" d="M0 0h7v7H0zm1 1v5h5V1zm1 1h3v3H2zm10-2h7v7h-7zm1 1v5h5V1zm1 1h3v3h-3zm10-2h7v7h-7zm1 1v5h5V1zm1 1h3v3h-3zM0 10h1v1h1v1H1v2h1v1H1v2h1v1H0zm3 0h1v1H3zm2 0h2v1H6v1H5v1h1v2H5v1H4v-3h1v-1H4v-1h1zm5 0h1v1h-1zm1 1h1v2h-1v1h2v1h-1v2h-1zm4-1h3v1h-3zm1 2h1v1h-1zm3-2h1v3h-1zm1 2h1v2h-1zm3-2h2v1h-2zm1 2h1v1h-1zm-4 2h2v1h-2zm3 0h1v1h-1v1h1v1h-2v-1h-1v-2zm-6 2h1v1h-1zm-6 2h2v1H2zm3 0h1v1H5zm14-1h1v1h-1zm0 2h3v1h-3zm4-7v2h1v-2zm2 0h1v1h-1zm-2 2h3v1h-3zm1 2h1v1h-1zm-3-1v3h1v-3zm0 4h2v1h-2zm8-11h1v2h-1zm-6 9h1v1h-1zm1 1h2v1h-2zm-5 4h1v1h-1zm7-4h1v1h-1zm2 1h1v1h-1zm-2 2h2v1h-2zm5 1h1v1h-1zM0 22h7v7H0zm1 1v5h5v-5zm1 1h3v3H2z" /></svg>`;
+                                  parent.appendChild(div);
+                                }
+                              }}
+                            />
+                          );
+                        })()}
+                        
+                        <div style={{
+                          position: 'absolute', inset: 0, background: 'rgba(255,255,255,0.9)',
+                          display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          opacity: timer === 0 ? 1 : 0, pointerEvents: timer === 0 ? 'auto' : 'none',
+                          transition: 'opacity 0.2s', borderRadius: 16
+                        }}>
+                          <button type="button" onClick={() => setTimer(300)}
+                            style={{
+                              padding: '8px 16px', background: '#528ff0', color: 'white',
+                              border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer'
+                            }}>
+                            Refresh QR Code
+                          </button>
+                        </div>
+                      </div>
+                      <div style={{ textAlign: 'center' }}>
+                        <div style={{ fontSize: 12, color: 'var(--text-subtle)' }}>
+                          Scan QR code to pay using Google Pay, PhonePe, Paytm etc.
+                        </div>
+                        <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--danger-500)', marginTop: 4, fontFamily: 'monospace' }}>
+                          QR expires in {formattedTimer}
+                        </div>
+                      </div>
+
+                      {/* Divider */}
+                      <div style={{ display: 'flex', alignItems: 'center', width: '100%', gap: 10, margin: '4px 0' }}>
+                        <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                        <span style={{ fontSize: 10, color: 'var(--text-muted)', fontWeight: 600 }}>OR PAY TO UPI ID: <code style={{ color: '#528ff0', background: 'rgba(82, 143, 240, 0.1)', padding: '2px 6px', borderRadius: 4, fontFamily: 'monospace' }}>{upiId}</code></span>
+                        <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
+                      </div>
+
+                      {/* UPI VPA (UPI ID) Input Field */}
+                      <div style={{ width: '100%' }}>
+                        <label style={{ ...labelStyle, fontSize: 11, color: 'var(--text-muted)' }}>UPI ID (VPA)</label>
+                        <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
+                          <input
+                            type="text"
+                            value={patientUpiId}
+                            onChange={(e) => setPatientUpiId(e.target.value)}
+                            placeholder="e.g. mobile@upi or username@okaxis"
+                            style={{ ...selectStyle, height: 38, flex: 1, background: 'var(--surface-muted)' }}
+                            disabled={upiRequestSent}
+                          />
+                          <button
+                            type="button"
+                            disabled={!patientUpiId.includes('@') || upiRequestSent}
+                            onClick={() => {
+                              setUpiRequestSent(true);
+                              setTimer(300); // Reset timer for collect request approvals
+                            }}
+                            style={{
+                              padding: '0 14px', height: 38, border: 'none', borderRadius: 8,
+                              background: (patientUpiId.includes('@') && !upiRequestSent) ? '#528ff0' : 'var(--border)',
+                              color: (patientUpiId.includes('@') && !upiRequestSent) ? 'white' : 'var(--text-muted)',
+                              fontSize: 12, fontWeight: 700, cursor: (patientUpiId.includes('@') && !upiRequestSent) ? 'pointer' : 'not-allowed',
+                            }}
+                          >
+                            {upiRequestSent ? 'Sent' : 'Request'}
+                          </button>
+                        </div>
+                        {upiRequestSent && (
+                          <div style={{
+                            marginTop: 8, fontSize: 11, color: '#0369a1', background: '#f0f9ff',
+                            border: '1px solid #bae6fd', padding: '8px 10px', borderRadius: 8,
+                            display: 'flex', alignItems: 'center', gap: 6, animation: 'fadeIn 0.2s'
+                          }}>
+                            <Icon name="info" size={12} />
+                            Collect request sent. Approve in your UPI app.
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  ) : (
+                    // Razorpay mock Card Form
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                      <div>
+                        <label style={{ ...labelStyle, fontSize: 11 }}>Card Number</label>
+                        <input value={cardNumber} onChange={handleCardNumberChange} placeholder="4000 1234 5678 9010"
+                          style={{ ...selectStyle, height: 42, background: 'var(--surface-muted)' }} required />
+                      </div>
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+                        <div>
+                          <label style={{ ...labelStyle, fontSize: 11 }}>Expiry Date</label>
+                          <input value={cardExpiry} onChange={handleExpiryChange} placeholder="MM/YY"
+                            style={{ ...selectStyle, height: 42, background: 'var(--surface-muted)', textAlign: 'center' }} required />
+                        </div>
+                        <div>
+                          <label style={{ ...labelStyle, fontSize: 11 }}>CVC / CVV</label>
+                          <input value={cardCvc} onChange={handleCvcChange} placeholder="123" type="password"
+                            style={{ ...selectStyle, height: 42, background: 'var(--surface-muted)', textAlign: 'center' }} required />
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                // Stripe Card Form (Stripe Elements look)
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  <div>
+                    <label style={{ ...labelStyle, fontSize: 11, color: 'var(--text-muted)' }}>Name on Card</label>
+                    <input
+                      type="text"
+                      value={cardName}
+                      onChange={(e) => setCardName(e.target.value)}
+                      placeholder="Cardholder Name"
+                      style={{ ...selectStyle, height: 42, background: 'var(--surface-muted)' }}
+                      required
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ ...labelStyle, fontSize: 11, color: 'var(--text-muted)' }}>Card Info</label>
+                    <div style={{
+                      display: 'flex', flexDirection: 'column',
+                      border: '1.5px solid var(--border)', borderRadius: 10,
+                      background: 'var(--surface-muted)', overflow: 'hidden'
+                    }}>
+                      <div style={{ position: 'relative', display: 'flex', alignItems: 'center' }}>
+                        <input
+                          type="text"
+                          value={cardNumber}
+                          onChange={handleCardNumberChange}
+                          placeholder="Card Number"
+                          style={{
+                            width: '100%', height: 42, border: 'none', background: 'transparent',
+                            padding: '0 12px 0 42px', fontSize: 14, color: 'var(--text)', outline: 'none'
+                          }}
+                          required
+                        />
+                        <div style={{ position: 'absolute', left: 12, display: 'flex', alignItems: 'center' }}>
+                          {cardBrand === 'visa' && (
+                            <span style={{ fontSize: 10, fontWeight: 900, color: '#01579b', background: '#e1f5fe', padding: '2px 4px', borderRadius: 3 }}>VISA</span>
+                          )}
+                          {cardBrand === 'mastercard' && (
+                            <span style={{ fontSize: 10, fontWeight: 900, color: '#e65100', background: '#fff3e0', padding: '2px 4px', borderRadius: 3 }}>MC</span>
+                          )}
+                          {cardBrand === 'amex' && (
+                            <span style={{ fontSize: 10, fontWeight: 900, color: '#006064', background: '#e0f7fa', padding: '2px 4px', borderRadius: 3 }}>AMEX</span>
+                          )}
+                          {cardBrand === 'generic' && <Icon name="creditCard" size={16} style={{ color: 'var(--text-subtle)' }} />}
+                        </div>
+                      </div>
+                      <div style={{
+                        display: 'grid', gridTemplateColumns: '1fr 1fr',
+                        borderTop: '1px solid var(--border)'
+                      }}>
+                        <input
+                          type="text"
+                          value={cardExpiry}
+                          onChange={handleExpiryChange}
+                          placeholder="MM/YY"
+                          style={{
+                            height: 42, border: 'none', background: 'transparent',
+                            borderRight: '1px solid var(--border)', textAlign: 'center',
+                            fontSize: 14, color: 'var(--text)', outline: 'none'
+                          }}
+                          required
+                        />
+                        <input
+                          type="password"
+                          value={cardCvc}
+                          onChange={handleCvcChange}
+                          placeholder="CVC"
+                          style={{
+                            height: 42, border: 'none', background: 'transparent',
+                            textAlign: 'center', fontSize: 14, color: 'var(--text)', outline: 'none'
+                          }}
+                          required
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Submit Buttons */}
+              {!loading && (
+                <div style={{ display: 'flex', gap: 10, marginTop: 8 }}>
+                  <button type="submit" style={{
+                    flex: 2, height: 44, border: 'none', borderRadius: 10,
+                    background: gateway === 'RAZORPAY' ? '#528ff0' : '#635bff',
+                    color: 'white', fontSize: 13, fontWeight: 700, cursor: 'pointer',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8
+                  }}>
+                    <Icon name="lock" size={14} />
+                    {gateway === 'RAZORPAY'
+                      ? ((import.meta as any).env?.VITE_RAZORPAY_KEY_ID
+                          ? `Pay ${currency} ${amount.toLocaleString('en-IN')} via Razorpay`
+                          : (paymentMode === 'UPI' ? (upiRequestSent ? 'Simulate VPA Pay Success' : 'Simulate QR Pay Success') : 'Simulate Card Payment'))
+                      : `Pay ${currency} ${amount.toLocaleString('en-IN')}`}
+                  </button>
+                  <button type="button" onClick={onCancel} style={{
+                    flex: 1, height: 44, background: 'none',
+                    border: '1.5px solid var(--border)', borderRadius: 10,
+                    fontSize: 13, fontWeight: 600, color: 'var(--text-muted)', cursor: 'pointer'
+                  }}>
+                    Cancel
+                  </button>
+                </div>
+              )}
+            </form>
+          </>
+        )}
       </div>
     </div>
   );

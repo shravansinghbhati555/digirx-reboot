@@ -813,7 +813,7 @@ function SignUpStep({
 
         <FormGroup label="Your full name">
           <InputWrap icon="mail">
-            <input type="text" placeholder="Dr. Jane Doe" value={adminName} onChange={(e) => setAdminName(e.target.value)} autoComplete="name"
+            <input type="text" placeholder="Jane Doe" value={adminName} onChange={(e) => setAdminName(e.target.value)} autoComplete="name"
               style={inputStyle(!!errors.adminName)} />
           </InputWrap>
           {errors.adminName && <FieldError>{errors.adminName}</FieldError>}

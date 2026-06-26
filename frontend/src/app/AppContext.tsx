@@ -155,15 +155,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
         features?: Partial<Features>;
         user?: { name?: string; fullName?: string; email?: string };
         roles?: Array<{ name?: string }>;
-        branch?: { _id?: string; name?: string } | null;
+        branch?: { _id?: string; name?: string; upiId?: string | null; upiQrUrl?: string | null } | null;
         clinic?: {
           name?: string;
           currency?: string;
           timezone?: string;
+          countryCode?: string;
           branding?: {
             displayName?: string | null;
             logoUrl?: string | null;
             primaryColor?: string | null;
+            upiId?: string | null;
+            upiQrUrl?: string | null;
           } | null;
         };
       }>(ctx, '/me');
@@ -180,6 +183,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         // out of /me so the sidebar / header chip shows the readable
         // name instead of an id-tail fallback.
         branchName: data.branch?.name ?? ctx.branchName,
+        branchUpiId: data.branch?.upiId ?? null,
+        branchUpiQrUrl: data.branch?.upiQrUrl ?? null,
+        countryCode: data.clinic?.countryCode ?? null,
         currency: data.clinic?.currency ?? ctx.currency,
         timezone: data.clinic?.timezone ?? ctx.timezone,
         branding: data.clinic?.branding
@@ -187,6 +193,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
               displayName: data.clinic.branding.displayName ?? null,
               logoUrl: data.clinic.branding.logoUrl ?? null,
               primaryColor: data.clinic.branding.primaryColor ?? null,
+              upiId: data.clinic.branding.upiId ?? null,
+              upiQrUrl: data.clinic.branding.upiQrUrl ?? null,
             }
           : ctx.branding,
       };
