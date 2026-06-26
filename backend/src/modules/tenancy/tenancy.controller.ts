@@ -151,4 +151,113 @@ export class TenancyController {
     const clinicId = this.tenancy.assertTenantMatch(id, req.context!.clinicId);
     return await this.tenancy.deleteLogo(clinicId);
   }
+
+  // ---- Clinic UPI QR Code ------------------------------------------
+  @Post('clinics/:id/upi-qr')
+  @RequirePermissions(Permission.ClinicWrite)
+  @UseInterceptors(
+    FileInterceptor('image', { limits: { fileSize: LOGO_MAX_BYTES } }),
+  )
+  async uploadUpiQr(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    const clinicId = this.tenancy.assertTenantMatch(id, req.context!.clinicId);
+    if (!file) throw new BadRequestException('image is required (multipart field "image")');
+    if (!LOGO_ACCEPTED.has(file.mimetype)) {
+      throw new BadRequestException(`Unsupported type ${file.mimetype} — use PNG, JPG, or WebP`);
+    }
+    return await this.tenancy.uploadUpiQr({
+      clinicId,
+      bytes: new Uint8Array(file.buffer),
+      contentType: file.mimetype,
+    });
+  }
+
+  @Get('clinics/:id/upi-qr')
+  @Public()
+  async getUpiQr(@Param('id') id: string, @Res() res: Response) {
+    if (!/^[0-9a-fA-F]{24}$/.test(id)) {
+      res.status(404).end();
+      return;
+    }
+    const result = await this.tenancy.getUpiQr(
+      this.tenancy.parseClinicId(id),
+    );
+    if (!result) {
+      res.status(404).end();
+      return;
+    }
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.end(Buffer.from(result.bytes));
+  }
+
+  @Delete('clinics/:id/upi-qr')
+  @RequirePermissions(Permission.ClinicWrite)
+  async deleteUpiQr(@Req() req: AppRequest, @Param('id') id: string) {
+    const clinicId = this.tenancy.assertTenantMatch(id, req.context!.clinicId);
+    return await this.tenancy.deleteUpiQr(clinicId);
+  }
+
+  // ---- Branch UPI QR Code ------------------------------------------
+  @Post('clinics/:id/branches/:branchId/upi-qr')
+  @RequirePermissions(Permission.BranchWrite)
+  @UseInterceptors(
+    FileInterceptor('image', { limits: { fileSize: LOGO_MAX_BYTES } }),
+  )
+  async uploadBranchUpiQr(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @Param('branchId') branchId: string,
+    @UploadedFile() file: Express.Multer.File,
+  ) {
+    const clinicId = this.tenancy.assertTenantMatch(id, req.context!.clinicId);
+    if (!file) throw new BadRequestException('image is required (multipart field "image")');
+    if (!LOGO_ACCEPTED.has(file.mimetype)) {
+      throw new BadRequestException(`Unsupported type ${file.mimetype} — use PNG, JPG, or WebP`);
+    }
+    return await this.tenancy.uploadBranchUpiQr({
+      clinicId,
+      branchId,
+      bytes: new Uint8Array(file.buffer),
+      contentType: file.mimetype,
+    });
+  }
+
+  @Get('clinics/:id/branches/:branchId/upi-qr')
+  @Public()
+  async getBranchUpiQr(
+    @Param('id') id: string,
+    @Param('branchId') branchId: string,
+    @Res() res: Response,
+  ) {
+    if (!/^[0-9a-fA-F]{24}$/.test(id) || !/^[0-9a-fA-F]{24}$/.test(branchId)) {
+      res.status(404).end();
+      return;
+    }
+    const result = await this.tenancy.getBranchUpiQr(
+      this.tenancy.parseClinicId(id),
+      this.tenancy.parseClinicId(branchId),
+    );
+    if (!result) {
+      res.status(404).end();
+      return;
+    }
+    res.setHeader('Content-Type', result.contentType);
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.end(Buffer.from(result.bytes));
+  }
+
+  @Delete('clinics/:id/branches/:branchId/upi-qr')
+  @RequirePermissions(Permission.BranchWrite)
+  async deleteBranchUpiQr(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @Param('branchId') branchId: string,
+  ) {
+    const clinicId = this.tenancy.assertTenantMatch(id, req.context!.clinicId);
+    return await this.tenancy.deleteBranchUpiQr(clinicId, branchId);
+  }
 }

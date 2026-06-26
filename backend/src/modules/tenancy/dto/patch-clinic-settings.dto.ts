@@ -115,6 +115,17 @@ export class PatchBrandingDto {
   @IsOptional()
   @IsHexColor()
   primaryColor?: string | null;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 120)
+  upiId?: string | null;
+
+  @IsOptional()
+  @Matches(/^(https?:\/\/.+|clinics\/[0-9a-fA-F]{24}\/upi-qr)$/, {
+    message: 'upiQrUrl must be a URL address or an uploaded-upi-qr key',
+  })
+  upiQrUrl?: string | null;
 }
 
 export class PatchClinicSettingsDto {

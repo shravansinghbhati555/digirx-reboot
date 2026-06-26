@@ -4,6 +4,8 @@ export type ClinicBranding = {
   displayName: string | null;
   logoUrl: string | null;
   primaryColor: string | null;
+  upiId: string | null;
+  upiQrUrl: string | null;
 };
 
 export type NotificationChannelToggles = {
@@ -107,7 +109,7 @@ export const DEFAULT_CLINIC_SETTINGS: ClinicSettingsV1 = {
     // face login work out of the box without flipping a settings toggle.
     faceRecognition: { enabled: true },
   },
-  branding: { displayName: null, logoUrl: null, primaryColor: null },
+  branding: { displayName: null, logoUrl: null, primaryColor: null, upiId: null, upiQrUrl: null },
 };
 
 const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
@@ -138,6 +140,14 @@ function coerceLogoRef(v: unknown): string | null {
   if (!s) return null;
   if (/^https?:\/\//i.test(s)) return s;
   if (/^clinics\/[0-9a-fA-F]{24}\/logo$/.test(s)) return s;
+  return null;
+}
+
+function coerceUpiQrRef(v: unknown): string | null {
+  const s = coerceString(v, 1000);
+  if (!s) return null;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (/^clinics\/[0-9a-fA-F]{24}\/upi-qr$/.test(s)) return s;
   return null;
 }
 
@@ -303,6 +313,8 @@ export function mergeClinicSettings(raw: unknown): ClinicSettingsV1 {
       displayName: coerceString(branding.displayName, 120),
       logoUrl: coerceLogoRef(branding.logoUrl),
       primaryColor: coerceHex(branding.primaryColor),
+      upiId: coerceString(branding.upiId, 120),
+      upiQrUrl: coerceUpiQrRef(branding.upiQrUrl),
     },
   };
 }

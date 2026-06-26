@@ -24,7 +24,7 @@ describe('PrescriptionsService share flow', () => {
     const medicines: any = { assertExists: jest.fn() };
     const notifications: any = {};
     const numbering: any = { mint: jest.fn().mockResolvedValue('RX-000001') };
-    service = new PrescriptionsService(
+    service = new (PrescriptionsService as any)(
       rxModel,
       patientModel,
       userModel,

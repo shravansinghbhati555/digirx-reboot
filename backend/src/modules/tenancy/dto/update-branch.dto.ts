@@ -55,4 +55,9 @@ export class UpdateBranchDto {
   @IsOptional()
   @IsBoolean()
   active?: boolean;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 120)
+  upiId?: string;
 }
