@@ -18,6 +18,14 @@ export function clinicLogoKey(clinicId: Types.ObjectId): string {
   return `clinics/${clinicId.toHexString()}/logo`;
 }
 
+export function clinicUpiQrKey(clinicId: Types.ObjectId): string {
+  return `clinics/${clinicId.toHexString()}/upi-qr`;
+}
+
+export function branchUpiQrKey(clinicId: Types.ObjectId, branchId: Types.ObjectId): string {
+  return `clinics/${clinicId.toHexString()}/branches/${branchId.toHexString()}/upi-qr`;
+}
+
 @Injectable()
 export class TenancyService {
   constructor(
@@ -80,6 +88,56 @@ export class TenancyService {
     await this.clinicModel.updateOne(
       { _id: clinicId },
       { $set: { 'settings.branding.logoUrl': null } },
+    );
+    return await this.getSettings(clinicId);
+  }
+
+  async uploadUpiQr(input: {
+    clinicId: Types.ObjectId;
+    bytes: Uint8Array;
+    contentType: string;
+  }) {
+    const key = clinicUpiQrKey(input.clinicId);
+    await this.storage.putObject({
+      key,
+      body: input.bytes,
+      contentType: input.contentType,
+    });
+    await this.clinicModel.updateOne(
+      { _id: input.clinicId },
+      { $set: { 'settings.branding.upiQrUrl': key } },
+    );
+    return await this.getSettings(input.clinicId);
+  }
+
+  async getUpiQr(clinicId: Types.ObjectId): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+    const clinic = await this.clinicModel.findById(clinicId).lean();
+    if (!clinic) return null;
+    const settings = mergeClinicSettings(clinic.settings);
+    const stored = settings.branding.upiQrUrl;
+    if (!stored) return null;
+    if (/^https?:\/\//i.test(stored)) return null;
+    try {
+      const res = await this.storage.getObject({ key: stored });
+      return {
+        bytes: res.bytes,
+        contentType: res.contentType ?? 'application/octet-stream',
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async deleteUpiQr(clinicId: Types.ObjectId) {
+    const key = clinicUpiQrKey(clinicId);
+    try {
+      await this.storage.deleteObject({ key });
+    } catch {
+      // ignore
+    }
+    await this.clinicModel.updateOne(
+      { _id: clinicId },
+      { $set: { 'settings.branding.upiQrUrl': null } },
     );
     return await this.getSettings(clinicId);
   }
@@ -213,6 +271,14 @@ export class TenancyService {
           patch.branding && 'primaryColor' in patch.branding
             ? (patch.branding.primaryColor ?? null)
             : current.branding.primaryColor,
+        upiId:
+          patch.branding && 'upiId' in patch.branding
+            ? (patch.branding.upiId ?? null)
+            : current.branding.upiId,
+        upiQrUrl:
+          patch.branding && 'upiQrUrl' in patch.branding
+            ? (patch.branding.upiQrUrl ?? null)
+            : current.branding.upiQrUrl,
       },
     };
 
@@ -325,6 +391,7 @@ export class TenancyService {
       workingHours: Object.keys(workingHours).length ? workingHours : undefined,
       slotsPerDay: body.slotsPerDay,
       active: body.active ?? true,
+      upiId: body.upiId?.trim() || undefined,
     });
     return this.toBranchDto(created, 0);
   }
@@ -357,6 +424,9 @@ export class TenancyService {
     }
     if (body.slotsPerDay !== undefined) branch.slotsPerDay = body.slotsPerDay;
     if (body.active !== undefined) branch.active = body.active;
+    if (body.upiId !== undefined) {
+      branch.upiId = body.upiId.trim() || undefined;
+    }
 
     await branch.save();
     const docCount = await this.userModel.countDocuments({ clinicId, branchIds: branch._id });
@@ -394,7 +464,74 @@ export class TenancyService {
       slotsPerDay: b.slotsPerDay,
       active: b.active,
       doctorCount,
+      upiId: b.upiId || undefined,
+      upiQrUrl: b.upiQrUrl || undefined,
     };
+  }
+
+  async uploadBranchUpiQr(input: {
+    clinicId: Types.ObjectId;
+    branchId: string;
+    bytes: Uint8Array;
+    contentType: string;
+  }) {
+    if (!Types.ObjectId.isValid(input.branchId)) {
+      throw new NotFoundException('Branch not found');
+    }
+    const bId = new Types.ObjectId(input.branchId);
+    const branch = await this.branchModel.findOne({ _id: bId, clinicId: input.clinicId });
+    if (!branch) throw new NotFoundException('Branch not found');
+
+    const key = branchUpiQrKey(input.clinicId, bId);
+    await this.storage.putObject({
+      key,
+      body: input.bytes,
+      contentType: input.contentType,
+    });
+
+    branch.upiQrUrl = key;
+    await branch.save();
+
+    const docCount = await this.userModel.countDocuments({ clinicId: input.clinicId, branchIds: branch._id });
+    return this.toBranchDto(branch, docCount);
+  }
+
+  async getBranchUpiQr(clinicId: Types.ObjectId, branchId: Types.ObjectId): Promise<{ bytes: Uint8Array; contentType: string } | null> {
+    const branch = await this.branchModel.findOne({ _id: branchId, clinicId }).lean();
+    if (!branch) return null;
+    const stored = branch.upiQrUrl;
+    if (!stored) return null;
+    if (/^https?:\/\//i.test(stored)) return null;
+    try {
+      const res = await this.storage.getObject({ key: stored });
+      return {
+        bytes: res.bytes,
+        contentType: res.contentType ?? 'application/octet-stream',
+      };
+    } catch {
+      return null;
+    }
+  }
+
+  async deleteBranchUpiQr(clinicId: Types.ObjectId, branchId: string) {
+    if (!Types.ObjectId.isValid(branchId)) {
+      throw new NotFoundException('Branch not found');
+    }
+    const bId = new Types.ObjectId(branchId);
+    const branch = await this.branchModel.findOne({ _id: bId, clinicId });
+    if (!branch) throw new NotFoundException('Branch not found');
+
+    const key = branchUpiQrKey(clinicId, bId);
+    try {
+      await this.storage.deleteObject({ key });
+    } catch {
+      // ignore
+    }
+    branch.upiQrUrl = undefined;
+    await branch.save();
+
+    const docCount = await this.userModel.countDocuments({ clinicId, branchIds: branch._id });
+    return this.toBranchDto(branch, docCount);
   }
 }
 

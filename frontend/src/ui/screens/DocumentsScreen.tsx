@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { apiGet, apiPost, apiDelete } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { useIsMobile } from '../../app/useIsMobile';
 import { Avatar, EmptyState, Field, Spinner, formatDateTime, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
 
@@ -85,6 +86,11 @@ export function DocumentsScreen({
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
 
   const isEmbedded = !!fixedOwnerId;
+  const isMobile = useIsMobile();
+  // On mobile the big uploader panel is collapsed behind an "Add document"
+  // button so the documents list sits at the top; tapping the button reveals
+  // the upload section. Desktop keeps the uploader always-visible on top.
+  const [showUploaderMobile, setShowUploaderMobile] = useState(false);
 
   async function fetchDocuments() {
     setLoadingDocs(true);
@@ -162,6 +168,9 @@ export function DocumentsScreen({
 
       await apiPost(ctx, `/documents/${res.documentId}/confirm`, {});
       toast(`${file.name} uploaded`, 'success');
+      // On mobile, collapse the uploader back so the new file is visible
+      // at the top of the list right away.
+      setShowUploaderMobile(false);
       void fetchDocuments();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -196,7 +205,7 @@ export function DocumentsScreen({
   }
 
   return (
-    <div style={{ padding: isEmbedded ? 0 : '24px 32px', display: 'flex', flexDirection: 'column', gap: 24, height: '100%', overflowY: 'auto' }}>
+    <div style={{ padding: isEmbedded ? 0 : (isMobile ? '16px' : '24px 32px'), display: 'flex', flexDirection: 'column', gap: isMobile ? 16 : 24, height: '100%', overflowY: 'auto' }}>
       {!isEmbedded && (
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
@@ -206,10 +215,21 @@ export function DocumentsScreen({
         </div>
       )}
 
+      {/* Mobile: an "Add document" button reveals the uploader, so the
+          documents list stays at the top by default. */}
+      {!readOnly && isMobile && (
+        <button onClick={() => setShowUploaderMobile((v) => !v)}
+          style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, width: '100%', height: 48, minHeight: 48, flexShrink: 0, padding: '0 16px', background: showUploaderMobile ? 'var(--surface-muted)' : 'var(--brand-500)', color: showUploaderMobile ? 'var(--text-muted)' : 'var(--brand-text)', border: showUploaderMobile ? '1px solid var(--border)' : 'none', borderRadius: 12, fontSize: 14, fontWeight: 700, cursor: 'pointer' }}>
+          <Icon name={showUploaderMobile ? 'x' : 'plus'} size={16} strokeWidth={2.5} />
+          {showUploaderMobile ? 'Close' : 'Add document'}
+        </button>
+      )}
+
       {/* Uploader Section — hidden in readOnly mode so callers can
-          embed the list as a reference panel. */}
+          embed the list as a reference panel. On mobile it's collapsed
+          behind the "Add document" button above. */}
       {!readOnly && (
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: 24, boxShadow: 'var(--shadow-sm)' }}>
+        <div style={{ display: isMobile && !showUploaderMobile ? 'none' : 'block', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, padding: isMobile ? 16 : 24, boxShadow: 'var(--shadow-sm)' }}>
           <div style={{ display: 'flex', gap: 16, marginBottom: 20, flexWrap: 'wrap', alignItems: 'flex-end' }}>
             {!isEmbedded && (
               <div style={{ flex: '1 1 140px' }}>
@@ -315,13 +335,13 @@ export function DocumentsScreen({
 
       {/* List Section */}
       <div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
           <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: 10 }}>
             {isEmbedded ? 'Recent Files' : 'All Documents'}
             {loadingDocs && <Spinner size={16} />}
           </div>
           {!isEmbedded && (
-            <div style={{ position: 'relative', width: 260 }}>
+            <div style={{ position: 'relative', width: isMobile ? '100%' : 260 }}>
               <Icon name="search" size={14} style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
               <input value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} placeholder="Search files or owners..."
                 style={{ width: '100%', height: 38, padding: '0 12px 0 34px', background: 'var(--surface)', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 13, outline: 'none', transition: 'border-color 0.2s' }}
@@ -343,7 +363,7 @@ export function DocumentsScreen({
             }
           />
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 16 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(280px, 100%), 1fr))', gap: 16 }}>
             {documents.map((doc) => (
               <DocCard
                 key={doc._id}
@@ -746,7 +766,7 @@ function ShareDialog({ doc, onClose }: { doc: ServerDoc; onClose: () => void }) 
 
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)' }} onClick={onClose}>
-      <div style={{ background: 'var(--surface)', borderRadius: 18, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: 460, animation: 'slideUp 200ms ease-out', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ background: 'var(--surface)', borderRadius: 18, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: 'min(460px, calc(100vw - 24px))', animation: 'slideUp 200ms ease-out', overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Share Document</div>

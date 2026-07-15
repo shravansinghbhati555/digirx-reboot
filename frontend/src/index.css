@@ -116,6 +116,12 @@ button {
   font-family: inherit;
 }
 
+/* Mobile safety net: never let a stray image push the layout wider than the
+   viewport (screens are laid out with JS breakpoints via useIsMobile). */
+img {
+  max-width: 100%;
+}
+
 input,
 select,
 textarea {
@@ -392,7 +398,12 @@ button {
   }
 }
 
-/* Custom scrollbars: thin, subtle, and hidden until interaction. */
+/* Custom scrollbars: thin, theme-colored, and auto-hiding.
+   The thumb stays transparent (invisible) and is only painted while
+   `html.scrolling` is set — a tiny JS helper (app/scrollbar-autohide.ts)
+   adds that class on scroll and removes it 3s after scrolling stops, so the
+   bar fades in on scroll and fades out when idle. Hover still reveals it on
+   desktop. The `transition` gives the fade in/out. */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -405,15 +416,26 @@ button {
 ::-webkit-scrollbar-thumb {
   background: transparent;
   border-radius: 10px;
-  transition: background 0.2s;
+  transition: background 0.3s ease;
 }
 
+html.scrolling ::-webkit-scrollbar-thumb,
 *:hover::-webkit-scrollbar-thumb {
-  background: var(--border-strong);
+  background: var(--brand-500);
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--text-subtle) !important;
+  background: var(--brand-600) !important;
+}
+
+/* Firefox: thin, and colored (themed red) only while scrolling. */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+html.scrolling * {
+  scrollbar-color: var(--brand-500) transparent;
 }
 
 /* Utility for screens to fill the AppShell content area perfectly. */
@@ -429,6 +451,18 @@ button {
   overflow-y: auto;
   scrollbar-width: thin;
   scrollbar-color: var(--border-strong) transparent;
+}
+
+/* Horizontal scroll with the scrollbar fully hidden — used for compact
+   segmented controls / filter bars that may overflow on narrow screens. */
+.scroll-x-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.scroll-x-hidden::-webkit-scrollbar {
+  height: 0;
+  width: 0;
+  display: none;
 }
 
 .row-hover {

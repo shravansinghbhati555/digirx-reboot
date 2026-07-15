@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiGet } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { useIsMobile } from '../../app/useIsMobile';
 import { EmptyState, Field, StatusPill, formatINR, labelStyle } from '../shared/primitives';
 import { AreaChart } from '../shared/AreaChart';
 import { AnimatedTabs } from '../shared/AnimatedTabs';
@@ -96,10 +97,11 @@ const REPORT_TABS = [
 ] as const;
 
 export function ReportsScreen() {
+  const isMobile = useIsMobile();
   const [tab, setTab] = useState<ReportTab>('revenue');
 
   return (
-    <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 20, height: '100%', overflowY: 'auto' }}>
+    <div style={{ padding: isMobile ? 16 : '24px 28px', display: 'flex', flexDirection: 'column', gap: isMobile ? 16 : 20, height: '100%', overflowY: 'auto' }}>
       <div>
         <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>Reports</h1>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>Revenue, schedule, pending payments and doctor utilization.</p>
@@ -180,9 +182,9 @@ function RevenueTab() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16, display: 'flex', gap: 12, alignItems: 'flex-end' }}>
-        <div style={{ flex: 1 }}><Field label="From" value={from} onChange={setFrom} placeholder="YYYY-MM-DD" /></div>
-        <div style={{ flex: 1 }}><Field label="To" value={to} onChange={setTo} placeholder="YYYY-MM-DD" /></div>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16, display: 'flex', gap: 12, alignItems: 'flex-end', flexWrap: 'wrap' }}>
+        <div style={{ flex: '1 1 140px' }}><Field label="From" value={from} onChange={setFrom} placeholder="YYYY-MM-DD" /></div>
+        <div style={{ flex: '1 1 140px' }}><Field label="To" value={to} onChange={setTo} placeholder="YYYY-MM-DD" /></div>
         <button onClick={load} disabled={loading}
           style={{ height: 40, padding: '0 20px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: loading ? 'wait' : 'pointer' }}>
           {loading ? 'Loading…' : 'Reload'}
@@ -193,7 +195,7 @@ function RevenueTab() {
 
       {data && (
         <>
-          <div style={{ display: 'flex', gap: 14 }}>
+          <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap' }}>
             <KpiTile label="Issued bills" value={<Counter value={data.issuedBills.count} />} sub={`${formatINR(data.issuedBills.totalBilled)} billed`} />
             <KpiTile label="Payments" value={<Counter value={data.payments.count} />} sub={`${formatINR(data.payments.totalPaid)} paid`} />
             <KpiTile label="Net collected" value={<Counter value={data.payments.totalPaid} format={(n) => formatINR(n)} />} sub={`${data.from} → ${data.to}`} />
@@ -514,7 +516,7 @@ function PendingTab() {
 
 function KpiTile({ label, value, sub }: { label: string; value: React.ReactNode; sub?: string }) {
   return (
-    <div style={{ flex: 1, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '16px 18px' }}>
+    <div style={{ flex: '1 1 150px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: '16px 18px' }}>
       <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 8 }}>{label}</div>
       <div style={{ fontSize: 24, fontWeight: 700, color: 'var(--text)', fontFamily: "'Manrope',sans-serif", letterSpacing: '-0.5px', fontVariantNumeric: 'tabular-nums' }}>{value}</div>
       {sub && <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 4 }}>{sub}</div>}

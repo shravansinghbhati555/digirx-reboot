@@ -48,6 +48,12 @@ export class Branch {
 
   @Prop({ type: Types.ObjectId })
   holidayCalendarId?: Types.ObjectId;
+
+  @Prop({ type: String, trim: true })
+  upiId?: string;
+
+  @Prop({ type: String, trim: true })
+  upiQrUrl?: string;
 }
 
 export const BranchSchema = SchemaFactory.createForClass(Branch);

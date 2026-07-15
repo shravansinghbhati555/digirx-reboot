@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { useIsMobile } from '../../app/useIsMobile';
 import { Avatar, Spinner, StatusPill, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
 import { DatePickerChip } from '../shared/DatePickerChip';
@@ -474,7 +475,7 @@ export function EncounterScreen() {
         {/* Top Section: Start Session (Horizontal Bar) */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', paddingLeft: 2 }}>Start New Session</div>
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'flex-end', gap: 20, boxShadow: '0 2px 8px rgba(15,23,42,0.03)' }}>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, padding: '14px 18px', display: 'flex', alignItems: 'flex-end', gap: 20, flexWrap: 'wrap', boxShadow: '0 2px 8px rgba(15,23,42,0.03)' }}>
             {/* Patient Picker */}
             <div style={{ flex: 1.5, minWidth: 260 }}>
               <label style={{ display: 'block', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6 }}>Patient</label>
@@ -664,7 +665,10 @@ function EncounterEditor({
   encounter: Encounter; patient: Patient | null; onChanged: (e: Encounter) => void; onClose: () => void;
 }) {
   const { ctx } = useApp();
+  const isMobile = useIsMobile();
   const toast = useToast();
+  // Mobile: the preview toolbar's actions collapse into a ⋮ overflow menu.
+  const [previewMenuOpen, setPreviewMenuOpen] = useState(false);
   const signed = encounter.status === 'SIGNED';
   // Billing is no longer initiated from the encounter — the consultation
   // bill is auto-issued at booking time (BookSheet → /appointments) and
@@ -980,22 +984,54 @@ function EncounterEditor({
   const previewReady = rxLoaded && metaLoaded;
   if (viewMode === 'preview') {
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--surface-muted)' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', height: '100%', minWidth: 0, overflow: 'hidden', background: 'var(--surface-muted)' }}>
         <div style={{
           display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          padding: '12px 24px', background: 'var(--surface)',
+          gap: 8, flexWrap: 'nowrap',
+          padding: isMobile ? '6px 12px' : '12px 24px', background: 'var(--surface)',
           borderBottom: '1px solid var(--border)', flexShrink: 0,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0 }}>
-            <Icon name="fileText" size={16} style={{ color: 'var(--brand-500)' }} />
+          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 8 : 10, minWidth: 0, flex: 1 }}>
+            <Icon name="fileText" size={16} style={{ color: 'var(--brand-500)', flexShrink: 0 }} />
             <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-              <span style={{ fontFamily: "'Manrope',sans-serif", fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>Prescription preview</span>
+              <span style={{ fontFamily: "'Manrope',sans-serif", fontWeight: 700, fontSize: isMobile ? 13 : 14, color: 'var(--text)', whiteSpace: 'nowrap' }}>Prescription preview</span>
               <span style={{ fontSize: 11, color: 'var(--text-subtle)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
                 {patient?.fullName ?? '—'}{prescriptionNo ? ` · ${prescriptionNo}` : ''}
               </span>
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8 }}>
+          {isMobile ? (
+            <div style={{ position: 'relative', flexShrink: 0 }}>
+              <button onClick={() => setPreviewMenuOpen((o) => !o)} aria-label="Actions"
+                style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                <Icon name="moreVert" size={18} />
+              </button>
+              {previewMenuOpen && (
+                <>
+                  <div onClick={() => setPreviewMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
+                  <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 41, minWidth: 168, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 12px 32px rgba(15,23,42,0.16)', padding: 4, display: 'flex', flexDirection: 'column' }}>
+                    {(() => {
+                      const shareDisabled = sharing || (!signed && !prescriptionId);
+                      const items: Array<{ icon: IconName; label: string; onClick: () => void; disabled?: boolean; color?: string }> = [
+                        { icon: 'edit', label: 'Edit', onClick: () => setViewMode('chart') },
+                        { icon: 'printer', label: 'Print', onClick: () => previewIframeRef.current?.contentWindow?.print() },
+                        { icon: 'share', label: 'Share on WhatsApp', onClick: () => void shareOnWhatsApp(), disabled: shareDisabled, color: '#25D366' },
+                        { icon: 'x', label: 'Close', onClick: onClose },
+                      ];
+                      return items.map((it) => (
+                        <button key={it.label} disabled={it.disabled}
+                          onClick={() => { setPreviewMenuOpen(false); it.onClick(); }}
+                          style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 12px', background: 'none', border: 'none', borderRadius: 8, textAlign: 'left', fontSize: 13, fontWeight: 600, color: it.disabled ? 'var(--text-subtle)' : (it.color ?? 'var(--text)'), cursor: it.disabled ? 'not-allowed' : 'pointer', opacity: it.disabled ? 0.5 : 1 }}>
+                          <Icon name={it.icon} size={15} style={{ color: it.disabled ? 'var(--text-subtle)' : (it.color ?? 'var(--text-muted)') }} /> {it.label}
+                        </button>
+                      ));
+                    })()}
+                  </div>
+                </>
+              )}
+            </div>
+          ) : (
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             <button onClick={() => setViewMode('chart')}
               style={{ height: 34, padding: '0 12px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
               <Icon name="edit" size={13} /> Edit
@@ -1014,14 +1050,26 @@ function EncounterEditor({
               <Icon name="x" size={13} /> Close
             </button>
           </div>
+          )}
         </div>
-        <div style={{ flex: 1, padding: 20, overflow: 'auto' }}>
+        <div style={{ flex: 1, minHeight: 0, minWidth: 0, padding: isMobile ? 8 : 20, overflow: 'auto', WebkitOverflowScrolling: 'touch' }}>
           {previewReady ? (
             <iframe
               ref={previewIframeRef}
               srcDoc={previewHtml}
               title="Prescription preview"
-              style={{ width: '100%', height: '100%', minHeight: 600, border: '1px solid var(--border)', borderRadius: 12, background: 'white', boxShadow: '0 4px 24px rgba(15,23,42,0.08)' }}
+              // On mobile we keep the full desktop A4 layout (fixed 794px) and
+              // let the container scroll both ways. onLoad sizes the iframe to
+              // its content height (srcDoc is same-origin) so the vertical
+              // scroll happens at the container — no cramped internal scroll.
+              onLoad={(e) => {
+                if (!isMobile) return;
+                try {
+                  const h = e.currentTarget.contentDocument?.body?.scrollHeight;
+                  if (h) e.currentTarget.style.height = `${h}px`;
+                } catch { /* same-origin srcDoc — should not throw */ }
+              }}
+              style={{ width: isMobile ? 794 : '100%', height: isMobile ? 'auto' : '100%', minHeight: isMobile ? 480 : 600, flexShrink: 0, border: '1px solid var(--border)', borderRadius: 12, background: 'white', boxShadow: '0 4px 24px rgba(15,23,42,0.08)' }}
             />
           ) : (
             <div style={{ width: '100%', height: '100%', minHeight: 600, display: 'flex', alignItems: 'center', justifyContent: 'center', border: '1px solid var(--border)', borderRadius: 12, background: 'white', boxShadow: '0 4px 24px rgba(15,23,42,0.08)' }}>
@@ -1041,12 +1089,14 @@ function EncounterEditor({
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '14px 24px',
+          gap: 10,
+          flexWrap: 'wrap',
+          padding: isMobile ? '12px 14px' : '14px 24px',
           borderBottom: '1px solid var(--border)',
           background: 'var(--surface)',
           flexShrink: 0,
         }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 14, minWidth: 0 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: isMobile ? 10 : 14, minWidth: 0, flex: 1 }}>
             {/* Back Button */}
             <button onClick={onClose}
               style={{
@@ -1072,15 +1122,19 @@ function EncounterEditor({
             <Avatar name={patient?.fullName ?? '?'} size={44} />
 
             {/* Patient Name & Details */}
-            <div style={{ minWidth: 0 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
                 <h1 style={{
                   fontFamily: "'Manrope',sans-serif",
-                  fontSize: 18,
+                  fontSize: isMobile ? 16 : 18,
                   fontWeight: 800,
                   color: 'var(--text)',
                   margin: 0,
                   letterSpacing: '-0.4px',
+                  whiteSpace: 'nowrap',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  minWidth: 0,
                 }}>
                   {patient?.fullName ?? 'Patient'}
                 </h1>
@@ -1094,13 +1148,14 @@ function EncounterEditor({
             </div>
           </div>
 
-          {/* Encounter Details */}
-          <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 2 }}>
+          {/* Encounter Details — on mobile it drops to its own line under the
+              patient and left-aligns, so the name never gets squeezed. */}
+          <div style={{ textAlign: isMobile ? 'left' : 'right', display: 'flex', flexDirection: 'column', alignItems: isMobile ? 'flex-start' : 'flex-end', gap: 2, minWidth: 0, width: isMobile ? '100%' : undefined }}>
             <span style={{ fontSize: 11, color: 'var(--text-subtle)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
               Consultation {encounter.readableId ?? `#${encounter._id.slice(-8).toUpperCase()}`}
             </span>
             <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
-              Visited: {new Date(encounter.visitedAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+              Visited: {new Date(encounter.visitedAt).toLocaleString('en-IN', isMobile ? { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' } : { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
             </span>
           </div>
         </div>
@@ -1184,12 +1239,11 @@ function EncounterEditor({
                 }}>
                 {sharing ? <Spinner size={13} /> : <Icon name="share" size={13} />}
               </button>
-              <StatusPill status="signed" small />
             </div>
           </div>
         )}
 
-        <div style={{ flex: 1, overflowY: 'auto', padding: '24px 24px 60px', display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '16px 16px 48px' : '24px 24px 60px', display: 'flex', flexDirection: 'column', gap: 16 }}>
           {(!signed || Object.values(vitals).some(v => !!v)) && (
             <Section title="Vitals" icon="activity" defaultOpen={!signed}>
               <div style={{
@@ -1248,12 +1302,19 @@ function EncounterEditor({
           {(!signed || rx.some(r => r.med.trim())) && (
             <Section title="Prescription" icon="pill" defaultOpen={!signed || rx.some(r => r.med.trim())}>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                {/* On mobile the 7-column rx grid is wider than the screen, so
+                    it scrolls horizontally inside this wrapper (header + rows
+                    stay aligned) instead of breaking the layout. */}
+                <div style={{ overflowX: isMobile ? 'auto' : undefined, display: 'flex', flexDirection: 'column', gap: 8, WebkitOverflowScrolling: 'touch' }}>
                 {rx.some(r => r.med.trim()) && (
                   <div style={{
                     display: 'grid',
-                    gridTemplateColumns: 'minmax(180px, 2fr) auto 80px 80px 80px minmax(140px, 1.6fr) 40px',
+                    gridTemplateColumns: 'minmax(180px, 2fr) 30px 80px 80px 80px minmax(140px, 1.6fr) 40px',
+                    minWidth: isMobile ? 700 : undefined,
                     gap: 10,
                     padding: '0 12px 4px',
+                    border: '1px solid transparent',
+                    boxSizing: 'border-box',
                     fontSize: 10,
                     fontWeight: 700,
                     color: 'var(--text-subtle)',
@@ -1274,12 +1335,14 @@ function EncounterEditor({
                   {rx.map((item) => (
                     <div key={item.id} style={{
                       display: 'grid',
-                      gridTemplateColumns: 'minmax(180px, 2fr) auto 80px 80px 80px minmax(140px, 1.6fr) 40px',
+                      gridTemplateColumns: 'minmax(180px, 2fr) 30px 80px 80px 80px minmax(140px, 1.6fr) 40px',
+                    minWidth: isMobile ? 700 : undefined,
                       gap: 10,
                       padding: '8px 12px',
                       background: 'var(--surface-muted)',
                       borderRadius: 12,
                       border: '1px solid var(--border)',
+                      boxSizing: 'border-box',
                       alignItems: 'center'
                     }}>
                       <MedicineTypeahead
@@ -1304,6 +1367,7 @@ function EncounterEditor({
                       </button>
                     </div>
                   ))}
+                </div>
                 </div>
 
                 <button onClick={() => setRx((r) => [...r, { id: nextRxId.current++, med: '', dose: '', freq: '', dur: '', note: '', qty: '' }])}
@@ -1368,15 +1432,15 @@ function EncounterEditor({
           {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '10px 14px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
         </div>
 
-        <div style={{ padding: '12px 20px', borderTop: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', gap: 10, alignItems: 'center' }}>
-          <span style={{ flex: 1, fontSize: 12, color: 'var(--text-subtle)' }}>{patient?.fullName} · {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
+        <div style={{ padding: isMobile ? '10px 14px' : '12px 20px', borderTop: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', gap: 10, alignItems: 'center' }}>
+          {!isMobile && <span style={{ flex: 1, fontSize: 12, color: 'var(--text-subtle)' }}>{patient?.fullName} · {new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</span>}
           <button onClick={saveDraft} disabled={savingDraft}
-            style={{ height: 40, padding: '0 20px', background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, fontWeight: 500, cursor: savingDraft ? 'wait' : 'pointer' }}>
+            style={{ height: 40, padding: '0 20px', flex: isMobile ? 1 : undefined, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, fontWeight: 500, cursor: savingDraft ? 'wait' : 'pointer' }}>
             {savingDraft ? 'Saving…' : (signed ? 'Save changes' : 'Save draft')}
           </button>
           {!signed && (
             <button onClick={sign} disabled={signing}
-              style={{ height: 40, padding: '0 24px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: signing ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              style={{ height: 40, padding: '0 24px', flex: isMobile ? 1 : undefined, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: signing ? 'wait' : 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
               {signing ? <><Spinner size={14} /> Signing…</> : <><Icon name="lock" size={14} /> Sign consultation</>}
             </button>
           )}

@@ -2,11 +2,14 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { Bill, BillStatus } from '../billing/schemas/bill.schema';
+import { Payment, PaymentMethod } from '../billing/schemas/payment.schema';
+import { RazorpayService } from '../billing/razorpay.service';
 import { CreditNoteNumberingService } from './credit-note-numbering.service';
 import {
   CreditNote,
@@ -23,10 +26,14 @@ const COUNTING_STATUSES = [
 
 @Injectable()
 export class CreditNotesService {
+  private readonly logger = new Logger(CreditNotesService.name);
+
   constructor(
     @InjectModel(CreditNote.name)
     private readonly cnModel: Model<CreditNote>,
     @InjectModel(Bill.name) private readonly billModel: Model<Bill>,
+    @InjectModel(Payment.name) private readonly paymentModel: Model<Payment>,
+    private readonly razorpay: RazorpayService,
     private readonly numbering: CreditNoteNumberingService,
   ) {}
 
@@ -127,6 +134,38 @@ export class CreditNotesService {
       throw new BadRequestException('Invalid refundedAt');
     }
 
+    // Real gateway refund. When the operator refunds ONLINE (back to source)
+    // and the bill was settled by a Razorpay payment, push the refund through
+    // Razorpay BEFORE marking the note refunded. If the gateway call throws,
+    // the exception propagates and the note stays ISSUED — we never claim the
+    // money moved when it didn't. For non-Razorpay online payments (e.g. the
+    // Stripe sandbox's `ch_...` ref) or other methods, we keep the operator's
+    // manual reference and record-only as before.
+    //
+    // Concurrency: this is gateway-first, so the only window for a *double*
+    // gateway refund is two requests for the SAME note both passing the
+    // ISSUED check before either commits. The status CAS below guarantees at
+    // most one is recorded; the FE also disables the confirm button while the
+    // request is in flight. The Razorpay SDK (2.9.x) doesn't expose a
+    // per-request idempotency header, so we accept this narrow window rather
+    // than risk a claim-first design that could mark a note refunded when the
+    // gateway call later fails.
+    let providerRef = dto.providerRef?.trim() || undefined;
+    if (dto.method === PaymentMethod.Online && this.razorpay.isConfigured()) {
+      const rzpPaymentId = await this.findRazorpayPaymentId(clinicId, cn.billId);
+      if (rzpPaymentId) {
+        const refund = await this.razorpay.refundPayment(rzpPaymentId, {
+          amountPaise: Math.round(cn.amount * 100),
+          notes: { creditNoteId: id, idempotencyKey: dto.idempotencyKey },
+        });
+        providerRef = refund.id;
+      } else {
+        this.logger.warn(
+          `[cn ${id}] ONLINE refund but no Razorpay payment found on bill ${cn.billId.toHexString()} — recording manual reference only`,
+        );
+      }
+    }
+
     // Status-gated atomic update. The CAS filter accepts only ISSUED so a
     // concurrent second refund call on the same CN can't double-stamp.
     const updated = await this.cnModel.findOneAndUpdate(
@@ -140,7 +179,7 @@ export class CreditNotesService {
           status: CreditNoteStatus.Refunded,
           refundedAt,
           refundedVia: dto.method,
-          refundProviderRef: dto.providerRef?.trim() || undefined,
+          refundProviderRef: providerRef,
           refundedBy: actorUserId,
           refundIdempotencyKey: dto.idempotencyKey,
         },
@@ -336,6 +375,27 @@ export class CreditNotesService {
   }
 
   // --- internals ----------------------------------------------------------
+
+  /**
+   * Finds the Razorpay payment id (`pay_...`) that settled this bill so an
+   * ONLINE refund can be pushed back to the original source. Picks the most
+   * recent ONLINE payment whose providerRef looks like a Razorpay id. Returns
+   * undefined when the bill was paid by other means (cash/UPI/card) or online
+   * through a non-Razorpay / simulated gateway (e.g. the Stripe sandbox's
+   * `ch_...` ref) — the caller then falls back to a record-only refund.
+   */
+  private async findRazorpayPaymentId(
+    clinicId: Types.ObjectId,
+    billId: Types.ObjectId,
+  ): Promise<string | undefined> {
+    const payments = await this.paymentModel
+      .find({ clinicId, billId, method: PaymentMethod.Online })
+      .sort({ paidAt: -1 });
+    const match = payments.find((p) =>
+      /^pay_/.test((p.providerRef ?? '').trim()),
+    );
+    return match?.providerRef?.trim() || undefined;
+  }
 
   private async loadBillForCredit(clinicId: Types.ObjectId, billId: string) {
     if (!Types.ObjectId.isValid(billId)) {

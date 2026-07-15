@@ -111,6 +111,15 @@ export class Bill {
   @Prop({ type: Types.ObjectId })
   pdfDocumentId?: Types.ObjectId;
 
+  // One-shot guard for the auto-delivered invoice. Stamped atomically the
+  // first time `sendInvoiceToPatient` actually dispatches to a patient, so
+  // an invoice is sent at most once per bill regardless of how many lifecycle
+  // events fire (issue, then full payment). The booking flow auto-issues the
+  // bill without going through `issueBill`, so its single send happens when
+  // the booking payment settles the bill (Issued -> Paid).
+  @Prop({ type: Date })
+  invoiceSentAt?: Date;
+
   @Prop({ type: Types.ObjectId })
   createdBy?: Types.ObjectId;
 

@@ -256,7 +256,8 @@ export function HBarChart({
 export function VBarChart({
   bars, color = 'var(--brand-500)', height = 160,
 }: {
-  bars: { label: string; value: number }[];
+  /** Per-bar `color` overrides the fallback `color` prop. */
+  bars: { label: string; value: number; color?: string }[];
   color?: string;
   height?: number;
 }) {
@@ -267,12 +268,13 @@ export function VBarChart({
       {bars.map((b, i) => {
         const h = (b.value / max) * (height - 24);
         const showLabel = i % step === 0 || i === bars.length - 1;
+        const barColor = b.color ?? color;
         return (
           <div key={i} title={`${b.label}: ${b.value}`} style={{ flex: 1, minWidth: 4, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, position: 'relative', height: '100%', justifyContent: 'flex-end' }}>
             <div style={{
               width: '100%', maxWidth: 24,
               height: Math.max(h, b.value > 0 ? 3 : 0),
-              background: color, borderRadius: 4,
+              background: barColor, borderRadius: 4,
               opacity: b.value > 0 ? 0.9 : 0.15,
               transition: 'height 500ms var(--ease-out)',
             }} />

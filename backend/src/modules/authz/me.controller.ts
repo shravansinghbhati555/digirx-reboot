@@ -57,7 +57,7 @@ export class MeController {
       }),
       this.clinicModel.findById(req.context!.clinicId),
       req.context!.branchId
-        ? this.branchModel.findById(req.context!.branchId).select({ name: 1 })
+        ? this.branchModel.findById(req.context!.branchId).select({ name: 1, upiId: 1, upiQrUrl: 1 })
         : Promise.resolve(null),
     ]);
 
@@ -83,7 +83,14 @@ export class MeController {
       // raw ObjectId hex. Only populated when the user is signed in
       // with a branch context; admins / managers without a default
       // branch get `null`.
-      branch: branch ? { _id: branch._id, name: branch.name } : null,
+      branch: branch
+        ? {
+            _id: branch._id,
+            name: branch.name,
+            upiId: branch.upiId || null,
+            upiQrUrl: branch.upiQrUrl || null,
+          }
+        : null,
       // Carry the clinic profile basics so the FE can default money formatting,
       // date formatting, and locale without an extra round-trip. Branding is
       // included so the FE-side prescription printer can render the clinic's
@@ -100,6 +107,8 @@ export class MeController {
                   displayName: settings.branding.displayName,
                   logoUrl: settings.branding.logoUrl,
                   primaryColor: settings.branding.primaryColor,
+                  upiId: settings.branding.upiId,
+                  upiQrUrl: settings.branding.upiQrUrl,
                 }
               : null,
           }

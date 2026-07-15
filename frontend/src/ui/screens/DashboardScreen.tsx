@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiGet } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { useIsMobile } from '../../app/useIsMobile';
 import { Perm, usePerm } from '../../app/permissions';
 import { Sparkline, StatusPill, formatMoney, formatMoneyCompact } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
@@ -48,6 +49,7 @@ type KpiKey = 'revenue' | 'bills' | 'pending' | 'appointments';
 export function DashboardScreen() {
   const { ctx, setScreen, selectedDate, setSelectedEncounterId, setSelectedAppointmentId } = useApp();
   const { has } = usePerm();
+  const isMobile = useIsMobile();
   // Clicking a completed appointment in today's schedule opens its
   // consultation (signed → preview with Edit). Only navigate to the
   // encounter screen when the user can actually access it, otherwise
@@ -132,7 +134,7 @@ export function DashboardScreen() {
   const fauxSpark = [42, 38, 51, 47, 55, 49, 62, 58, 44, 67, 71, 65, 58, 74];
 
   return (
-    <div style={{ padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 12, width: '100%', height: '100%', overflowY: 'auto' }}>
+    <div style={{ padding: isMobile ? 16 : '16px 20px', display: 'flex', flexDirection: 'column', gap: 12, width: '100%', height: '100%', overflowY: 'auto' }}>
       <div>
         <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px', margin: 0 }}>
           {isToday ? `${greeting}, ${ctx.fullName ?? 'Dr.'}` : `Dashboard for ${dateLabel}`}
@@ -608,25 +610,53 @@ function AppointmentsDetail({ onClose, selectedDate }: { onClose: () => void; se
   const items = data?.items ?? [];
   const total = data?.total ?? 0;
 
-  // Status breakdown — bars share the modal's accent theme token below.
+  // Status breakdown — each status gets its own semantic color so the
+  // "By status" chart is immediately scannable.
+  const STATUS_BAR_COLORS: Record<string, string> = {
+    DONE: 'var(--success-500)',
+    CHECKED_IN: 'var(--accent-500)',
+    IN_PROGRESS: '#F97316',   // orange-500
+    BOOKED: '#8B5CF6',        // violet-500
+    CANCELLED: 'var(--danger-500)',
+    NO_SHOW: 'var(--warning-500)',
+  };
   const byStatus: Record<string, number> = {};
   for (const a of items) {
     const k = (a.status || 'UNKNOWN').toUpperCase();
     byStatus[k] = (byStatus[k] ?? 0) + 1;
   }
   const statusRows = Object.entries(byStatus)
-    .map(([k, v]) => ({ label: k.replace(/_/g, ' '), value: v }))
+    .map(([k, v]) => ({ label: k.replace(/_/g, ' '), value: v, color: STATUS_BAR_COLORS[k] }))
     .sort((a, b) => b.value - a.value);
 
   // Hourly distribution (TIME appointments only; QUEUE has no start time).
+  // Track per-hour status counts so each bar can adopt the colour of the
+  // dominant status in that slot.
   const hourCounts = Array.from({ length: 14 }, () => 0); // 8h..21h
+  const hourStatusCounts: Record<string, number>[] = Array.from({ length: 14 }, () => ({}));
   for (const a of items) {
     if (a.type !== 'TIME' || !a.startAt) continue;
     const hr = new Date(a.startAt).getHours();
     const idx = hr - 8;
-    if (idx >= 0 && idx < hourCounts.length) hourCounts[idx] += 1;
+    if (idx >= 0 && idx < hourCounts.length) {
+      hourCounts[idx] += 1;
+      const sk = (a.status || 'UNKNOWN').toUpperCase();
+      hourStatusCounts[idx][sk] = (hourStatusCounts[idx][sk] ?? 0) + 1;
+    }
   }
-  const hourBars = hourCounts.map((c, i) => ({ label: `${String(i + 8).padStart(2, '0')}h`, value: c }));
+  const hourBars = hourCounts.map((c, i) => {
+    // Pick the status with the highest count in this hour.
+    let dominant: string | undefined;
+    let dominantCount = 0;
+    for (const [sk, cnt] of Object.entries(hourStatusCounts[i])) {
+      if (cnt > dominantCount) { dominant = sk; dominantCount = cnt; }
+    }
+    return {
+      label: `${String(i + 8).padStart(2, '0')}h`,
+      value: c,
+      color: dominant ? STATUS_BAR_COLORS[dominant] : undefined,
+    };
+  });
 
   const timeCount = items.filter((a) => a.type === 'TIME').length;
   const queueCount = items.filter((a) => a.type === 'QUEUE').length;
@@ -649,7 +679,7 @@ function AppointmentsDetail({ onClose, selectedDate }: { onClose: () => void; se
         <>
           <SectionHeader>By hour (time-slot appointments)</SectionHeader>
           <div style={{ background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 12, padding: '14px 14px 24px', marginBottom: 20 }}>
-            <VBarChart bars={hourBars} color="var(--info-500)" height={180} />
+            <VBarChart bars={hourBars} color="var(--accent-500)" height={180} />
           </div>
         </>
       )}

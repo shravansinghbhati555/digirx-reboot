@@ -2,6 +2,8 @@ import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { CreditNotesModule } from '../credit-notes/credit-notes.module';
 import { BillingController } from './billing.controller';
+import { RazorpayController } from './razorpay.controller';
+import { RazorpayService } from './razorpay.service';
 import { BillingService } from './billing.service';
 import { BillNumberingService } from './bill-numbering.service';
 import { Bill, BillSchema } from './schemas/bill.schema';
@@ -56,8 +58,8 @@ import { InventoryModule } from '../inventory/inventory.module';
     // forwardRef breaks the boot-time cycle.
     forwardRef(() => CreditNotesModule),
   ],
-  controllers: [BillingController],
-  providers: [BillingService, BillNumberingService],
-  exports: [BillingService],
+  controllers: [BillingController, RazorpayController],
+  providers: [BillingService, BillNumberingService, RazorpayService],
+  exports: [BillingService, RazorpayService],
 })
 export class BillingModule { }

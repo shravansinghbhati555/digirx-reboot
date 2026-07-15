@@ -1,0 +1,36 @@
+It is highly recommended to use a minimum Redis version of 6.2.0
+             Current: 5.0.14.1
+[31m[Nest] 22432  - [39m08/07/2026, 4:30:51 pm [31m  ERROR[39m [38;5;3m[MongooseModule] [39m[31mUnable to connect to the database. Retrying (1)...[39m
+Error: querySrv ECONNREFUSED _mongodb._tcp.ladukishor.x3ttcj1.mongodb.net
+    at QueryReqWrap.onresolve [as oncomplete] (node:internal/dns/promises:294:17)
+[31m[Nest] 22432  - [39m08/07/2026, 4:30:51 pm [31m  ERROR[39m [38;5;3m[MongooseModule] [39m[31mUnable to connect to the database. Retrying (2)...[39m
+Error: querySrv ECONNREFUSED _mongodb._tcp.ladukishor.x3ttcj1.mongodb.net
+    at QueryReqWrap.onresolve [as oncomplete] (node:internal/dns/promises:294:17)
+[31m[Nest] 22432  - [39m08/07/2026, 4:30:51 pm [31m  ERROR[39m [38;5;3m[MongooseModule] [39m[31mUnable to connect to the database. Retrying (3)...[39m
+Error: querySrv ECONNREFUSED _mongodb._tcp.ladukishor.x3ttcj1.mongodb.net
+    at QueryReqWrap.onresolve [as oncomplete] (node:internal/dns/promises:294:17)
+[31m[Nest] 22432  - [39m08/07/2026, 4:30:51 pm [31m  ERROR[39m [38;5;3m[MongooseModule] [39m[31mUnable to connect to the database. Retrying (4)...[39m
+Error: querySrv ECONNREFUSED _mongodb._tcp.ladukishor.x3ttcj1.mongodb.net
+    at QueryReqWrap.onresolve [as oncomplete] (node:internal/dns/promises:294:17)
+[31m[Nest] 22432  - [39m08/07/2026, 4:30:51 pm [31m  ERROR[39m [38;5;3m[MongooseModule] [39m[31mUnable to connect to the database. Retrying (5)...[39m
+Error: querySrv ECONNREFUSED _mongodb._tcp.ladukishor.x3ttcj1.mongodb.net
+    at QueryReqWrap.onresolve [as oncomplete] (node:internal/dns/promises:294:17)
+[31m[Nest] 22432  - [39m08/07/2026, 4:30:51 pm [31m  ERROR[39m [38;5;3m[MongooseModule] [39m[31mUnable to connect to the database. Retrying (6)...[39m
+Error: querySrv ECONNREFUSED _mongodb._tcp.ladukishor.x3ttcj1.mongodb.net
+    at QueryReqWrap.onresolve [as oncomplete] (node:internal/dns/promises:294:17)
+[31m[Nest] 22432  - [39m08/07/2026, 4:30:51 pm [31m  ERROR[39m [38;5;3m[MongooseModule] [39m[31mUnable to connect to the database. Retrying (7)...[39m
+Error: querySrv ECONNREFUSED _mongodb._tcp.ladukishor.x3ttcj1.mongodb.net
+    at QueryReqWrap.onresolve [as oncomplete] (node:internal/dns/promises:294:17)
+[31m[Nest] 22432  - [39m08/07/2026, 4:30:51 pm [31m  ERROR[39m [38;5;3m[MongooseModule] [39m[31mUnable to connect to the database. Retrying (8)...[39m
+Error: querySrv ECONNREFUSED _mongodb._tcp.ladukishor.x3ttcj1.mongodb.net
+    at QueryReqWrap.onresolve [as oncomplete] (node:internal/dns/promises:294:17)
+[31m[Nest] 22432  - [39m08/07/2026, 4:30:51 pm [31m  ERROR[39m [38;5;3m[MongooseModule] [39m[31mUnable to connect to the database. Retrying (9)...[39m
+Error: querySrv ECONNREFUSED _mongodb._tcp.ladukishor.x3ttcj1.mongodb.net
+    at QueryReqWrap.onresolve [as oncomplete] (node:internal/dns/promises:294:17)
+[31m[Nest] 22432  - [39m08/07/2026, 4:30:51 pm [31m  ERROR[39m [38;5;3m[ExceptionHandler] [39mError: querySrv ECONNREFUSED _mongodb._tcp.ladukishor.x3ttcj1.mongodb.net
+[90m    at QueryReqWrap.onresolve [as oncomplete] (node:internal/dns/promises:294:17)[39m {
+  errno: [90mundefined[39m,
+  code: [32m'ECONNREFUSED'[39m,
+  syscall: [32m'querySrv'[39m,
+  hostname: [32m'_mongodb._tcp.ladukishor.x3ttcj1.mongodb.net'[39m
+}

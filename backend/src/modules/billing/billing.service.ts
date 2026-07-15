@@ -457,6 +457,22 @@ export class BillingService {
         return;
       }
 
+      // One-shot delivery guard. Claim the send atomically so an invoice is
+      // dispatched at most once per bill even if this runs from more than one
+      // lifecycle event (issue + full payment) or from concurrent callers.
+      // The claim happens only once we have a recipient and are about to send,
+      // so a bill with no contact details can still be delivered later if a
+      // phone/email is added before the first real send.
+      const claimed = await this.billModel.findOneAndUpdate(
+        { _id: bill._id, clinicId, invoiceSentAt: { $in: [null, undefined] } as any },
+        { $set: { invoiceSentAt: new Date() } },
+        { new: true },
+      );
+      if (!claimed) {
+        this.logger.log(`[bill ${id}] invoice already sent — skipping duplicate`);
+        return;
+      }
+
       // 60-day public link to the PDF (same as the manual share button).
       await this.documents.makeShareable(clinicId, docId.toHexString());
       const share = await this.documents.createShare({
@@ -675,6 +691,20 @@ export class BillingService {
       //      over best-effort retries).
       if (flipped && flipped.kind === BillKind.Medicine) {
         await this.dispenseMedicineBill(flipped, actorUserId);
+      }
+
+      // Auto-deliver the invoice once the bill is fully paid. Only the caller
+      // that won the Issued -> Paid flip reaches here, so this fires exactly
+      // once. For appointments booked with payment, the bill is auto-issued
+      // (bypassing `issueBill`), so this is the single point the patient's
+      // invoice is sent to their registered WhatsApp number + email.
+      // Fire-and-forget + bill-level guard inside keep it safe to call here.
+      if (flipped) {
+        void this.sendInvoiceToPatient(
+          clinicId,
+          flipped._id.toHexString(),
+          actorUserId,
+        );
       }
     }
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiGet, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { useIsMobile } from '../../app/useIsMobile';
 import { EmptyState, Field, formatDateTime, labelStyle, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
 import { AnimatedTabs } from '../shared/AnimatedTabs';
@@ -59,10 +60,11 @@ function renderPreview(body: string) {
 }
 
 export function NotificationsScreen() {
+  const isMobile = useIsMobile();
   const [tab, setTab] = useState<'logs' | 'templates'>('logs');
 
   return (
-    <div style={{ padding: '24px 28px', display: 'flex', flexDirection: 'column', gap: 20, height: '100%', overflowY: 'auto' }}>
+    <div style={{ padding: isMobile ? 16 : '24px 28px', display: 'flex', flexDirection: 'column', gap: isMobile ? 16 : 20, height: '100%', overflowY: 'auto' }}>
       <div>
         <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px' }}>Notifications</h1>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>SMS · WhatsApp · Email — delivery logs and templates.</p>
@@ -84,6 +86,7 @@ export function NotificationsScreen() {
 
 function LogsTab() {
   const { ctx } = useApp();
+  const isMobile = useIsMobile();
   const [logs, setLogs] = useState<NotifLog[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'sent' | 'failed' | 'pending' | 'queued'>('all');
@@ -104,10 +107,10 @@ function LogsTab() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 10, padding: 3, border: '1px solid var(--border)', alignSelf: 'flex-start' }}>
+      <div className="scroll-x-hidden" style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 10, padding: 3, border: '1px solid var(--border)', alignSelf: 'flex-start', maxWidth: '100%', overflowX: 'auto' }}>
         {(['all', 'sent', 'failed', 'pending', 'queued'] as const).map((f) => (
           <button key={f} onClick={() => setFilter(f)}
-            style={{ padding: '5px 14px', borderRadius: 8, border: 'none', background: filter === f ? 'var(--surface)' : 'transparent', color: filter === f ? 'var(--text)' : 'var(--text-muted)', fontSize: 12, fontWeight: filter === f ? 600 : 400, cursor: 'pointer', textTransform: 'capitalize' }}>
+            style={{ padding: isMobile ? '5px 12px' : '5px 14px', borderRadius: 8, border: 'none', background: filter === f ? 'var(--surface)' : 'transparent', color: filter === f ? 'var(--text)' : 'var(--text-muted)', fontSize: 12, fontWeight: filter === f ? 600 : 400, cursor: 'pointer', textTransform: 'capitalize', flexShrink: 0, whiteSpace: 'nowrap' }}>
             {f}
           </button>
         ))}
@@ -138,40 +141,75 @@ function LogsTab() {
           const statusUp = (log.status || '').toUpperCase();
           const statusColor = NOTIF_STATUS_COLORS[statusUp] ?? 'var(--text-subtle)';
           const isExp = expanded === log._id;
+          const channelBadge = (
+            <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 100, background: channel.bg, color: channel.color, fontSize: 11, fontWeight: 700, flexShrink: 0 }}>
+              <Icon name={channel.icon} size={11} /> {channel.label}
+            </span>
+          );
+          const statusBadge = (
+            <span style={{ fontSize: 11, fontWeight: 600, color: statusColor, display: 'flex', alignItems: 'center', gap: 4, flexShrink: 0 }}>
+              <Icon name={statusUp === 'SENT' ? 'checkCircle' : statusUp === 'FAILED' ? 'xCircle' : 'clock'} size={12} strokeWidth={2} />
+              {statusUp}
+            </span>
+          );
+          const attemptsBadge = (log.attempts ?? 0) > 1
+            ? <span style={{ fontSize: 10, color: 'var(--text-subtle)', background: 'var(--surface-muted)', padding: '1px 6px', borderRadius: 6, border: '1px solid var(--border)' }}>{log.attempts} attempts</span>
+            : null;
+          const dateText = formatDateTime(log.sentAt ?? log.createdAt);
           return (
             <div key={log._id} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, overflow: 'hidden', cursor: 'pointer' }}
               onClick={() => setExpanded(isExp ? null : log._id)}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px' }}>
-                <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '2px 8px', borderRadius: 100, background: channel.bg, color: channel.color, fontSize: 11, fontWeight: 700 }}>
-                  <Icon name={channel.icon} size={11} /> {channel.label}
-                </span>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {log.recipientName ?? log.to}
-                  </div>
-                  {log.recipientName && (
-                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {log.to}
+              {isMobile ? (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '12px 14px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    {channelBadge}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
+                      {statusBadge}
+                      <Icon name={isExp ? 'chevronUp' : 'chevronDown'} size={14} style={{ color: 'var(--text-subtle)' }} />
                     </div>
-                  )}
-                  <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {log.templateKey ?? '—'}
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {log.recipientName ?? log.to}
+                    </div>
+                    {log.recipientName && (
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{log.to}</div>
+                    )}
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{log.templateKey ?? '—'}</div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+                    <span style={{ minWidth: 0 }}>{attemptsBadge}</span>
+                    <span style={{ fontSize: 11, color: 'var(--text-subtle)', flexShrink: 0 }}>{dateText}</span>
                   </div>
                 </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-                  <span style={{ fontSize: 11, fontWeight: 600, color: statusColor, display: 'flex', alignItems: 'center', gap: 4 }}>
-                    <Icon name={statusUp === 'SENT' ? 'checkCircle' : statusUp === 'FAILED' ? 'xCircle' : 'clock'} size={12} strokeWidth={2} />
-                    {statusUp}
-                  </span>
-                  {(log.attempts ?? 0) > 1 && <span style={{ fontSize: 10, color: 'var(--text-subtle)', background: 'var(--surface-muted)', padding: '1px 6px', borderRadius: 6, border: '1px solid var(--border)' }}>{log.attempts} attempts</span>}
-                  <span style={{ fontSize: 11, color: 'var(--text-subtle)', minWidth: 130, textAlign: 'right' }}>{formatDateTime(log.sentAt ?? log.createdAt)}</span>
-                  <Icon name={isExp ? 'chevronUp' : 'chevronDown'} size={14} style={{ color: 'var(--text-subtle)' }} />
+              ) : (
+                <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px' }}>
+                  {channelBadge}
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {log.recipientName ?? log.to}
+                    </div>
+                    {log.recipientName && (
+                      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {log.to}
+                      </div>
+                    )}
+                    <div style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 1, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                      {log.templateKey ?? '—'}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+                    {statusBadge}
+                    {attemptsBadge}
+                    <span style={{ fontSize: 11, color: 'var(--text-subtle)', minWidth: 130, textAlign: 'right' }}>{dateText}</span>
+                    <Icon name={isExp ? 'chevronUp' : 'chevronDown'} size={14} style={{ color: 'var(--text-subtle)' }} />
+                  </div>
                 </div>
-              </div>
+              )}
               {isExp && (
-                <div style={{ padding: '12px 16px 14px', borderTop: '1px solid var(--border)' }}>
+                <div style={{ padding: isMobile ? '10px 14px 12px' : '12px 16px 14px', borderTop: '1px solid var(--border)' }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 6 }}>Body</div>
-                  <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6, background: 'var(--surface-muted)', padding: '10px 14px', borderRadius: 9, border: '1px solid var(--border)', whiteSpace: 'pre-wrap' }}>{log.body}</div>
+                  <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6, background: 'var(--surface-muted)', padding: '10px 14px', borderRadius: 9, border: '1px solid var(--border)', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', wordBreak: 'break-word' }}>{log.body}</div>
                 </div>
               )}
             </div>
@@ -184,6 +222,7 @@ function LogsTab() {
 
 function TemplatesTab() {
   const { ctx } = useApp();
+  const isMobile = useIsMobile();
   const toast = useToast();
   const [templates, setTemplates] = useState<Template[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -240,8 +279,8 @@ function TemplatesTab() {
   }
 
   return (
-    <div style={{ display: 'flex', gap: 20, alignItems: 'flex-start' }}>
-      <div style={{ width: 240, flexShrink: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: 20, alignItems: 'flex-start' }}>
+      <div style={{ width: isMobile ? '100%' : 240, flexShrink: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
         <div style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <span style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-muted)' }}>{templates?.length ?? 0} templates</span>
           <button onClick={newTemplate}

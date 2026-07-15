@@ -58,7 +58,7 @@ describe('BillingService.addPayment idempotency', () => {
     // defaults to SERVICE) so dispenseStock should never fire here, but
     // we provide a stub so a stray call would no-op rather than crash.
     inventoryService = { dispenseStock: jest.fn().mockResolvedValue({ dispensed: 0, movements: [] }) };
-    service = new BillingService(
+    service = new (BillingService as any)(
       billModel,
       paymentModel,
       serviceModel,

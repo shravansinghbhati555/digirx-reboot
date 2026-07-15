@@ -1,6 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPostMultipart } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { useIsMobile } from '../../app/useIsMobile';
 import { Perm, usePerm } from '../../app/permissions';
 import { isValidEmail } from '../../app/validators';
 import { dialCodeForTimezone, isValidPhoneForTimezone, normalizePhoneForTimezone } from '../../app/phone';
@@ -28,6 +30,7 @@ type BranchOption = { _id: string; name: string };
 export function UsersScreen() {
   const { ctx } = useApp();
   const { has } = usePerm();
+  const isMobile = useIsMobile();
   const canEdit = has(Perm.UserWrite);
   const toast = useToast();
   const [users, setUsers] = useState<UserRow[]>([]);
@@ -122,7 +125,7 @@ export function UsersScreen() {
 
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-      <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px' }}>
+      <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '16px' : '24px 32px', display: (isMobile && selected) ? 'none' : 'block' }}>
         <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
           <div>
             <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px', margin: 0 }}>
@@ -263,6 +266,7 @@ function UserRolePanel({
   onResetPassword: () => void;
 }) {
   const { roleNames } = useApp();
+  const isMobile = useIsMobile();
   const [selectedRoleIds, setSelectedRoleIds] = useState<Set<string>>(
     () => new Set(user.roleIds),
   );
@@ -297,7 +301,9 @@ function UserRolePanel({
   }
 
   return (
-    <div style={{ width: 380, flexShrink: 0, borderLeft: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column' }}>
+    <div style={isMobile
+      ? { width: '100%', flex: 1, background: 'var(--surface)', display: 'flex', flexDirection: 'column' }
+      : { width: 380, flexShrink: 0, borderLeft: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column' }}>
       <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', gap: 12 }}>
         <Avatar name={user.name} size={44} />
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -428,14 +434,49 @@ function MultiSelectDropdown({ options, selected, onToggle, placeholder }: {
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  // The menu is rendered in a portal with fixed positioning so it can't be
+  // clipped by the modal's overflow:hidden / scroll container. We anchor it
+  // to the trigger button's rect, and flip it above when there's no room
+  // below.
+  const [pos, setPos] = useState<{ left: number; width: number; maxHeight: number; top?: number; bottom?: number } | null>(null);
+
+  const reposition = useCallback(() => {
+    const el = ref.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const spaceBelow = window.innerHeight - r.bottom - 8;
+    const spaceAbove = r.top - 8;
+    const desired = 260;
+    const openUp = spaceBelow < Math.min(desired, 160) && spaceAbove > spaceBelow;
+    const maxHeight = Math.max(120, Math.min(desired, openUp ? spaceAbove : spaceBelow));
+    setPos(
+      openUp
+        ? { left: r.left, width: r.width, maxHeight, bottom: window.innerHeight - r.top + 4 }
+        : { left: r.left, width: r.width, maxHeight, top: r.bottom + 4 },
+    );
+  }, []);
+
   useEffect(() => {
     if (!open) return;
+    reposition();
     const onDoc = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const t = e.target as Node;
+      if (ref.current?.contains(t)) return;
+      if (menuRef.current?.contains(t)) return; // click inside the portalled menu
+      setOpen(false);
     };
+    const onReflow = () => reposition();
     document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
+    window.addEventListener('resize', onReflow);
+    // capture-phase so scrolling the modal body (an ancestor) re-anchors the menu
+    window.addEventListener('scroll', onReflow, true);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      window.removeEventListener('resize', onReflow);
+      window.removeEventListener('scroll', onReflow, true);
+    };
+  }, [open, reposition]);
 
   const selectedNames = options.filter((o) => selected.includes(o._id)).map((o) => o.name);
 
@@ -448,8 +489,8 @@ function MultiSelectDropdown({ options, selected, onToggle, placeholder }: {
         </span>
         <Icon name="chevronDown" size={16} style={{ color: 'var(--text-subtle)', flexShrink: 0 }} />
       </button>
-      {open && (
-        <div style={{ position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 12px 32px rgba(15,23,42,0.12)', maxHeight: 220, overflowY: 'auto', padding: 4 }}>
+      {open && pos && createPortal(
+        <div ref={menuRef} style={{ position: 'fixed', left: pos.left, width: pos.width, top: pos.top, bottom: pos.bottom, zIndex: 1000, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 12px 32px rgba(15,23,42,0.12)', maxHeight: pos.maxHeight, overflowY: 'auto', padding: 4 }}>
           {options.length === 0 ? (
             <div style={{ padding: '10px 12px', fontSize: 12, color: 'var(--text-subtle)' }}>No options available</div>
           ) : options.map((o) => {
@@ -464,7 +505,8 @@ function MultiSelectDropdown({ options, selected, onToggle, placeholder }: {
               </button>
             );
           })}
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   );
@@ -640,11 +682,11 @@ function AddUserModal({ roles, branches, onClose, onSave }: { roles: RoleOption[
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
                     <div>
                       <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--brand-700)', marginBottom: 4 }}>Reg No.</label>
-                      <input value={data.registrationNumber} onChange={e => setData({...data, registrationNumber: e.target.value})} style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: '#fff', fontSize: 13 }} placeholder="MCI-2019-..." />
+                      <input value={data.registrationNumber} onChange={e => setData({...data, registrationNumber: e.target.value})} style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13 }} placeholder="MCI-2019-..." />
                     </div>
                     <div>
                       <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--brand-700)', marginBottom: 4 }}>Qualifications</label>
-                      <input value={data.qualifications} onChange={e => setData({...data, qualifications: e.target.value})} style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: '#fff', fontSize: 13 }} placeholder="MBBS, MD" />
+                      <input value={data.qualifications} onChange={e => setData({...data, qualifications: e.target.value})} style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13 }} placeholder="MBBS, MD" />
                     </div>
                   </div>
                 </div>
@@ -820,12 +862,12 @@ function EditUserModal({
               <div>
                 <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--brand-700)', marginBottom: 4 }}>Reg No.</label>
                 <input value={registrationNumber} onChange={(e) => setRegistrationNumber(e.target.value)}
-                  style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: 'var(--surface)', fontSize: 13 }} />
+                  style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13 }} />
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: 11, fontWeight: 600, color: 'var(--brand-700)', marginBottom: 4 }}>Qualifications</label>
                 <input value={qualifications} onChange={(e) => setQualifications(e.target.value)}
-                  style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: 'var(--surface)', fontSize: 13 }} />
+                  style={{ width: '100%', height: 36, padding: '0 10px', borderRadius: 8, border: '1px solid var(--brand-200)', background: 'var(--surface)', color: 'var(--text)', fontSize: 13 }} />
               </div>
             </div>
           </div>
@@ -907,6 +949,7 @@ function EditUserModal({
           captureLabel="Capture & enroll"
           onCancel={() => setShowFaceScan(false)}
           onCapture={handleFaceEnroll}
+          fullFrame
         />
       )}
     </div>

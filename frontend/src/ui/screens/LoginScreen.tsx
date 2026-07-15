@@ -3,6 +3,7 @@ import { useLocation } from 'react-router-dom';
 import { apiGet, apiPost, apiPostMultipart } from '../../app/api';
 import type { DevContext } from '../../app/context';
 import { useApp } from '../../app/AppContext';
+import { useIsMobile } from '../../app/useIsMobile';
 import { Icon } from '../shared/Icon';
 import { Spinner, useToast, labelStyle } from '../shared/primitives';
 import { FaceScanModal } from '../shared/FaceScanModal';
@@ -39,6 +40,7 @@ type PendingAuth = {
 export function LoginScreen() {
   const { ctx, setCtx } = useApp();
   const toast = useToast();
+  const isMobile = useIsMobile();
   const location = useLocation();
   // `state.reason === 'session-expired'` is set by AppContext when a
   // 401 (after a failed refresh) boots the user back here. We surface a
@@ -97,10 +99,22 @@ export function LoginScreen() {
 
   return (
     <div style={{ display: 'flex', height: '100vh', minHeight: 600 }}>
-      <BrandPanel />
+      {!isMobile && <BrandPanel />}
 
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, overflowY: 'auto', position: 'relative' }}>
         <div style={{ width: '100%', maxWidth: 420, animation: 'slideUp 320ms var(--ease-out)' }}>
+          {/* On mobile the brand hero is hidden, so surface the DigiRx logo
+              above the form (shown for both sign-in and sign-up). */}
+          {isMobile && (
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 8, marginBottom: 28 }}>
+              <div style={{ width: 34, height: 34, borderRadius: 9, background: 'var(--brand-500)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <Icon name="cross" size={17} style={{ color: 'var(--brand-text)' }} strokeWidth={2.5} />
+              </div>
+              <span style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.4px' }}>
+                Digi<span style={{ color: 'var(--brand-500)' }}>Rx</span>
+              </span>
+            </div>
+          )}
           {/* Signin is single-step now — only show the step dots for
               the signup wizard (which still has Create / Welcome). */}
           {mode === 'signup' && <StepDots current={step} total={3} />}
@@ -408,13 +422,17 @@ function SignInStep({
         <div style={{ flex: 1, height: 1, background: 'var(--border)' }} />
       </div>
       <button type="button" onClick={() => setFaceOpen(true)}
+        disabled={faceOpen}
         style={{
           width: '100%', height: 46, background: 'var(--surface-muted)',
           border: '1.5px solid var(--border)', borderRadius: 12,
-          fontSize: 14, fontWeight: 600, color: 'var(--text)', cursor: 'pointer',
+          fontSize: 14, fontWeight: 600, color: 'var(--text)',
+          cursor: faceOpen ? 'not-allowed' : 'pointer',
+          opacity: faceOpen ? 0.55 : 1,
           display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+          transition: 'opacity 200ms',
         }}>
-        <Icon name="camera" size={16} strokeWidth={2.2} /> Sign in with face
+        <Icon name="camera" size={16} strokeWidth={2.2} /> {faceOpen ? 'Scanning…' : 'Sign in with face'}
       </button>
 
       <div style={{ marginTop: 20, textAlign: 'center', fontSize: 13, color: 'var(--text-muted)' }}>
@@ -432,6 +450,7 @@ function SignInStep({
           captureLabel="Scan & sign in"
           onCancel={() => setFaceOpen(false)}
           onCapture={handleFaceLogin}
+          fullFrame
         />
       )}
 
@@ -813,7 +832,7 @@ function SignUpStep({
 
         <FormGroup label="Your full name">
           <InputWrap icon="mail">
-            <input type="text" placeholder="Dr. Jane Doe" value={adminName} onChange={(e) => setAdminName(e.target.value)} autoComplete="name"
+            <input type="text" placeholder="Jane Doe" value={adminName} onChange={(e) => setAdminName(e.target.value)} autoComplete="name"
               style={inputStyle(!!errors.adminName)} />
           </InputWrap>
           {errors.adminName && <FieldError>{errors.adminName}</FieldError>}

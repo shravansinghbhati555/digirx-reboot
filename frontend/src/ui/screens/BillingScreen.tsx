@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiGet, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { useIsMobile } from '../../app/useIsMobile';
 import { Perm, usePerm } from '../../app/permissions';
 import { Avatar, EmptyState, Spinner, StatusPill, formatMoney, labelStyle, useToast, getCurrencySymbol, getCurrencyConversionData } from '../shared/primitives';
 
@@ -402,6 +403,7 @@ function BillDetail({
   onEdit: (b: Bill) => void;
 }) {
   const { ctx } = useApp();
+  const isMobile = useIsMobile();
   const toast = useToast();
   const [payments, setPayments] = useState<Payment[] | null>(null);
   const [creditNotes, setCreditNotes] = useState<CreditNote[] | null>(null);
@@ -573,9 +575,9 @@ function BillDetail({
 
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflowY: 'auto', animation: 'slideInRight 240ms ease-out' }}>
-      <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 12 }}>
-        <button onClick={onClose} title="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 4 }}><Icon name="x" size={18} /></button>
-        <div style={{ flex: 1 }}>
+      <div style={{ padding: isMobile ? '14px 16px' : '16px 24px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+        <button onClick={onClose} title="Close" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 4, flexShrink: 0 }}><Icon name="x" size={18} /></button>
+        <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontFamily: 'monospace', fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
             <span key={billNoFreshKey} style={{ display: 'inline-block', animation: billNoFreshKey > 0 ? 'slideInRight 240ms var(--ease-out)' : undefined }}>
               {bill.billNo ?? bill._id}
@@ -584,7 +586,7 @@ function BillDetail({
           <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>{patientName ?? '—'} · {bill.currency}</div>
         </div>
         <StatusPill status={bill.status?.toLowerCase()} />
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', width: isMobile ? '100%' : undefined, justifyContent: isMobile ? 'flex-start' : undefined }}>
           {isDraft && (
             <button
               onClick={() => onEdit(bill)}
@@ -652,7 +654,7 @@ function BillDetail({
         </div>
       )}
 
-      <div style={{ padding: '20px 24px', display: 'flex', gap: 20, alignItems: 'flex-start' }}>
+      <div style={{ padding: isMobile ? '16px' : '20px 24px', display: 'flex', flexDirection: isMobile ? 'column' : 'row', gap: isMobile ? 16 : 20, alignItems: isMobile ? 'stretch' : 'flex-start' }}>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
@@ -677,7 +679,7 @@ function BillDetail({
           </div>
         </div>
 
-        <div style={{ width: 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <div style={{ width: isMobile ? '100%' : 260, flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 16 }}>
             <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 12 }}>Summary</div>
             {([
@@ -885,7 +887,7 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', background: 'rgba(15,23,42,0.3)', backdropFilter: 'blur(2px)' }} onClick={onClose}>
       <div {...shakeProps}
-        style={{ width: 420, height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--border)', boxShadow: '-8px 0 32px rgba(15,23,42,0.12)', display: 'flex', flexDirection: 'column', animation: 'slideInRight 240ms ease-out', ...shakeProps.style }} onClick={(e) => e.stopPropagation()}>
+        style={{ width: 'min(420px, 100vw)', height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--border)', boxShadow: '-8px 0 32px rgba(15,23,42,0.12)', display: 'flex', flexDirection: 'column', animation: 'slideInRight 240ms ease-out', ...shakeProps.style }} onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>Record payment</div>
@@ -975,6 +977,7 @@ function CreateBillSheet({
   initialBill?: Bill;
 }) {
   const { ctx } = useApp();
+  const isMobile = useIsMobile();
   const toast = useToast();
   const [services, setServices] = useState<Service[]>([]);
 
@@ -1155,7 +1158,7 @@ function CreateBillSheet({
         </div>
 
         {/* Body */}
-        <div style={{ flex: 1, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
+        <div style={{ flex: 1, overflowY: 'auto', padding: isMobile ? '16px' : '20px 24px', display: 'flex', flexDirection: 'column', gap: 20 }}>
           {/* Patient */}
           <div>
             <label style={labelStyle}>Patient</label>
@@ -1215,7 +1218,7 @@ function CreateBillSheet({
               </button>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 70px 100px 30px', gap: 8, padding: '0 4px 6px', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+            <div style={{ display: 'grid', gridTemplateColumns: isMobile ? 'minmax(0, 1fr) 46px 74px 26px' : '1fr 70px 100px 30px', gap: 8, padding: '0 4px 6px', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
               <span>Description</span>
               <span style={{ textAlign: 'center' }}>Qty</span>
               <span style={{ textAlign: 'right' }}>Rate ({ctx.currency || 'INR'})</span>
@@ -1224,7 +1227,7 @@ function CreateBillSheet({
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
               {items.map((it, i) => (
-                <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 70px 100px 30px', gap: 8, alignItems: 'center' }}>
+                <div key={i} style={{ display: 'grid', gridTemplateColumns: isMobile ? 'minmax(0, 1fr) 46px 74px 26px' : '1fr 70px 100px 30px', gap: 8, alignItems: 'center' }}>
                   {services.length > 0 && !it.name && !it.serviceId ? (
                     <select value={it.serviceId ?? ''}
                       onChange={(e) => e.target.value ? pickService(i, e.target.value) : updateItem(i, { serviceId: undefined })}
@@ -1397,7 +1400,7 @@ function CreateCreditNoteSheet({ bill, creditableRoom, onClose, onSuccess }: { b
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'flex-end', justifyContent: 'flex-end', background: 'rgba(15,23,42,0.3)', backdropFilter: 'blur(2px)' }} onClick={onClose}>
       <div {...shakeProps}
-        style={{ width: 480, height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--border)', boxShadow: '-8px 0 32px rgba(15,23,42,0.12)', display: 'flex', flexDirection: 'column', animation: 'slideInRight 240ms ease-out', ...shakeProps.style }}
+        style={{ width: 'min(480px, 100vw)', height: '100%', background: 'var(--surface)', borderLeft: '1px solid var(--border)', boxShadow: '-8px 0 32px rgba(15,23,42,0.12)', display: 'flex', flexDirection: 'column', animation: 'slideInRight 240ms ease-out', ...shakeProps.style }}
         onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
@@ -1526,6 +1529,18 @@ function RefundCnSheet({ cn, currency, onClose, onSuccess }: { cn: CreditNote; c
               ))}
             </div>
           </div>
+
+          {method === 'ONLINE' && (
+            <div style={{ background: 'rgba(99,91,255,0.07)', border: '1px solid rgba(99,91,255,0.25)', borderRadius: 10, padding: '8px 12px', fontSize: 11, color: 'var(--text-muted)', display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+              <Icon name="send" size={13} style={{ marginTop: 1, flexShrink: 0 }} />
+              <span>
+                If this bill was paid online via Razorpay, the refund is pushed
+                back to the original payment method automatically and the
+                Razorpay refund id is recorded. The reference below is optional —
+                only used when no Razorpay payment is found (e.g. cash/UPI paid online).
+              </span>
+            </div>
+          )}
 
           <div>
             <label style={labelStyle}>Reference <span style={{ color: 'var(--text-subtle)', fontWeight: 400 }}>(optional)</span></label>

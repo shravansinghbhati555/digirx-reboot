@@ -4,6 +4,7 @@ import { zodResolver } from '@hookform/resolvers/zod';
 import { z } from 'zod';
 import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { useIsMobile } from '../../app/useIsMobile';
 import { Perm, type PermName } from '../../app/permissions';
 import { Spinner, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
@@ -156,6 +157,7 @@ const READ_TO_WRITE: Partial<Record<PermName, PermName>> = Object.fromEntries(
 
 export function RolesScreen() {
   const { ctx, refreshMe } = useApp();
+  const isMobile = useIsMobile();
   const toast = useToast();
   const [roles, setRoles] = useState<Role[]>([]);
   const [assignedRoleIds, setAssignedRoleIds] = useState<Set<string>>(new Set());
@@ -303,17 +305,17 @@ export function RolesScreen() {
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      <div style={{ padding: '24px 40px 16px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', zIndex: 20 }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
+      <div style={{ padding: isMobile ? '16px 16px 12px' : '24px 40px 16px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', zIndex: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
           <div>
-            <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px', margin: 0 }}>
+            <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: isMobile ? 18 : 22, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.3px', margin: 0 }}>
               Roles &amp; Permissions
             </h1>
             <p style={{ fontSize: 13, color: 'var(--text-muted)', marginTop: 4 }}>
               Click a column header to toggle all. Super Admin role is immutable.
             </p>
           </div>
-          <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <button onClick={() => setShowCreate(true)}
               style={{
                 display: 'flex', alignItems: 'center', gap: 6, height: 38, padding: '0 16px',
@@ -336,7 +338,7 @@ export function RolesScreen() {
         </div>
       </div>
 
-      <div className="scroll-y" style={{ flex: 1, padding: '0 40px 40px' }}>
+      <div className="scroll-y" style={{ flex: 1, padding: isMobile ? '0 16px 24px' : '0 40px 40px' }}>
         {showCreate && (
           <CreateRoleSheet
             existingNames={new Set(roles.map((r) => r.name.toLowerCase()))}
@@ -360,8 +362,8 @@ export function RolesScreen() {
             No roles found. Run the seed to create the standard roles.
           </div>
         ) : (
-          <div style={{ borderLeft: '1px solid var(--border)', borderRight: '1px solid var(--border)' }}>
-          <table style={{ width: '100%', borderCollapse: 'separate', borderSpacing: 0, fontSize: 13 }}>
+          <div style={{ borderLeft: '1px solid var(--border)', borderRight: '1px solid var(--border)', overflowX: 'auto', WebkitOverflowScrolling: 'touch' }}>
+          <table style={{ width: '100%', minWidth: 640, borderCollapse: 'separate', borderSpacing: 0, fontSize: 13 }}>
             <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
               <tr style={{ background: 'var(--surface-muted)' }}>
                 <th style={{ ...thStyle, textAlign: 'left', textTransform: 'uppercase', fontSize: 11, letterSpacing: '0.06em', color: 'var(--text-subtle)' }}>Permission</th>

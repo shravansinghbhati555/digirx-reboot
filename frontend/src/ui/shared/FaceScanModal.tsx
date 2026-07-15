@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon } from './Icon';
 import { Spinner } from './primitives';
 
@@ -25,6 +26,7 @@ export function FaceScanModal({
   onCancel,
   onCapture,
   onPhoneVerify,
+  fullFrame = false,
 }: {
   title: string;
   hint?: string;
@@ -32,6 +34,15 @@ export function FaceScanModal({
   onCancel: () => void;
   onCapture: (blob: Blob, opts?: { preDetected?: boolean }) => Promise<void> | void;
   onPhoneVerify?: (phone: string) => Promise<void> | void;
+  /**
+   * Send the FULL camera frame (server detects + aligns), instead of the
+   * browser-cropped face. Used for staff login: a tight browser crop starves
+   * the server anti-spoof model of the surrounding context it needs (bezel /
+   * room), causing false "photo or screen detected" rejections, and it also
+   * lets the capture button work even when the in-browser detector is weak
+   * (common on mobile) since the server does the real detection.
+   */
+  fullFrame?: boolean;
 }) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -240,8 +251,8 @@ export function FaceScanModal({
     if (permission !== 'ok') return;
     // Face gate: when the in-browser detector is working, refuse to scan
     // an empty frame — a face must be present. Dropped when the detector
-    // is unavailable (server-side detection handles the full frame).
-    if (detectorStatus !== 'unavailable' && !lastDetectionRef.current) return;
+    // is unavailable, or in fullFrame mode where the server does detection.
+    if (!fullFrame && detectorStatus !== 'unavailable' && !lastDetectionRef.current) return;
     setError(null);
     // Short countdown so the patient has time to face the camera.
     // Trimmed from the older 1.8s flow — at 600ms total it stays useful
@@ -252,7 +263,9 @@ export function FaceScanModal({
     }
     setCountdown(null);
 
-    const last = lastDetectionRef.current;
+    // In fullFrame mode send the whole frame (detection=null → server
+    // detects + aligns); otherwise use the browser-cropped face.
+    const last = fullFrame ? null : lastDetectionRef.current;
     const result = await grabFrame(videoRef.current, canvasRef.current, last);
     if (!result.blob) {
       setError('Could not capture frame — try again.');
@@ -268,7 +281,11 @@ export function FaceScanModal({
     }
   }
 
-  return (
+  // Portalled to <body> so the fixed overlay always covers the WHOLE
+  // viewport — otherwise a transformed/animated ancestor (e.g. the login
+  // form's slideUp animation) becomes the containing block and the backdrop
+  // only shadows that ancestor's box instead of the full screen.
+  return createPortal(
     <div style={overlayStyle} onClick={onCancel}>
       <div style={modalStyle} onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between' }}>
@@ -452,7 +469,7 @@ export function FaceScanModal({
                 // Gate on a detected face whenever the detector isn't
                 // 'unavailable'. While it's still 'loading' there's no bbox
                 // yet, so the button stays disabled until detection starts.
-                const noFace = detectorStatus !== 'unavailable' && !bbox;
+                const noFace = !fullFrame && detectorStatus !== 'unavailable' && !bbox;
                 const captureDisabled = busy || countdown !== null || !online || noFace;
                 const title = !online
                   ? 'No internet connection'
@@ -483,7 +500,8 @@ export function FaceScanModal({
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

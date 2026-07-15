@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPostMultipart, apiPut } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { useIsMobile } from '../../app/useIsMobile';
 import { emitAvailabilityChanged } from '../../app/events';
 import { Perm, type PermName } from '../../app/permissions';
 import { isValidIndianMobile, normalizeIndianMobile } from '../../app/validators';
@@ -15,6 +16,8 @@ type ClinicBranding = {
   displayName: string | null;
   logoUrl: string | null;
   primaryColor: string | null;
+  upiId: string | null;
+  upiQrUrl: string | null;
 };
 
 type QuietHoursSettings = {
@@ -192,6 +195,7 @@ const NAV: NavItem[] = [
 
 export function SettingsScreen() {
   const { permissions, roleNames } = useApp();
+  const isMobile = useIsMobile();
   // Doctors manage availability from a dedicated sidebar screen, so the
   // Availability tab is removed from their Settings.
   const isDoctor = roleNames.has('doctor');
@@ -218,8 +222,13 @@ export function SettingsScreen() {
   const activeAllowed = visibleNav.some((n) => n.id === tab);
 
   return (
-    <div style={{ display: 'flex', height: '100%', alignItems: 'flex-start' }}>
-      <div style={{
+    <div style={{ display: 'flex', flexDirection: isMobile ? 'column' : 'row', height: '100%', alignItems: 'flex-start', minHeight: 0 }}>
+      <div style={isMobile ? {
+        width: '100%', flexShrink: 0,
+        borderBottom: '1px solid var(--border)', padding: '8px 8px',
+        display: 'flex', flexDirection: 'row', gap: 6, overflowX: 'auto',
+        background: 'var(--surface)', WebkitOverflowScrolling: 'touch',
+      } : {
         position: 'sticky', top: 0, alignSelf: 'flex-start',
         width: 220, flexShrink: 0,
         height: '100%', overflowY: 'auto',
@@ -227,17 +236,21 @@ export function SettingsScreen() {
         display: 'flex', flexDirection: 'column', gap: 2,
         background: 'var(--surface)',
       }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '4px 10px 8px' }}>Settings</div>
+        {!isMobile && <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.08em', padding: '4px 10px 8px' }}>Settings</div>}
         {visibleNav.map((item) => (
           <button key={item.id} onClick={() => setTab(item.id)}
-            style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', border: 'none', background: tab === item.id ? 'var(--brand-50)' : 'transparent', borderRadius: 9, cursor: 'pointer', color: tab === item.id ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 13, fontWeight: tab === item.id ? 600 : 400, textAlign: 'left', borderLeft: tab === item.id ? '3px solid var(--brand-500)' : '3px solid transparent' }}>
+            style={isMobile ? {
+              display: 'flex', alignItems: 'center', gap: 6, padding: '8px 12px', border: '1px solid var(--border)', background: tab === item.id ? 'var(--brand-50)' : 'var(--surface)', borderRadius: 999, cursor: 'pointer', color: tab === item.id ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 12, fontWeight: tab === item.id ? 600 : 500, whiteSpace: 'nowrap', flexShrink: 0,
+            } : {
+              display: 'flex', alignItems: 'center', gap: 10, padding: '9px 12px', border: 'none', background: tab === item.id ? 'var(--brand-50)' : 'transparent', borderRadius: 9, cursor: 'pointer', color: tab === item.id ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 13, fontWeight: tab === item.id ? 600 : 400, textAlign: 'left', borderLeft: tab === item.id ? '3px solid var(--brand-500)' : '3px solid transparent',
+            }}>
             <Icon name={item.icon} size={15} style={{ color: tab === item.id ? 'var(--brand-500)' : 'inherit', flexShrink: 0 }} />
             {item.label}
           </button>
         ))}
       </div>
 
-      <div style={{ flex: 1, minWidth: 0, padding: tab === 'audit' ? '0' : '24px 32px', height: '100%', overflow: tab === 'audit' ? 'hidden' : 'auto' }}>
+      <div style={{ flex: 1, minWidth: 0, minHeight: 0, width: isMobile ? '100%' : undefined, padding: tab === 'audit' ? '0' : (isMobile ? '16px' : '24px 32px'), height: isMobile ? 'auto' : '100%', overflow: tab === 'audit' ? 'hidden' : 'auto' }}>
         <div key={tab} style={{ animation: 'slideUp 160ms ease-out', maxWidth: tab === 'audit' ? 'none' : 800, margin: tab === 'audit' ? '0' : undefined, height: tab === 'audit' ? '100%' : 'auto', display: tab === 'audit' ? 'flex' : 'block', flexDirection: 'column' }}>
           {tab !== 'audit' && (
             <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 20 }}>
@@ -259,8 +272,9 @@ export function SettingsScreen() {
 // Standalone Availability screen — same editor as the Settings tab, but
 // rendered as its own top-level page (used by doctors via the sidebar).
 export function AvailabilityScreen() {
+  const isMobile = useIsMobile();
   return (
-    <div style={{ flex: 1, minWidth: 0, padding: '24px 32px', height: '100%', overflow: 'auto' }}>
+    <div style={{ flex: 1, minWidth: 0, padding: isMobile ? '16px' : '24px 32px', height: '100%', overflow: 'auto' }}>
       <div style={{ maxWidth: 800 }}>
         <h2 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--text)', marginBottom: 20 }}>Availability</h2>
         <AvailabilityTab />
@@ -358,7 +372,7 @@ function TimezoneDropdown({
       if (tzNormalized.includes('calcutta')) tzNormalized += ' kolkata';
       if (tzNormalized.includes('katmandu')) tzNormalized += ' kathmandu';
       if (tzNormalized.includes('saigon')) tzNormalized += ' ho chi minh';
-      
+
       // Every search token must be found in the normalized timezone name
       return tokens.every((token) => tzNormalized.includes(token));
     });
@@ -547,6 +561,8 @@ function ClinicTab() {
   const [displayName, setDisplayName] = useState('');
   const [logoUrl, setLogoUrl] = useState('');
   const [primaryColor, setPrimaryColor] = useState('');
+  const [upiId, setUpiId] = useState('');
+  const [upiQrUrl, setUpiQrUrl] = useState('');
 
   // Modules
   const [faceRecognitionEnabled, setFaceRecognitionEnabled] = useState(false);
@@ -557,6 +573,8 @@ function ClinicTab() {
   const [logoUploading, setLogoUploading] = useState(false);
   const [logoError, setLogoError] = useState<string | null>(null);
   const [logoTick, setLogoTick] = useState(0);
+
+
 
   const [saving, setSaving] = useState(false);
 
@@ -574,6 +592,8 @@ function ClinicTab() {
     setDisplayName(res.settings.branding?.displayName ?? '');
     setLogoUrl(res.settings.branding?.logoUrl ?? '');
     setPrimaryColor(res.settings.branding?.primaryColor ?? '');
+    setUpiId(res.settings.branding?.upiId ?? '');
+    setUpiQrUrl(res.settings.branding?.upiQrUrl ?? '');
     setFaceRecognitionEnabled(res.settings.modules?.faceRecognition?.enabled ?? false);
   }
 
@@ -603,9 +623,11 @@ function ClinicTab() {
       displayName.trim() !== (data.settings.branding?.displayName ?? '') ||
       logoUrl.trim() !== (data.settings.branding?.logoUrl ?? '') ||
       primaryColor.trim() !== (data.settings.branding?.primaryColor ?? '') ||
+      upiId.trim() !== (data.settings.branding?.upiId ?? '') ||
+      upiQrUrl.trim() !== (data.settings.branding?.upiQrUrl ?? '') ||
       faceRecognitionEnabled !== (data.settings.modules?.faceRecognition?.enabled ?? false)
     );
-  }, [data, name, timezone, currency, apptMode, slotMinutes, displayName, logoUrl, primaryColor, faceRecognitionEnabled]);
+  }, [data, name, timezone, currency, apptMode, slotMinutes, displayName, logoUrl, primaryColor, upiId, upiQrUrl, faceRecognitionEnabled]);
 
   // Logo upload is the only field that commits immediately (multipart
   // uploads don't queue cleanly), but we DELIBERATELY do not call full
@@ -620,16 +642,18 @@ function ClinicTab() {
     setData((prev) =>
       prev
         ? {
-            ...prev,
-            settings: {
-              ...prev.settings,
-              branding: {
-                displayName: prev.settings.branding?.displayName ?? null,
-                logoUrl: nextLogo || null,
-                primaryColor: prev.settings.branding?.primaryColor ?? null,
-              },
+          ...prev,
+          settings: {
+            ...prev.settings,
+            branding: {
+              displayName: prev.settings.branding?.displayName ?? null,
+              logoUrl: nextLogo || null,
+              primaryColor: prev.settings.branding?.primaryColor ?? null,
+              upiId: prev.settings.branding?.upiId ?? null,
+              upiQrUrl: prev.settings.branding?.upiQrUrl ?? null,
             },
-          }
+          },
+        }
         : prev,
     );
     setLogoTick((t) => t + 1);
@@ -681,6 +705,8 @@ function ClinicTab() {
       setLogoUploading(false);
     }
   }
+
+
 
   async function save() {
     if (!isDirty) return;
@@ -890,6 +916,13 @@ function ClinicTab() {
           </div>
 
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>UPI payment details</div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <Field label="UPI ID" value={upiId} onChange={setUpiId} placeholder="e.g. clinicname@okaxis" />
+            </div>
+          </div>
+
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>Appointments</div>
             <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginBottom: 12 }}>
               <strong>Time</strong> = scheduled time slots only.
@@ -995,8 +1028,21 @@ function toHHMM(minutes: number): string {
   const m = minutes % 60;
   return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 }
-function fromHHMM(s: string): number {
-  const [h, m] = s.split(':').map((x) => Number(x) || 0);
+// A native <input type="time"> emits "" (and other partial strings) while
+// the field is mid-edit — e.g. clearing the hour to retype 09 -> 12. The old
+// version fell through to `0`, silently persisting a 00:00 (midnight) window
+// edge: a start time edited from 09:00 momentarily went empty and the window
+// start was saved as 00:00, making the doctor "available" from midnight and
+// flooding the booking slot picker with early-morning slots. Return null for
+// any unparseable value so callers can ignore the change and keep the last
+// valid time instead of committing midnight.
+function fromHHMM(s: string): number | null {
+  if (!s) return null;
+  const parts = s.split(':');
+  if (parts.length < 2) return null;
+  const h = Number(parts[0]);
+  const m = Number(parts[1]);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return null;
   return Math.max(0, Math.min(24 * 60, h * 60 + m));
 }
 function emptyRule(weekday: number): WeeklyRule {
@@ -1005,6 +1051,7 @@ function emptyRule(weekday: number): WeeklyRule {
 
 function AvailabilityTab() {
   const { ctx, permissions, roleNames } = useApp();
+  const isMobile = useIsMobile();
   const toast = useToast();
   const canRead = permissions.has('clinic:read');
   const canWrite = permissions.has('clinic:write');
@@ -1098,11 +1145,13 @@ function AvailabilityTab() {
   }, [canRead, ctx.branchId, doctorId]);
 
   // Pull the user list so we can show doctor names instead of raw ObjectIds.
+  // Only users holding the "doctor" role are selectable here — availability
+  // is a doctor concept, so front-desk/manager/etc. accounts are filtered out.
   // Falls back gracefully if the caller lacks user:read.
   useEffect(() => {
     if (!canRead) return;
-    apiGet<Array<{ _id: string; name: string; email?: string }>>(ctx, '/users')
-      .then((list) => setDoctors(list))
+    apiGet<Array<{ _id: string; name: string; email?: string; roles?: Array<{ _id: string; name: string }> }>>(ctx, '/users')
+      .then((list) => setDoctors(list.filter((u) => (u.roles ?? []).some((r) => (r.name || '').toLowerCase() === 'doctor'))))
       .catch(() => setDoctors([]));
   }, [ctx.clinicId, ctx.accessToken, canRead]);
 
@@ -1326,7 +1375,7 @@ function AvailabilityTab() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Doctor + branch picker */}
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: isMobile ? 14 : 20 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Doctor & branch</div>
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 10, alignItems: 'flex-end' }}>
           <div>
@@ -1362,7 +1411,7 @@ function AvailabilityTab() {
       </div>
 
       {/* Weekly rules */}
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: isMobile ? 14 : 20 }}>
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
           <div>
             <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Weekly schedule</div>
@@ -1375,6 +1424,7 @@ function AvailabilityTab() {
               key={r.weekday}
               rule={r}
               disabled={!canWriteThis}
+              isMobile={isMobile}
               onChange={(patch) => updateRule(r.weekday, patch)}
               onCopyTo={(targets) => copyRuleTo(r.weekday, targets)}
               copyTargets={{ all: ALL_WEEKDAYS, weekdays: WEEKDAYS_MON_FRI, weekend: WEEKEND }}
@@ -1397,12 +1447,12 @@ function AvailabilityTab() {
       </div>
 
       {/* Override editor */}
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
+      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: isMobile ? 14 : 20 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>Date override</div>
         <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginBottom: 12 }}>
           A day's override <strong>replaces</strong> that day's weekly windows. To add an extra evening slot, include the morning windows too.
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
+        <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 12 }}>
           <Field label="Date" value={overrideDate} onChange={setOverrideDate} placeholder="YYYY-MM-DD" type="date" />
           <div>
             <label style={labelStyle}>Type</label>
@@ -1515,7 +1565,10 @@ function AvailabilityTab() {
 
       {/* Visit types & pricing — per-doctor consultation catalog. Drives
           the BookSheet picker; each row is the price the front desk will
-          collect for that visit. */}
+          collect for that visit.
+          TEMPORARILY HIDDEN from the Availability section per request.
+          Re-enable by removing the `false && (` guard and its closing `)}`. */}
+      {false && (
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
         <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>Visit types & pricing</div>
         <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginBottom: 12 }}>
@@ -1592,6 +1645,7 @@ function AvailabilityTab() {
           </div>
         )}
       </div>
+      )}
 
       {/* Preview */}
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
@@ -1645,12 +1699,14 @@ function formatLocalHHMM(iso: string, tz: string): string {
 function RuleRow({
   rule,
   disabled,
+  isMobile,
   onChange,
   onCopyTo,
   copyTargets,
 }: {
   rule: WeeklyRule;
   disabled: boolean;
+  isMobile?: boolean;
   onChange: (p: Partial<WeeklyRule>) => void;
   onCopyTo?: (targets: number[]) => void;
   copyTargets?: { all: number[]; weekdays: number[]; weekend: number[] };
@@ -1685,7 +1741,7 @@ function RuleRow({
         {WEEKDAY_LABELS[rule.weekday]}
       </button>
       <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 6 }}>
-        <WindowsEditor value={rule.windows} onChange={(ws) => onChange({ windows: ws })} disabled={disabled || !rule.active} compact />
+        <WindowsEditor value={rule.windows} onChange={(ws) => onChange({ windows: ws })} disabled={disabled || !rule.active} compact isMobile={isMobile} />
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 11, color: 'var(--text-subtle)' }}>Slot minutes</span>
@@ -1745,7 +1801,7 @@ function CopyButton({ label, title, onClick }: { label: string; title: string; o
   );
 }
 
-function WindowsEditor({ value, onChange, disabled, compact }: { value: AvailabilityWindow[]; onChange: (v: AvailabilityWindow[]) => void; disabled?: boolean; compact?: boolean }) {
+function WindowsEditor({ value, onChange, disabled, compact, isMobile }: { value: AvailabilityWindow[]; onChange: (v: AvailabilityWindow[]) => void; disabled?: boolean; compact?: boolean; isMobile?: boolean }) {
   function update(idx: number, patch: Partial<AvailabilityWindow>) {
     onChange(value.map((w, i) => (i === idx ? { ...w, ...patch } : w)));
   }
@@ -1761,18 +1817,18 @@ function WindowsEditor({ value, onChange, disabled, compact }: { value: Availabi
         <span style={{ fontSize: 12, color: 'var(--text-subtle)', fontStyle: 'italic' }}>{disabled ? '— off —' : 'No windows'}</span>
       )}
       {value.map((w, i) => (
-        <span key={i} style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: compact ? '3px 6px' : '6px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8 }}>
+        <span key={i} style={{ display: isMobile ? 'flex' : 'inline-flex', alignItems: 'center', gap: 4, padding: compact ? '3px 6px' : '6px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, width: isMobile ? '100%' : undefined, boxSizing: 'border-box' }}>
           <Icon name="clock" size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
           <input type="time" value={toHHMM(w.startMinutes)} disabled={disabled}
-            onChange={(e) => update(i, { startMinutes: fromHHMM(e.target.value) })}
-            style={{ height: compact ? 24 : 30, padding: '0 4px', border: 'none', background: 'transparent', fontSize: 12, color: 'var(--text)', outline: 'none', fontFamily: 'monospace' }} />
-          <span style={{ color: 'var(--text-subtle)', fontSize: 11 }}>→</span>
+            onChange={(e) => { const v = fromHHMM(e.target.value); if (v !== null) update(i, { startMinutes: v }); }}
+            style={{ height: compact ? 24 : 30, padding: '0 4px', border: 'none', background: 'transparent', fontSize: 12, color: 'var(--text)', outline: 'none', fontFamily: 'monospace', flex: isMobile ? 1 : undefined, minWidth: 0 }} />
+          <span style={{ color: 'var(--text-subtle)', fontSize: 11, flexShrink: 0 }}>→</span>
           <input type="time" value={toHHMM(w.endMinutes)} disabled={disabled}
-            onChange={(e) => update(i, { endMinutes: fromHHMM(e.target.value) })}
-            style={{ height: compact ? 24 : 30, padding: '0 4px', border: 'none', background: 'transparent', fontSize: 12, color: 'var(--text)', outline: 'none', fontFamily: 'monospace' }} />
+            onChange={(e) => { const v = fromHHMM(e.target.value); if (v !== null) update(i, { endMinutes: v }); }}
+            style={{ height: compact ? 24 : 30, padding: '0 4px', border: 'none', background: 'transparent', fontSize: 12, color: 'var(--text)', outline: 'none', fontFamily: 'monospace', flex: isMobile ? 1 : undefined, minWidth: 0 }} />
           {!disabled && (
             <button onClick={() => remove(i)}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 2, marginLeft: 2 }}>
+              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 2, marginLeft: 2, flexShrink: 0 }}>
               <Icon name="x" size={11} strokeWidth={2.5} />
             </button>
           )}
@@ -1780,7 +1836,7 @@ function WindowsEditor({ value, onChange, disabled, compact }: { value: Availabi
       ))}
       {!disabled && (
         <button onClick={add}
-          style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: compact ? '3px 8px' : '6px 12px', background: 'none', border: '1.5px dashed var(--border)', borderRadius: 8, color: 'var(--text-subtle)', fontSize: 12, fontWeight: 500, cursor: 'pointer' }}>
+          style={{ display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: compact ? '3px 8px' : '6px 12px', background: 'none', border: '1.5px dashed var(--border)', borderRadius: 8, color: 'var(--text-subtle)', fontSize: 12, fontWeight: 500, cursor: 'pointer', width: isMobile ? '100%' : undefined }}>
           <Icon name="plus" size={11} strokeWidth={2.5} /> Add window
         </button>
       )}
@@ -1884,6 +1940,8 @@ type BranchAdmin = {
   slotsPerDay?: number;
   active: boolean;
   doctorCount: number;
+  upiId?: string;
+  upiQrUrl?: string;
 };
 
 function BranchesTab() {
@@ -2041,13 +2099,14 @@ function BranchSheet({ mode, initial, onClose, onSaved }: {
   onClose: () => void;
   onSaved: (b: BranchAdmin) => void;
 }) {
-  const { ctx } = useApp();
+  const { ctx, refreshMe } = useApp();
   const [name, setName] = useState(initial?.name ?? '');
   const [addressLine, setAddressLine] = useState(initial?.addressLine ?? '');
   const [phone, setPhone] = useState(initial?.phone ?? '');
   const [open, setOpen] = useState(initial?.open ?? '09:00');
   const [close, setClose] = useState(initial?.close ?? '18:00');
   const [slotsPerDay, setSlotsPerDay] = useState(String(initial?.slotsPerDay ?? 20));
+  const [upiId, setUpiId] = useState(initial?.upiId ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -2059,9 +2118,10 @@ function BranchSheet({ mode, initial, onClose, onSaved }: {
       phone.trim() !== (initial?.phone ?? '') ||
       open !== (initial?.open ?? '09:00') ||
       close !== (initial?.close ?? '18:00') ||
-      Number(slotsPerDay) !== (initial?.slotsPerDay ?? 20)
+      Number(slotsPerDay) !== (initial?.slotsPerDay ?? 20) ||
+      upiId.trim() !== (initial?.upiId ?? '')
     );
-  }, [mode, initial, name, addressLine, phone, open, close, slotsPerDay]);
+  }, [mode, initial, name, addressLine, phone, open, close, slotsPerDay, upiId]);
 
   async function submit() {
     if (!name.trim()) { setError('Branch name is required.'); return; }
@@ -2084,12 +2144,16 @@ function BranchSheet({ mode, initial, onClose, onSaved }: {
         open: open || undefined,
         close: close || undefined,
         slotsPerDay: slotsPerDay.trim() ? Math.max(0, Number(slotsPerDay) || 0) : undefined,
+        upiId: upiId.trim() || undefined,
       };
       const path = `/clinics/${encodeURIComponent(ctx.clinicId)}/branches`;
       const saved = mode === 'create'
         ? await apiPost<BranchAdmin>(ctx, path, body)
         : await apiPatch<BranchAdmin>(ctx, `${path}/${initial!._id}`, body);
       onSaved(saved);
+      if (mode === 'edit' && initial && initial._id === ctx.branchId) {
+        void refreshMe();
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -2112,6 +2176,7 @@ function BranchSheet({ mode, initial, onClose, onSaved }: {
           <Field label="Branch name" value={name} onChange={setName} placeholder="e.g. Juhu" />
           <Field label="Full address" value={addressLine} onChange={setAddressLine} placeholder="Street, area, city — pincode" />
           <Field label="Phone number" value={phone} onChange={setPhone} placeholder="+91 22 XXXX XXXX" />
+          <Field label="UPI ID" value={upiId} onChange={setUpiId} placeholder="e.g. branchname@upi" />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
             <div>
               <label style={labelStyle}>Opens at</label>
@@ -2653,7 +2718,7 @@ function AuditTab() {
   // the right, and the table flush below. Empty state uses the shared
   // EmptyState component so it stays consistent with other screens.
   const ACTIONS: Array<{ id: '' | 'CREATE' | 'UPDATE' | 'DELETE'; label: string }> = [
-    { id: '',       label: 'All' },
+    { id: '', label: 'All' },
     { id: 'CREATE', label: 'Create' },
     { id: 'UPDATE', label: 'Update' },
     { id: 'DELETE', label: 'Delete' },
@@ -2663,44 +2728,44 @@ function AuditTab() {
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg)' }}>
       {/* Toolbar matches BillingScreen exactly */}
       <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
-          <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 100, padding: 4, border: '1px solid var(--border)' }}>
-            {ACTIONS.map((a) => {
-              const active = actionFilter === a.id;
-              return (
-                <button key={a.id || 'all'} onClick={() => setActionFilter(a.id)}
-                  style={{
-                    padding: '6px 14px', borderRadius: 100, border: 'none',
-                    background: active ? 'var(--brand-100)' : 'transparent',
-                    color: active ? 'var(--text)' : 'var(--text-muted)',
-                    fontSize: 11, fontWeight: 700, cursor: 'pointer',
-                    textTransform: 'capitalize', transition: 'all 0.2s',
-                  }}>
-                  {a.label}
-                </button>
-              );
-            })}
-          </div>
+        <div style={{ display: 'flex', gap: 4, background: 'var(--surface-muted)', borderRadius: 100, padding: 4, border: '1px solid var(--border)' }}>
+          {ACTIONS.map((a) => {
+            const active = actionFilter === a.id;
+            return (
+              <button key={a.id || 'all'} onClick={() => setActionFilter(a.id)}
+                style={{
+                  padding: '6px 14px', borderRadius: 100, border: 'none',
+                  background: active ? 'var(--brand-100)' : 'transparent',
+                  color: active ? 'var(--text)' : 'var(--text-muted)',
+                  fontSize: 11, fontWeight: 700, cursor: 'pointer',
+                  textTransform: 'capitalize', transition: 'all 0.2s',
+                }}>
+                {a.label}
+              </button>
+            );
+          })}
+        </div>
 
-          <div style={{ flex: 1 }} />
+        <div style={{ flex: 1 }} />
 
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <Dropdown
-              value={actorFilter}
-              onChange={(v) => setActorFilter(v)}
-              placeholder="Search by actor…"
-              options={[
-                { value: '', label: 'All users', icon: 'users' },
-                ...Array.from(users.entries()).map(([id, name]) => ({
-                  value: id,
-                  label: name.split(' (')[0],
-                  hint: name.includes('(') ? name.split(' (')[1].replace(')', '') : undefined,
-                  icon: 'user' as IconName,
-                }))
-              ]}
-              width={220}
-              size="sm"
-            />
-          </div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+          <Dropdown
+            value={actorFilter}
+            onChange={(v) => setActorFilter(v)}
+            placeholder="Search by actor…"
+            options={[
+              { value: '', label: 'All users', icon: 'users' },
+              ...Array.from(users.entries()).map(([id, name]) => ({
+                value: id,
+                label: name.split(' (')[0],
+                hint: name.includes('(') ? name.split(' (')[1].replace(')', '') : undefined,
+                icon: 'user' as IconName,
+              }))
+            ]}
+            width={220}
+            size="sm"
+          />
+        </div>
 
         <button onClick={() => void load(true)} disabled={loading}
           style={{

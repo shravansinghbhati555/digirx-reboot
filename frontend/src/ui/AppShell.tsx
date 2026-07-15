@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import countryToCurrency from 'country-to-currency';
 import { useApp, type ScreenKey } from '../app/AppContext';
+import { useIsMobile } from '../app/useIsMobile';
 import { canAccessScreen, isScreenAllowedForRoles, Perm } from '../app/permissions';
 import { apiGet, apiPost, apiPatch } from '../app/api';
 import { Avatar, Spinner, useToast } from './shared/primitives';
@@ -108,6 +109,13 @@ export function AppShell({ children }: { children: ReactNode }) {
   const [cmdOpen, setCmdOpen] = useState(false);
   const [helpOpen, setHelpOpen] = useState(false);
   const [showLocationModal, setShowLocationModal] = useState(false);
+  // On phones the permanent sidebar becomes an off-canvas slide-over drawer
+  // toggled from a hamburger in the topbar. It closes on navigation and when
+  // the viewport grows back to desktop width.
+  const isMobile = useIsMobile();
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  useEffect(() => { setMobileNavOpen(false); }, [screen]);
+  useEffect(() => { if (isMobile) setCollapsed(false); else setMobileNavOpen(false); }, [isMobile]);
 
   // Pre-fetch global currency exchange rates relative to INR on app mount.
   // This makes sure exchange rates are always available for any currency conversion,
@@ -351,8 +359,22 @@ export function AppShell({ children }: { children: ReactNode }) {
 
   return (
     <div style={{ display: 'flex', height: '100vh', overflow: 'hidden', background: 'var(--bg)' }}>
-      {/* Left rail */}
-      <div style={{ width: rail, flexShrink: 0, background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', transition: 'width 240ms var(--ease-out)', overflow: 'hidden' }}>
+      {/* Backdrop behind the mobile slide-over nav */}
+      {isMobile && mobileNavOpen && (
+        <div onClick={() => setMobileNavOpen(false)}
+          style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,0.45)', backdropFilter: 'blur(2px)', zIndex: 55 }} />
+      )}
+      {/* Left rail — permanent on desktop, off-canvas drawer on mobile */}
+      <div style={isMobile ? {
+        position: 'fixed', top: 0, bottom: 0, left: 0, zIndex: 60, width: 248,
+        background: 'var(--surface)', borderRight: '1px solid var(--border)',
+        display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        transform: mobileNavOpen ? 'translateX(0)' : 'translateX(-100%)',
+        transition: 'transform 240ms var(--ease-out)',
+        boxShadow: mobileNavOpen ? '0 12px 40px rgba(15,23,42,0.28)' : 'none',
+      } : {
+        width: rail, flexShrink: 0, background: 'var(--surface)', borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', transition: 'width 240ms var(--ease-out)', overflow: 'hidden',
+      }}>
         {/* Logo */}
         <div style={{ height: 48, display: 'flex', alignItems: 'center', justifyContent: collapsed ? 'center' : 'flex-start', padding: collapsed ? 0 : '0 10px 0 14px', gap: 8, borderBottom: '1px solid var(--border)', flexShrink: 0 }}>
           <div style={{ width: 24, height: 24, borderRadius: 7, background: 'var(--brand-500)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -363,9 +385,9 @@ export function AppShell({ children }: { children: ReactNode }) {
               <span style={{ fontFamily: "'Manrope',sans-serif", fontSize: 15, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.4px', flex: 1 }}>
                 Digi<span style={{ color: 'var(--brand-500)' }}>Rx</span>
               </span>
-              <button onClick={() => setCollapsed(true)} title="Collapse sidebar"
+              <button onClick={() => (isMobile ? setMobileNavOpen(false) : setCollapsed(true))} title={isMobile ? 'Close menu' : 'Collapse sidebar'}
                 style={{ background: 'none', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 5, borderRadius: 7, flexShrink: 0 }}>
-                <Icon name="chevronLeft" size={14} />
+                <Icon name={isMobile ? 'x' : 'chevronLeft'} size={14} />
               </button>
             </>
           )}
@@ -465,8 +487,18 @@ export function AppShell({ children }: { children: ReactNode }) {
       {/* Main */}
       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
         {/* Topbar */}
-        <div style={{ height: 48, flexShrink: 0, background: 'var(--surface)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', padding: '0 16px', gap: 10 }}>
-          {!isDoctor && (
+        <div style={{ height: 48, flexShrink: 0, background: 'var(--surface)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', padding: isMobile ? '0 10px' : '0 16px', gap: isMobile ? 6 : 10 }}>
+          {isMobile && (
+            <button onClick={() => setMobileNavOpen(true)} aria-label="Open menu"
+              style={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, cursor: 'pointer', color: 'var(--text-muted)', flexShrink: 0 }}>
+              <span style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
+                <span style={{ width: 16, height: 2, background: 'currentColor', borderRadius: 2 }} />
+                <span style={{ width: 16, height: 2, background: 'currentColor', borderRadius: 2 }} />
+                <span style={{ width: 16, height: 2, background: 'currentColor', borderRadius: 2 }} />
+              </span>
+            </button>
+          )}
+          {!isDoctor && !isMobile && (
             <button onClick={() => setCmdOpen(true)}
               style={{ display: 'flex', alignItems: 'center', gap: 6, height: 30, padding: '0 10px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-subtle)', fontSize: 12, cursor: 'pointer', flex: '0 0 200px' }}>
               <Icon name="search" size={13} />
@@ -487,17 +519,19 @@ export function AppShell({ children }: { children: ReactNode }) {
           {/* Live clinic-time clock — only shown when the clinic's
               configured timezone differs from the user's local (location)
               timezone, so traveling/remote staff see the clinic's local
-              time. 24-hour format. */}
-          <ClinicClock timezone={ctx.timezone} />
+              time. 24-hour format. Hidden on mobile to keep the topbar from
+              overflowing. */}
+          {!isMobile && <ClinicClock timezone={ctx.timezone} />}
 
           {canCreatePatient && (
             <button onClick={() => { setNewPatientRequested(true); setScreen('patients'); }}
-              style={{ display: 'flex', alignItems: 'center', gap: 5, height: 30, padding: '0 12px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', transition: 'background 120ms, transform 120ms' }}
+              title="New patient"
+              style={{ display: 'flex', alignItems: 'center', gap: 5, height: 30, padding: isMobile ? '0 9px' : '0 12px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 600, cursor: 'pointer', flexShrink: 0, transition: 'background 120ms, transform 120ms' }}
               onMouseDown={(e) => (e.currentTarget.style.transform = 'scale(0.97)')}
               onMouseUp={(e) => (e.currentTarget.style.transform = 'scale(1)')}
               onMouseLeave={(e) => (e.currentTarget.style.transform = 'scale(1)')}>
               <Icon name="plus" size={13} strokeWidth={2.5} />
-              New
+              {!isMobile && 'New'}
             </button>
           )}
 

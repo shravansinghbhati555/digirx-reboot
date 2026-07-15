@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { useIsMobile } from '../../app/useIsMobile';
 import { Perm, usePerm } from '../../app/permissions';
 import { EmptyState, Spinner, useToast, getCurrencySymbol } from '../shared/primitives';
 import { DatePickerChip } from '../shared/DatePickerChip';
@@ -78,6 +79,7 @@ export function InventoryScreen() {
   const [error, setError] = useState<string | null>(null);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const isMobile = useIsMobile();
   const [showCreate, setShowCreate] = useState(false);
 
   // (The module-enabled gate used to live here. Removed at the user's
@@ -222,7 +224,7 @@ export function InventoryScreen() {
       <div style={{ flex: 1, overflow: 'hidden', display: 'flex' }}>
         {/* Items list — mirrors the BillingScreen table chrome: sticky
             header, --bg page body, real <table> markup, row-hover class. */}
-        <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', background: 'var(--bg)' }}>
+        <div style={{ flex: 1, minWidth: 0, overflowY: 'auto', background: 'var(--bg)', display: (isMobile && selected) ? 'none' : 'block' }}>
           {loading && items.length === 0 ? (
             <div style={{ padding: 12 }}>
               {Array.from({ length: 6 }).map((_, i) => (
@@ -440,6 +442,7 @@ function ItemDetail({
   onDeleted: () => void;
 }) {
   const { ctx } = useApp();
+  const isMobile = useIsMobile();
   const toast = useToast();
   const [tab, setTab] = useState<'batches' | 'movements'>('batches');
   const [batches, setBatches] = useState<InventoryBatch[]>([]);
@@ -482,7 +485,9 @@ function ItemDetail({
   }
 
   return (
-    <div style={{ width: 460, flexShrink: 0, borderLeft: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+    <div style={isMobile
+      ? { width: '100%', flex: 1, background: 'var(--surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }
+      : { width: 460, flexShrink: 0, borderLeft: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 10 }}>
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Item</div>

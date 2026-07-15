@@ -6,6 +6,9 @@ export type DevContext = {
   currency?: string;
   branchId?: string;
   branchName?: string;
+  branchUpiId?: string | null;
+  branchUpiQrUrl?: string | null;
+  countryCode?: string | null;
   userId: string;
   accessToken?: string;
   email?: string;
@@ -32,6 +35,8 @@ export type DevContext = {
     displayName?: string | null;
     logoUrl?: string | null;
     primaryColor?: string | null;
+    upiId?: string | null;
+    upiQrUrl?: string | null;
   };
 };
 

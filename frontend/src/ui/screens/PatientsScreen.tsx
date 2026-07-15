@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiDelete, apiGet, apiPatch, apiPost, apiPostMultipart } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { useIsMobile } from '../../app/useIsMobile';
 import { Perm, usePerm } from '../../app/permissions';
 import { isValidEmail } from '../../app/validators';
 import { countryForTimezone, dialCodeForTimezone, isValidPhoneForTimezone, normalizePhoneForTimezone } from '../../app/phone';
@@ -153,6 +154,7 @@ function alphaGroups(list: Patient[]) {
 export function PatientsScreen() {
   const { ctx, newPatientRequested, setNewPatientRequested } = useApp();
   const { has } = usePerm();
+  const isMobile = useIsMobile();
   const canCreatePatient = has(Perm.PatientWrite);
   const toast = useToast();
   const [query, setQuery] = useState('');
@@ -210,8 +212,10 @@ export function PatientsScreen() {
 
   return (
     <div style={{ display: 'flex', height: '100%', overflow: 'hidden' }}>
-      {/* Left list */}
-      <div style={{ width: 320, flexShrink: 0, borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--surface)' }}>
+      {/* Left list — full-width on mobile, hidden once a patient is opened */}
+      <div style={isMobile
+        ? { width: '100%', flexShrink: 0, display: selected ? 'none' : 'flex', flexDirection: 'column', background: 'var(--surface)' }
+        : { width: 320, flexShrink: 0, borderRight: '1px solid var(--border)', display: 'flex', flexDirection: 'column', background: 'var(--surface)' }}>
         <div style={{ padding: 12, borderBottom: '1px solid var(--border)', display: 'flex', gap: 8 }}>
           <div style={{ flex: 1, position: 'relative' }}>
             <Icon name="search" size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: 'var(--text-subtle)' }} />
@@ -264,13 +268,15 @@ export function PatientsScreen() {
         </div>
       </div>
 
-      {/* Detail */}
+      {/* Detail — on mobile it replaces the list (with a back button) */}
       {selected ? (
-        <PatientDetail key={selected._id} patient={selected} onEdit={() => setEditing(selected)} />
+        <PatientDetail key={selected._id} patient={selected} onEdit={() => setEditing(selected)} onBack={isMobile ? () => setSelected(null) : undefined} />
       ) : (
-        <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <EmptyState illustration="patients" title="No patient selected" hint="Select a patient from the list on the left to view their profile, history, and billing." />
-        </div>
+        !isMobile && (
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+            <EmptyState illustration="patients" title="No patient selected" hint="Select a patient from the list on the left to view their profile, history, and billing." />
+          </div>
+        )
       )}
 
       {showNew && (
@@ -300,8 +306,9 @@ export function PatientsScreen() {
   );
 }
 
-function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => void }) {
+function PatientDetail({ patient, onEdit, onBack }: { patient: Patient; onEdit: () => void; onBack?: () => void }) {
   const { ctx, setScreen, setSelectedPatientId } = useApp();
+  const isMobile = useIsMobile();
   const [tab, setTab] = useState<'overview' | 'history' | 'documents' | 'bills'>('overview');
   const [bills, setBills] = useState<Bill[] | null>(null);
   const [history, setHistory] = useState<HistoryResponse | null>(null);
@@ -354,7 +361,13 @@ function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => vo
   return (
     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, background: 'var(--bg)' }}>
       <div style={{ background: 'var(--surface)', borderBottom: '1px solid var(--border)', padding: '16px 20px' }}>
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16 }}>
+        {onBack && (
+          <button onClick={onBack}
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6, marginBottom: 12, background: 'none', border: '1px solid var(--border)', borderRadius: 8, padding: '5px 10px', fontSize: 12, fontWeight: 600, color: 'var(--text-muted)', cursor: 'pointer' }}>
+            <Icon name="chevronLeft" size={14} /> Back
+          </button>
+        )}
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 16, flexWrap: 'wrap' }}>
           <Avatar name={view.fullName} size={52} imageUrl={view.profileImageUrl} />
           <div style={{ flex: 1, minWidth: 0 }}>
             <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 18, fontWeight: 700, color: 'var(--text)' }}>{patient.fullName}</div>
@@ -372,13 +385,13 @@ function PatientDetail({ patient, onEdit }: { patient: Patient; onEdit: () => vo
               ))}
             </div>
           </div>
-          <div style={{ display: 'flex', gap: 8, flexShrink: 0 }}>
+          <div style={{ display: 'flex', gap: 8, flexShrink: 0, width: isMobile ? '100%' : undefined }}>
             <button onClick={onEdit}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 16px', background: 'var(--surface-muted)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, height: 36, padding: '0 16px', flex: isMobile ? 1 : undefined, background: 'var(--surface-muted)', color: 'var(--text-muted)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
               <Icon name="edit" size={14} /> Edit
             </button>
             <button onClick={bookForPatient}
-              style={{ display: 'flex', alignItems: 'center', gap: 6, height: 36, padding: '0 16px', background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
+              style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, height: 36, padding: '0 16px', flex: isMobile ? 1 : undefined, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600, cursor: 'pointer' }}>
               <Icon name="plus" size={14} strokeWidth={2.5} /> Book
             </button>
           </div>
@@ -632,7 +645,7 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)', animation: 'fadeIn 150ms ease-out' }} onClick={onClose}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)', animation: 'fadeIn 150ms ease-out' }} onClick={onClose}>
       <div {...shakeProps}
         style={{ background: 'var(--surface)', borderRadius: 20, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 480, overflow: 'visible', animation: 'slideUp 200ms ease-out', ...shakeProps.style }} onClick={(e) => e.stopPropagation()}>
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -795,6 +808,7 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
 }
 export function EditPatientModal({ patient, onClose, onUpdated }: { patient: Patient; onClose: () => void; onUpdated: (p: Patient) => void }) {
   const { ctx, features } = useApp();
+  const isMobile = useIsMobile();
   // Dial code + phone validation follow the clinic's timezone (Settings).
   const dialCode = dialCodeForTimezone(ctx.timezone);
   const { has } = usePerm();
@@ -894,10 +908,10 @@ export function EditPatientModal({ patient, onClose, onUpdated }: { patient: Pat
   }
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)', animation: 'fadeIn 150ms ease-out' }} onClick={onClose}>
+    <div style={{ position: 'fixed', inset: 0, zIndex: 100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16, background: 'rgba(15,23,42,0.4)', backdropFilter: 'blur(4px)', animation: 'fadeIn 150ms ease-out' }} onClick={onClose}>
       <div {...shakeProps}
-        style={{ background: 'var(--surface)', borderRadius: 20, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 500, overflow: 'hidden', animation: 'slideUp 200ms ease-out', ...shakeProps.style }} onClick={(e) => e.stopPropagation()}>
-        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        style={{ background: 'var(--surface)', borderRadius: 20, border: '1px solid var(--border)', boxShadow: '0 20px 60px rgba(15,23,42,0.2)', width: '100%', maxWidth: 500, maxHeight: 'calc(100vh - 32px)', display: 'flex', flexDirection: 'column', overflow: 'hidden', animation: 'slideUp 200ms ease-out', ...shakeProps.style }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           <div>
             <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 16, fontWeight: 700, color: 'var(--text)' }}>Edit patient</div>
             <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>{patient.fullName} · {patientRef(patient)}</div>
@@ -907,9 +921,9 @@ export function EditPatientModal({ patient, onClose, onUpdated }: { patient: Pat
           </button>
         </div>
 
-        <div style={{ padding: '20px 24px 280px', display: 'flex', flexDirection: 'column', gap: 14, maxHeight: '80vh', overflowY: 'auto' }}>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 }}>
-            <div style={{ gridColumn: 'span 2' }}>
+        <div style={{ padding: isMobile ? '20px 16px 24px' : '20px 24px 24px', display: 'flex', flexDirection: 'column', gap: 14, flex: 1, minHeight: 0, overflowY: 'auto' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr', gap: 14 }}>
+            <div style={{ gridColumn: isMobile ? 'auto' : 'span 2' }}>
               <Field label="Full name" value={form.fullName} onChange={(v) => set('fullName', v)} />
             </div>
             <Field label="Date of birth" value={form.dob} onChange={(v) => set('dob', v)} placeholder="Enter date of birth" type="date" optional />
@@ -929,7 +943,7 @@ export function EditPatientModal({ patient, onClose, onUpdated }: { patient: Pat
             </div>
             <Field label="Phone number" value={form.phone} onChange={handlePhoneChange} prefix={dialCode} />
             <Field label="Email address" value={form.email} onChange={(v) => set('email', v)} />
-            <div style={{ gridColumn: 'span 2' }}>
+            <div style={{ gridColumn: isMobile ? 'auto' : 'span 2' }}>
               <label style={labelStyle}>
                 Notes
                 <span style={{ color: 'var(--text-subtle)', fontWeight: 400, marginLeft: 4 }}>(optional)</span>
@@ -1006,7 +1020,7 @@ export function EditPatientModal({ patient, onClose, onUpdated }: { patient: Pat
           {error && <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.2)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--danger-500)' }}>{error}</div>}
         </div>
 
-        <div style={{ padding: '0 24px 20px', display: 'flex', gap: 10 }}>
+        <div style={{ padding: '12px 24px 20px', display: 'flex', gap: 10, flexShrink: 0, borderTop: '1px solid var(--border)' }}>
           <button onClick={onClose}
             style={{ flex: 1, height: 42, background: 'none', border: '1.5px solid var(--border)', borderRadius: 10, fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer' }}>
             Cancel
@@ -1125,6 +1139,7 @@ function buildVisits(history: HistoryResponse): Visit[] {
 }
 
 function PatientTimeline({ history }: { history: HistoryResponse }) {
+  const isMobile = useIsMobile();
   const visits = useMemo(() => buildVisits(history), [history]);
 
   if (visits.length === 0) {
@@ -1138,17 +1153,17 @@ function PatientTimeline({ history }: { history: HistoryResponse }) {
   }
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, position: 'relative', paddingLeft: 18 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 18, position: 'relative', paddingLeft: isMobile ? 2 : 18 }}>
       {/* The vertical rail behind the dots. */}
-      <div style={{ position: 'absolute', left: 25, top: 12, bottom: 12, width: 2, background: 'var(--border)', borderRadius: 1 }} />
+      <div style={{ position: 'absolute', left: isMobile ? 9 : 25, top: 12, bottom: 12, width: 2, background: 'var(--border)', borderRadius: 1 }} />
       {visits.map((v) => (
-        <VisitCard key={v.key} visit={v} />
+        <VisitCard key={v.key} visit={v} isMobile={isMobile} />
       ))}
     </div>
   );
 }
 
-function VisitCard({ visit }: { visit: Visit }) {
+function VisitCard({ visit, isMobile }: { visit: Visit; isMobile?: boolean }) {
   const v = visit;
   const headlineDoctor = v.encounter?.doctorName ?? v.appt?.doctorName ?? null;
   const headlineBranch = v.encounter?.branchName ?? v.appt?.branchName ?? v.bill?.branchName ?? null;
@@ -1162,7 +1177,7 @@ function VisitCard({ visit }: { visit: Visit }) {
       : 'var(--warning-500)';
 
   return (
-    <div style={{ display: 'flex', gap: 16, position: 'relative' }}>
+    <div style={{ display: 'flex', gap: isMobile ? 10 : 16, position: 'relative' }}>
       <div style={{ width: 16, height: 16, borderRadius: '50%', background: accent, border: '4px solid var(--bg)', flexShrink: 0, marginTop: 4, zIndex: 1 }} />
 
       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1269,8 +1284,8 @@ function EncounterRow({ encounter: e }: { encounter: Encounter }) {
     <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '10px 12px', background: 'var(--surface-muted)', borderRadius: 10, border: '1px solid var(--border)' }}>
       <Icon name="activity" size={14} style={{ color: 'var(--teal-500)', marginTop: 3 }} />
       <div style={{ flex: 1, minWidth: 0 }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 6 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', marginBottom: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, minWidth: 0, flexWrap: 'wrap' }}>
             <span style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>Clinical encounter</span>
             <span style={{ fontSize: 10, color: 'var(--text-subtle)', fontFamily: 'monospace' }}>#{e._id.slice(-8).toUpperCase()}</span>
             <StatusPill status={isSigned ? 'signed' : 'draft'} small />

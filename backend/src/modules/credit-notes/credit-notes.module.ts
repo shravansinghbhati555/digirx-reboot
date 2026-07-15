@@ -2,6 +2,7 @@ import { forwardRef, Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { BillingModule } from '../billing/billing.module';
 import { Bill, BillSchema } from '../billing/schemas/bill.schema';
+import { Payment, PaymentSchema } from '../billing/schemas/payment.schema';
 import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 import { CreditNoteNumberingService } from './credit-note-numbering.service';
@@ -22,6 +23,7 @@ import {
       { name: CreditNote.name, schema: CreditNoteSchema },
       { name: CreditNoteCounter.name, schema: CreditNoteCounterSchema },
       { name: Bill.name, schema: BillSchema },
+      { name: Payment.name, schema: PaymentSchema },
       { name: Branch.name, schema: BranchSchema },
       { name: Clinic.name, schema: ClinicSchema },
     ]),
