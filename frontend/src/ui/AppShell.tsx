@@ -383,7 +383,7 @@ export function AppShell({ children }: { children: ReactNode }) {
           {!collapsed && (
             <>
               <span style={{ fontFamily: "'Manrope',sans-serif", fontSize: 15, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.4px', flex: 1 }}>
-                Digi<span style={{ color: 'var(--brand-500)' }}>Rx</span>
+                Dizi<span style={{ color: 'var(--brand-500)' }}>Rx</span>
               </span>
               <button onClick={() => (isMobile ? setMobileNavOpen(false) : setCollapsed(true))} title={isMobile ? 'Close menu' : 'Collapse sidebar'}
                 style={{ background: 'none', border: '1px solid var(--border)', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 5, borderRadius: 7, flexShrink: 0 }}>
@@ -1012,7 +1012,7 @@ function LocationPermissionModal({
             marginBottom: 20,
           }}
         >
-          DigiRx uses your location to customize clinic branches, automate timezones, and log secure access audit logs for compliance.
+          DiziRx uses your location to customize clinic branches, automate timezones, and log secure access audit logs for compliance.
         </p>
 
         <div

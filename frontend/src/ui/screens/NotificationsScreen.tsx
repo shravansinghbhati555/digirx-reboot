@@ -31,9 +31,9 @@ type Template = {
 };
 
 const CHANNELS: Record<string, { label: string; color: string; bg: string; icon: IconName }> = {
-  EMAIL:    { label: 'Email',    color: 'var(--brand-500)',   bg: 'var(--brand-bg-soft)', icon: 'mail' },
-  SMS:      { label: 'SMS',      color: 'var(--purple-500)',  bg: 'var(--purple-bg)',     icon: 'smartphone' },
-  WHATSAPP: { label: 'WhatsApp', color: 'var(--success-500)', bg: 'var(--success-bg)',    icon: 'send' },
+  EMAIL: { label: 'Email', color: 'var(--brand-500)', bg: 'var(--brand-bg-soft)', icon: 'mail' },
+  SMS: { label: 'SMS', color: 'var(--purple-500)', bg: 'var(--purple-bg)', icon: 'smartphone' },
+  WHATSAPP: { label: 'WhatsApp', color: 'var(--success-500)', bg: 'var(--success-bg)', icon: 'send' },
 };
 
 const NOTIF_STATUS_COLORS: Record<string, string> = {
@@ -49,7 +49,7 @@ const SAMPLE = {
   appointmentTime: '10:00 AM',
   clinicName: 'Apollo Health Centre',
   branchName: 'Bandra West',
-  prescriptionUrl: 'digirx.in/rx/abc123',
+  prescriptionUrl: 'dizirx.in/rx/abc123',
   billNo: 'AHC-2026-0846',
   billAmount: '₹2,450',
   followUpDate: '10 May 2026',
@@ -353,7 +353,7 @@ function TemplatesTab() {
                 <Icon name="cross" size={14} style={{ color: 'var(--brand-500)' }} strokeWidth={2.5} />
               </div>
               <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>DigiRx</div>
+                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>DiziRx</div>
                 <div style={{ fontSize: 10, color: 'var(--text-subtle)' }}>{channel} preview</div>
               </div>
             </div>

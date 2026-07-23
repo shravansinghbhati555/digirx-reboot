@@ -1031,25 +1031,25 @@ function EncounterEditor({
               )}
             </div>
           ) : (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button onClick={() => setViewMode('chart')}
-              style={{ height: 34, padding: '0 12px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
-              <Icon name="edit" size={13} /> Edit
-            </button>
-            <button onClick={() => previewIframeRef.current?.contentWindow?.print()}
-              style={{ height: 34, padding: '0 12px', background: 'var(--brand-500)', border: '1px solid var(--brand-500)', borderRadius: 8, color: 'var(--brand-text)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
-              <Icon name="printer" size={13} /> Print
-            </button>
-            <button onClick={shareOnWhatsApp} disabled={sharing || (!signed && !prescriptionId)}
-              title={prescriptionId || signed ? 'Share via WhatsApp' : 'Save and sign first to enable sharing'}
-              style={{ height: 34, padding: '0 12px', background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)', borderRadius: 8, color: '#25D366', fontSize: 12, fontWeight: 600, cursor: (sharing || (!signed && !prescriptionId)) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, opacity: (sharing || (!signed && !prescriptionId)) ? 0.5 : 1 }}>
-              {sharing ? <Spinner size={13} /> : <><Icon name="share" size={13} /> Share</>}
-            </button>
-            <button onClick={onClose}
-              style={{ height: 34, padding: '0 12px', background: 'none', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
-              <Icon name="x" size={13} /> Close
-            </button>
-          </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button onClick={() => setViewMode('chart')}
+                style={{ height: 34, padding: '0 12px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <Icon name="edit" size={13} /> Edit
+              </button>
+              <button onClick={() => previewIframeRef.current?.contentWindow?.print()}
+                style={{ height: 34, padding: '0 12px', background: 'var(--brand-500)', border: '1px solid var(--brand-500)', borderRadius: 8, color: 'var(--brand-text)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <Icon name="printer" size={13} /> Print
+              </button>
+              <button onClick={shareOnWhatsApp} disabled={sharing || (!signed && !prescriptionId)}
+                title={prescriptionId || signed ? 'Share via WhatsApp' : 'Save and sign first to enable sharing'}
+                style={{ height: 34, padding: '0 12px', background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)', borderRadius: 8, color: '#25D366', fontSize: 12, fontWeight: 600, cursor: (sharing || (!signed && !prescriptionId)) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, opacity: (sharing || (!signed && !prescriptionId)) ? 0.5 : 1 }}>
+                {sharing ? <Spinner size={13} /> : <><Icon name="share" size={13} /> Share</>}
+              </button>
+              <button onClick={onClose}
+                style={{ height: 34, padding: '0 12px', background: 'none', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <Icon name="x" size={13} /> Close
+              </button>
+            </div>
           )}
         </div>
         <div style={{ flex: 1, minHeight: 0, minWidth: 0, padding: isMobile ? 8 : 20, overflow: 'auto', WebkitOverflowScrolling: 'touch' }}>
@@ -1306,68 +1306,68 @@ function EncounterEditor({
                     it scrolls horizontally inside this wrapper (header + rows
                     stay aligned) instead of breaking the layout. */}
                 <div style={{ overflowX: isMobile ? 'auto' : undefined, display: 'flex', flexDirection: 'column', gap: 8, WebkitOverflowScrolling: 'touch' }}>
-                {rx.some(r => r.med.trim()) && (
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'minmax(180px, 2fr) 30px 80px 80px 80px minmax(140px, 1.6fr) 40px',
-                    minWidth: isMobile ? 700 : undefined,
-                    gap: 10,
-                    padding: '0 12px 4px',
-                    border: '1px solid transparent',
-                    boxSizing: 'border-box',
-                    fontSize: 10,
-                    fontWeight: 700,
-                    color: 'var(--text-subtle)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.06em'
-                  }}>
-                    <span>Medicine</span>
-                    <span />
-                    <span>Dose</span>
-                    <span>Freq</span>
-                    <span>Duration</span>
-                    <span>Instructions</span>
-                    <span />
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {rx.map((item) => (
-                    <div key={item.id} style={{
+                  {rx.some(r => r.med.trim()) && (
+                    <div style={{
                       display: 'grid',
                       gridTemplateColumns: 'minmax(180px, 2fr) 30px 80px 80px 80px minmax(140px, 1.6fr) 40px',
-                    minWidth: isMobile ? 700 : undefined,
+                      minWidth: isMobile ? 700 : undefined,
                       gap: 10,
-                      padding: '8px 12px',
-                      background: 'var(--surface-muted)',
-                      borderRadius: 12,
-                      border: '1px solid var(--border)',
+                      padding: '0 12px 4px',
+                      border: '1px solid transparent',
                       boxSizing: 'border-box',
-                      alignItems: 'center'
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: 'var(--text-subtle)',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.06em'
                     }}>
-                      <MedicineTypeahead
-                        ctx={ctx}
-                        branchId={ctx.branchId}
-                        value={item.med}
-                        onChange={(patch) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, ...patch } : x))}
-                        stockStatus={item.stockStatus}
-                        onHand={item.onHand}
-                      />
-                      <VoiceInput onTranscript={(text) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, med: x.med ? x.med.trim() + ' ' + text.trim() : text.trim() } : x))} />
-                      <input value={item.dose} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dose: e.target.value } : x))} placeholder="1 tab" style={rxInputStyle} />
-                      <select value={item.freq} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, freq: e.target.value } : x))} style={{ ...rxInputStyle, cursor: 'pointer' }}>
-                        <option value="">Freq</option>
-                        <option>OD</option><option>BD</option><option>TDS</option><option>QID</option><option>SOS</option>
-                      </select>
-                      <input value={item.dur} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dur: e.target.value } : x))} placeholder="7 days" style={rxInputStyle} />
-                      <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} placeholder="Instructions" style={rxInputStyle} />
-
-                      <button onClick={() => setRx((r) => r.filter((x) => x.id !== item.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-500)', padding: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Icon name="trash" size={15} />
-                      </button>
+                      <span>Medicine</span>
+                      <span />
+                      <span>Dose</span>
+                      <span>Freq</span>
+                      <span>Duration</span>
+                      <span>Instructions</span>
+                      <span />
                     </div>
-                  ))}
-                </div>
+                  )}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {rx.map((item) => (
+                      <div key={item.id} style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(180px, 2fr) 30px 80px 80px 80px minmax(140px, 1.6fr) 40px',
+                        minWidth: isMobile ? 700 : undefined,
+                        gap: 10,
+                        padding: '8px 12px',
+                        background: 'var(--surface-muted)',
+                        borderRadius: 12,
+                        border: '1px solid var(--border)',
+                        boxSizing: 'border-box',
+                        alignItems: 'center'
+                      }}>
+                        <MedicineTypeahead
+                          ctx={ctx}
+                          branchId={ctx.branchId}
+                          value={item.med}
+                          onChange={(patch) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, ...patch } : x))}
+                          stockStatus={item.stockStatus}
+                          onHand={item.onHand}
+                        />
+                        <VoiceInput onTranscript={(text) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, med: x.med ? x.med.trim() + ' ' + text.trim() : text.trim() } : x))} />
+                        <input value={item.dose} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dose: e.target.value } : x))} placeholder="1 tab" style={rxInputStyle} />
+                        <select value={item.freq} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, freq: e.target.value } : x))} style={{ ...rxInputStyle, cursor: 'pointer' }}>
+                          <option value="">Freq</option>
+                          <option>OD</option><option>BD</option><option>TDS</option><option>QID</option><option>SOS</option>
+                        </select>
+                        <input value={item.dur} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dur: e.target.value } : x))} placeholder="7 days" style={rxInputStyle} />
+                        <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} placeholder="Instructions" style={rxInputStyle} />
+
+                        <button onClick={() => setRx((r) => r.filter((x) => x.id !== item.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-500)', padding: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Icon name="trash" size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 <button onClick={() => setRx((r) => [...r, { id: nextRxId.current++, med: '', dose: '', freq: '', dur: '', note: '', qty: '' }])}
@@ -2252,7 +2252,7 @@ function buildPrescriptionHtml(input: PrescriptionPrintInput): string {
     <!-- FOOTER -->
     <footer class="foot">
       <div class="foot-meta">
-        Generated by DigiRx · digirx.in<br>
+        Generated by DiziRx · dizirx.in<br>
         This prescription is valid for 30 days from the date of issue.
 
       </div>
