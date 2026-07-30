@@ -1730,7 +1730,13 @@ function MedicineTypeahead({
               toast("Special characters are not allowed in medicine name.", "error");
             }
           }}
-          onFocus={() => setOpen(true)}
+          onFocus={() => {
+            if (inputRef.current) {
+              const rect = inputRef.current.getBoundingClientRect();
+              setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+            }
+            setOpen(true);
+          }}
           onKeyDown={(e) => {
             if (e.key === 'Escape') setOpen(false);
           }}
