@@ -1031,25 +1031,25 @@ function EncounterEditor({
               )}
             </div>
           ) : (
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button onClick={() => setViewMode('chart')}
-              style={{ height: 34, padding: '0 12px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
-              <Icon name="edit" size={13} /> Edit
-            </button>
-            <button onClick={() => previewIframeRef.current?.contentWindow?.print()}
-              style={{ height: 34, padding: '0 12px', background: 'var(--brand-500)', border: '1px solid var(--brand-500)', borderRadius: 8, color: 'var(--brand-text)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
-              <Icon name="printer" size={13} /> Print
-            </button>
-            <button onClick={shareOnWhatsApp} disabled={sharing || (!signed && !prescriptionId)}
-              title={prescriptionId || signed ? 'Share via WhatsApp' : 'Save and sign first to enable sharing'}
-              style={{ height: 34, padding: '0 12px', background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)', borderRadius: 8, color: '#25D366', fontSize: 12, fontWeight: 600, cursor: (sharing || (!signed && !prescriptionId)) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, opacity: (sharing || (!signed && !prescriptionId)) ? 0.5 : 1 }}>
-              {sharing ? <Spinner size={13} /> : <><Icon name="share" size={13} /> Share</>}
-            </button>
-            <button onClick={onClose}
-              style={{ height: 34, padding: '0 12px', background: 'none', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
-              <Icon name="x" size={13} /> Close
-            </button>
-          </div>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button onClick={() => setViewMode('chart')}
+                style={{ height: 34, padding: '0 12px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <Icon name="edit" size={13} /> Edit
+              </button>
+              <button onClick={() => previewIframeRef.current?.contentWindow?.print()}
+                style={{ height: 34, padding: '0 12px', background: 'var(--brand-500)', border: '1px solid var(--brand-500)', borderRadius: 8, color: 'var(--brand-text)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <Icon name="printer" size={13} /> Print
+              </button>
+              <button onClick={shareOnWhatsApp} disabled={sharing || (!signed && !prescriptionId)}
+                title={prescriptionId || signed ? 'Share via WhatsApp' : 'Save and sign first to enable sharing'}
+                style={{ height: 34, padding: '0 12px', background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)', borderRadius: 8, color: '#25D366', fontSize: 12, fontWeight: 600, cursor: (sharing || (!signed && !prescriptionId)) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, opacity: (sharing || (!signed && !prescriptionId)) ? 0.5 : 1 }}>
+                {sharing ? <Spinner size={13} /> : <><Icon name="share" size={13} /> Share</>}
+              </button>
+              <button onClick={onClose}
+                style={{ height: 34, padding: '0 12px', background: 'none', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <Icon name="x" size={13} /> Close
+              </button>
+            </div>
           )}
         </div>
         <div style={{ flex: 1, minHeight: 0, minWidth: 0, padding: isMobile ? 8 : 20, overflow: 'auto', WebkitOverflowScrolling: 'touch' }}>
@@ -1306,68 +1306,68 @@ function EncounterEditor({
                     it scrolls horizontally inside this wrapper (header + rows
                     stay aligned) instead of breaking the layout. */}
                 <div style={{ overflowX: isMobile ? 'auto' : undefined, display: 'flex', flexDirection: 'column', gap: 8, WebkitOverflowScrolling: 'touch' }}>
-                {rx.some(r => r.med.trim()) && (
-                  <div style={{
-                    display: 'grid',
-                    gridTemplateColumns: 'minmax(180px, 2fr) 30px 80px 80px 80px minmax(140px, 1.6fr) 40px',
-                    minWidth: isMobile ? 700 : undefined,
-                    gap: 10,
-                    padding: '0 12px 4px',
-                    border: '1px solid transparent',
-                    boxSizing: 'border-box',
-                    fontSize: 10,
-                    fontWeight: 700,
-                    color: 'var(--text-subtle)',
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.06em'
-                  }}>
-                    <span>Medicine</span>
-                    <span />
-                    <span>Dose</span>
-                    <span>Freq</span>
-                    <span>Duration</span>
-                    <span>Instructions</span>
-                    <span />
-                  </div>
-                )}
-
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {rx.map((item) => (
-                    <div key={item.id} style={{
+                  {rx.some(r => r.med.trim()) && (
+                    <div style={{
                       display: 'grid',
                       gridTemplateColumns: 'minmax(180px, 2fr) 30px 80px 80px 80px minmax(140px, 1.6fr) 40px',
-                    minWidth: isMobile ? 700 : undefined,
+                      minWidth: isMobile ? 700 : undefined,
                       gap: 10,
-                      padding: '8px 12px',
-                      background: 'var(--surface-muted)',
-                      borderRadius: 12,
-                      border: '1px solid var(--border)',
+                      padding: '0 12px 4px',
+                      border: '1px solid transparent',
                       boxSizing: 'border-box',
-                      alignItems: 'center'
+                      fontSize: 10,
+                      fontWeight: 700,
+                      color: 'var(--text-subtle)',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.06em'
                     }}>
-                      <MedicineTypeahead
-                        ctx={ctx}
-                        branchId={ctx.branchId}
-                        value={item.med}
-                        onChange={(patch) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, ...patch } : x))}
-                        stockStatus={item.stockStatus}
-                        onHand={item.onHand}
-                      />
-                      <VoiceInput onTranscript={(text) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, med: x.med ? x.med.trim() + ' ' + text.trim() : text.trim() } : x))} />
-                      <input value={item.dose} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dose: e.target.value } : x))} placeholder="1 tab" style={rxInputStyle} />
-                      <select value={item.freq} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, freq: e.target.value } : x))} style={{ ...rxInputStyle, cursor: 'pointer' }}>
-                        <option value="">Freq</option>
-                        <option>OD</option><option>BD</option><option>TDS</option><option>QID</option><option>SOS</option>
-                      </select>
-                      <input value={item.dur} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dur: e.target.value } : x))} placeholder="7 days" style={rxInputStyle} />
-                      <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} placeholder="Instructions" style={rxInputStyle} />
-
-                      <button onClick={() => setRx((r) => r.filter((x) => x.id !== item.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-500)', padding: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                        <Icon name="trash" size={15} />
-                      </button>
+                      <span>Medicine</span>
+                      <span />
+                      <span>Dose</span>
+                      <span>Freq</span>
+                      <span>Duration</span>
+                      <span>Instructions</span>
+                      <span />
                     </div>
-                  ))}
-                </div>
+                  )}
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {rx.map((item) => (
+                      <div key={item.id} style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(180px, 2fr) 30px 80px 80px 80px minmax(140px, 1.6fr) 40px',
+                        minWidth: isMobile ? 700 : undefined,
+                        gap: 10,
+                        padding: '8px 12px',
+                        background: 'var(--surface-muted)',
+                        borderRadius: 12,
+                        border: '1px solid var(--border)',
+                        boxSizing: 'border-box',
+                        alignItems: 'center'
+                      }}>
+                        <MedicineTypeahead
+                          ctx={ctx}
+                          branchId={ctx.branchId}
+                          value={item.med}
+                          onChange={(patch) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, ...patch } : x))}
+                          stockStatus={item.stockStatus}
+                          onHand={item.onHand}
+                        />
+                        <VoiceInput onTranscript={(text) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, med: x.med ? x.med.trim() + ' ' + text.trim() : text.trim() } : x))} />
+                        <input value={item.dose} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dose: e.target.value } : x))} placeholder="1 tab" style={rxInputStyle} />
+                        <select value={item.freq} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, freq: e.target.value } : x))} style={{ ...rxInputStyle, cursor: 'pointer' }}>
+                          <option value="">Freq</option>
+                          <option>OD</option><option>BD</option><option>TDS</option><option>QID</option><option>SOS</option>
+                        </select>
+                        <input value={item.dur} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, dur: e.target.value } : x))} placeholder="7 days" style={rxInputStyle} />
+                        <input value={item.note} onChange={(e) => setRx((r) => r.map((x) => x.id === item.id ? { ...x, note: e.target.value } : x))} placeholder="Instructions" style={rxInputStyle} />
+
+                        <button onClick={() => setRx((r) => r.filter((x) => x.id !== item.id))} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--danger-500)', padding: 8, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                          <Icon name="trash" size={15} />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 </div>
 
                 <button onClick={() => setRx((r) => [...r, { id: nextRxId.current++, med: '', dose: '', freq: '', dur: '', note: '', qty: '' }])}
@@ -1468,6 +1468,54 @@ const rxInputStyle: React.CSSProperties = {
  * (i.e. just picked); previously-saved rows reload without it on purpose
  * to avoid a stale "in stock" claim if levels changed.
  */
+const POPULAR_MEDICINES: Array<{ name: string; dose?: string; freq?: string; dur?: string }> = [
+  { name: 'Paracetamol 650mg', dose: '650mg', freq: 'TDS', dur: '3 days' },
+  { name: 'Paracetamol 500mg', dose: '500mg', freq: 'TDS', dur: '3 days' },
+  { name: 'Dolo 650', dose: '650mg', freq: 'TDS', dur: '3 days' },
+  { name: 'Calpol 650', dose: '650mg', freq: 'TDS', dur: '3 days' },
+  { name: 'Crocin 500', dose: '500mg', freq: 'TDS', dur: '3 days' },
+  { name: 'Amoxicillin 500mg', dose: '500mg', freq: 'BD', dur: '5 days' },
+  { name: 'Augmentin 625mg', dose: '625mg', freq: 'BD', dur: '5 days' },
+  { name: 'Azithromycin 500mg', dose: '500mg', freq: 'OD', dur: '3 days' },
+  { name: 'Pantoprazole 40mg', dose: '40mg', freq: 'OD', dur: '7 days' },
+  { name: 'Pan D', dose: '1 cap', freq: 'OD', dur: '7 days' },
+  { name: 'Pantocid 40', dose: '40mg', freq: 'OD', dur: '7 days' },
+  { name: 'Omeprazole 20mg', dose: '20mg', freq: 'OD', dur: '7 days' },
+  { name: 'Cetirizine 10mg', dose: '10mg', freq: 'OD', dur: '5 days' },
+  { name: 'Montelukast 10mg', dose: '10mg', freq: 'OD', dur: '10 days' },
+  { name: 'Allegra 120mg', dose: '120mg', freq: 'OD', dur: '5 days' },
+  { name: 'Combiflam', dose: '1 tab', freq: 'BD', dur: '3 days' },
+  { name: 'Ibuprofen 400mg', dose: '400mg', freq: 'BD', dur: '3 days' },
+  { name: 'Metformin 500mg', dose: '500mg', freq: 'BD', dur: '30 days' },
+  { name: 'Telmisartan 40mg', dose: '40mg', freq: 'OD', dur: '30 days' },
+  { name: 'Amlodipine 5mg', dose: '5mg', freq: 'OD', dur: '30 days' },
+  { name: 'Atorvastatin 10mg', dose: '10mg', freq: 'OD', dur: '30 days' },
+  { name: 'Ciprofloxacin 500mg', dose: '500mg', freq: 'BD', dur: '5 days' },
+  { name: 'Ondansetron 4mg', dose: '4mg', freq: 'SOS', dur: '3 days' },
+  { name: 'Vomikind 4mg', dose: '4mg', freq: 'SOS', dur: '3 days' },
+  { name: 'Ranitidine 150mg', dose: '150mg', freq: 'BD', dur: '7 days' },
+  { name: 'Gelusil Syrup', dose: '10ml', freq: 'TDS', dur: '5 days' },
+  { name: 'Ascoril LS Syrup', dose: '5ml', freq: 'TDS', dur: '5 days' },
+  { name: 'Benadryl Syrup', dose: '5ml', freq: 'TDS', dur: '5 days' },
+  { name: 'Meftal Spas', dose: '1 tab', freq: 'SOS', dur: '3 days' },
+  { name: 'Zerodol SP', dose: '1 tab', freq: 'BD', dur: '3 days' },
+];
+
+type SuggestionItem = {
+  key: string;
+  name: string;
+  type: 'INVENTORY' | 'CATALOG' | 'INTERNET' | 'POPULAR';
+  sku?: string;
+  unit?: string;
+  onHand?: number;
+  status?: RxStockStatus;
+  dose?: string;
+  freq?: string;
+  dur?: string;
+  inventoryItemId?: string;
+  medicineCatalogItemId?: string;
+};
+
 function MedicineTypeahead({
   ctx, branchId, value, onChange, disabled, stockStatus, onHand,
 }: {
@@ -1479,24 +1527,18 @@ function MedicineTypeahead({
   stockStatus?: RxStockStatus;
   onHand?: number;
 }) {
-  // Inventory-driven suggestions temporarily disabled. Flip this flag
-  // back to `true` to restore the dropdown + stock chips + the
-  // `/inventory/availability` fetch below. The input still accepts
-  // free-text medicine names while disabled.
-  const SUGGESTIONS_ENABLED = false;
+  const SUGGESTIONS_ENABLED = true;
 
   const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<AvailabilityRow[]>([]);
+  const [results, setResults] = useState<SuggestionItem[]>([]);
   const [loading, setLoading] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const toast = useToast();
 
   const hasSpecial = /[^a-zA-Z0-9\s\-.]/.test(value);
 
-  // Close on outside click. Mousedown rather than click so a click on a
-  // result fires before this listener strips the dropdown.
+  // Close on outside click.
   useEffect(() => {
-    if (!SUGGESTIONS_ENABLED) return;
     if (!open) return;
     function onDocMouseDown(e: MouseEvent) {
       if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
@@ -1505,32 +1547,143 @@ function MedicineTypeahead({
     }
     document.addEventListener('mousedown', onDocMouseDown);
     return () => document.removeEventListener('mousedown', onDocMouseDown);
-  }, [open, SUGGESTIONS_ENABLED]);
+  }, [open]);
 
-  // Debounced fetch on value change. Only when input is focused/open and
-  // a branch is set — without branchId the BE returns 400.
+  // Debounced fetch on value change from local DB & Internet Medical API
   useEffect(() => {
-    if (!SUGGESTIONS_ENABLED) return;
-    if (!open || !branchId) return;
-    const t = setTimeout(() => {
-      const qs = new URLSearchParams({ branchId, query: value, limit: '20' });
+    if (!open) return;
+    const q = value.trim().toLowerCase();
+    const t = setTimeout(async () => {
       setLoading(true);
-      apiGet<AvailabilityRow[]>(ctx, `/inventory/availability?${qs.toString()}`)
-        .then((rows) => setResults(Array.isArray(rows) ? rows : []))
-        .catch(() => setResults([]))
-        .finally(() => setLoading(false));
+      try {
+        const promises: Promise<any>[] = [];
+
+        // 1. Inventory Stock Lookup
+        if (branchId && value.trim()) {
+          const qs = new URLSearchParams({ branchId, query: value, limit: '10' });
+          promises.push(apiGet<AvailabilityRow[]>(ctx, `/inventory/availability?${qs.toString()}`).catch(() => []));
+        } else {
+          promises.push(Promise.resolve([]));
+        }
+
+        // 2. Local Medicine Catalog Lookup
+        if (value.trim()) {
+          promises.push(apiGet<any[]>(ctx, `/medicines?query=${encodeURIComponent(value)}&limit=10`).catch(() => []));
+        } else {
+          promises.push(Promise.resolve([]));
+        }
+
+        // 3. Internet Medical API (NIH RxTerms Open API - free, live online drug search)
+        if (q.length >= 2) {
+          const onlineApiUrl = `https://clinicaltables.nlm.nih.gov/api/rxterms/v3/search?terms=${encodeURIComponent(value)}&ef=STRENGTHS_AND_FORMS`;
+          promises.push(
+            fetch(onlineApiUrl)
+              .then((r) => r.json())
+              .then((data) => {
+                if (Array.isArray(data) && Array.isArray(data[1])) {
+                  const names: string[] = data[1];
+                  const strengthsArr = data[2]?.STRENGTHS_AND_FORMS || [];
+                  return names.map((rawName, i) => ({
+                    name: rawName.replace(/\s*\([^)]*\)/g, '').trim(),
+                    dose: strengthsArr[i]?.[0] || undefined,
+                  }));
+                }
+                return [];
+              })
+              .catch(() => [])
+          );
+        } else {
+          promises.push(Promise.resolve([]));
+        }
+
+        const [invRows, catRows, internetRows] = await Promise.all(promises);
+
+        const items: SuggestionItem[] = [];
+        const seenNames = new Set<string>();
+
+        // Merge Inventory Stock items
+        (Array.isArray(invRows) ? invRows : []).forEach((row: AvailabilityRow) => {
+          seenNames.add(row.name.toLowerCase());
+          items.push({
+            key: `inv-${row._id}`,
+            name: row.name,
+            type: 'INVENTORY',
+            sku: row.sku,
+            unit: row.unit,
+            onHand: row.onHand,
+            status: row.status,
+            inventoryItemId: row._id,
+            medicineCatalogItemId: row.medicineCatalogItemId,
+          });
+        });
+
+        // Merge Clinic Medicine Catalog items
+        (Array.isArray(catRows) ? catRows : []).forEach((cat: any) => {
+          if (!seenNames.has(cat.name.toLowerCase())) {
+            seenNames.add(cat.name.toLowerCase());
+            items.push({
+              key: `cat-${cat._id}`,
+              name: cat.name,
+              type: 'CATALOG',
+              medicineCatalogItemId: cat._id,
+              dose: cat.strengths?.[0] || undefined,
+            });
+          }
+        });
+
+        // Merge Live Internet API items
+        (Array.isArray(internetRows) ? internetRows : []).forEach((net: any, idx: number) => {
+          if (net.name && !seenNames.has(net.name.toLowerCase())) {
+            seenNames.add(net.name.toLowerCase());
+            items.push({
+              key: `net-${idx}-${net.name}`,
+              name: net.name,
+              type: 'INTERNET',
+              dose: net.dose,
+            });
+          }
+        });
+
+        // Merge Popular Common Medicines
+        POPULAR_MEDICINES.forEach((pop, idx) => {
+          if (!q || pop.name.toLowerCase().includes(q)) {
+            if (!seenNames.has(pop.name.toLowerCase())) {
+              seenNames.add(pop.name.toLowerCase());
+              items.push({
+                key: `pop-${idx}`,
+                name: pop.name,
+                type: 'POPULAR',
+                dose: pop.dose,
+                freq: pop.freq,
+                dur: pop.dur,
+              });
+            }
+          }
+        });
+
+        setResults(items);
+      } catch {
+        setResults([]);
+      } finally {
+        setLoading(false);
+      }
     }, 180);
     return () => clearTimeout(t);
-  }, [open, value, branchId, ctx, SUGGESTIONS_ENABLED]);
+  }, [open, value, branchId, ctx]);
 
-  function pick(row: AvailabilityRow) {
-    onChange({
-      med: row.name,
-      inventoryItemId: row._id,
-      medicineCatalogItemId: row.medicineCatalogItemId,
-      stockStatus: row.status,
-      onHand: row.onHand,
-    });
+  function pick(item: SuggestionItem) {
+    const patch: Partial<RxItem> = {
+      med: item.name,
+      inventoryItemId: item.inventoryItemId,
+      medicineCatalogItemId: item.medicineCatalogItemId,
+      stockStatus: item.status,
+      onHand: item.onHand,
+    };
+    if (item.dose) patch.dose = item.dose;
+    if (item.freq) patch.freq = item.freq;
+    if (item.dur) patch.dur = item.dur;
+
+    onChange(patch);
     setOpen(false);
   }
 
@@ -1542,9 +1695,6 @@ function MedicineTypeahead({
           onChange={(e) => {
             onChange({
               med: e.target.value,
-              // Typing breaks the inventory link until the doctor picks again
-              // — without this a free-text edit would still claim the old
-              // catalog ID at save time.
               inventoryItemId: undefined,
               medicineCatalogItemId: undefined,
               stockStatus: undefined,
@@ -1557,12 +1707,12 @@ function MedicineTypeahead({
               toast("Special characters are not allowed in medicine name.", "error");
             }
           }}
-          onFocus={() => { if (SUGGESTIONS_ENABLED) setOpen(true); }}
+          onFocus={() => setOpen(true)}
           onKeyDown={(e) => {
             if (e.key === 'Escape') setOpen(false);
           }}
           disabled={disabled}
-          placeholder="Medicine name"
+          placeholder="Search medicine (inventory / internet)…"
           style={{
             ...rxInputStyle,
             paddingRight: stockStatus ? 28 : rxInputStyle.padding,
@@ -1589,54 +1739,66 @@ function MedicineTypeahead({
       {SUGGESTIONS_ENABLED && open && !disabled && (
         <div style={{
           position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 4,
-          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8,
-          boxShadow: 'var(--e3, 0 8px 24px rgba(15,23,42,0.12))',
-          maxHeight: 260, overflowY: 'auto',
+          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
+          boxShadow: '0 12px 32px rgba(15,23,42,0.16)',
+          maxHeight: 280, overflowY: 'auto',
         }}>
-          {!branchId && (
+          {loading && results.length === 0 && (
+            <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-subtle)' }}>Searching medicines online & inventory…</div>
+          )}
+          {!loading && results.length === 0 && (
             <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-subtle)' }}>
-              Set a branch in your context to see stock availability.
+              No suggestions found — press Enter or keep typing for custom medicine name.
             </div>
           )}
-          {branchId && loading && results.length === 0 && (
-            <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-subtle)' }}>Searching…</div>
-          )}
-          {branchId && !loading && results.length === 0 && (
-            <div style={{ padding: '10px 12px', fontSize: 11, color: 'var(--text-subtle)' }}>
-              {value.trim()
-                ? 'No stocked match — your typed name will still be saved as a free-text item.'
-                : 'Start typing to search inventory.'}
-            </div>
-          )}
-          {results.map((row) => {
-            const palette = chipPalette(row.status);
+          {results.map((item) => {
+            const isStocked = item.type === 'INVENTORY' && item.status;
+            const palette = isStocked ? chipPalette(item.status!) : null;
+
             return (
               <button
-                key={row._id}
+                key={item.key}
                 type="button"
-                onClick={() => pick(row)}
+                onClick={() => pick(item)}
                 style={{
                   width: '100%', display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '8px 10px', textAlign: 'left',
+                  padding: '8px 12px', textAlign: 'left',
                   background: 'none', border: 'none', cursor: 'pointer',
                   borderBottom: '1px solid var(--border)',
-                }}>
+                  transition: 'background 0.15s',
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-muted)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
+              >
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {row.name}
+                    {item.name}
                   </div>
-                  <div style={{ fontSize: 10, color: 'var(--text-subtle)' }}>
-                    {row.sku ? row.sku + ' · ' : ''}
-                    {row.onHand} {row.unit.toLowerCase()}{row.onHand === 1 ? '' : 's'} on hand
+                  <div style={{ fontSize: 10, color: 'var(--text-subtle)', marginTop: 1 }}>
+                    {item.type === 'INVENTORY' && `${item.sku ? item.sku + ' · ' : ''}${item.onHand} ${item.unit?.toLowerCase() ?? 'unit'}s stock`}
+                    {item.type === 'CATALOG' && 'Clinic Catalog'}
+                    {item.type === 'INTERNET' && (item.dose ? `Internet Drug Database · ${item.dose}` : 'Internet Search')}
+                    {item.type === 'POPULAR' && (item.dose ? `Suggested · ${item.dose} · ${item.freq || ''}` : 'Popular medicine')}
                   </div>
                 </div>
-                <span style={{
-                  fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 100,
-                  background: palette.bg, color: palette.fg, border: `1px solid ${palette.border}`,
-                  whiteSpace: 'nowrap',
-                }}>
-                  {row.status === 'IN_STOCK' ? 'In stock' : row.status === 'LOW_STOCK' ? 'Low stock' : 'Out of stock'}
-                </span>
+
+                {palette ? (
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 100,
+                    background: palette.bg, color: palette.fg, border: `1px solid ${palette.border}`,
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {item.status === 'IN_STOCK' ? 'In stock' : item.status === 'LOW_STOCK' ? 'Low stock' : 'Out of stock'}
+                  </span>
+                ) : item.type === 'INTERNET' ? (
+                  <span style={{
+                    fontSize: 9, fontWeight: 700, padding: '2px 7px', borderRadius: 100,
+                    background: 'var(--brand-50)', color: 'var(--brand-600)', border: '1px solid var(--brand-200)',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    Online
+                  </span>
+                ) : null}
               </button>
             );
           })}

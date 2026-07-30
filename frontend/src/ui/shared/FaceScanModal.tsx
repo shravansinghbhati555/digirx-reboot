@@ -110,18 +110,31 @@ export function FaceScanModal({
         }
         streamRef.current = stream;
         if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play().catch(() => undefined);
           const v = videoRef.current;
+          v.srcObject = stream;
+          // iOS Safari rejects play() unless the video element's
+          // metadata has been parsed first. Wait for loadedmetadata,
+          // THEN call play() — this is safe on Android too.
+          await new Promise<void>((resolve) => {
+            const onMeta = () => {
+              v.removeEventListener('loadedmetadata', onMeta);
+              resolve();
+            };
+            // If metadata is already available (e.g. re-mount), resolve
+            // immediately instead of waiting forever.
+            if (v.readyState >= 1) {
+              resolve();
+            } else {
+              v.addEventListener('loadedmetadata', onMeta);
+            }
+          });
+          if (cancelled) return;
+          await v.play().catch(() => undefined);
           // Once the video resolves its real size, store it for the bbox
           // overlay's SVG viewBox so pixel coords from MediaPipe line up.
-          const updateDims = () => {
-            if (v.videoWidth && v.videoHeight) {
-              setVideoDims({ w: v.videoWidth, h: v.videoHeight });
-            }
-          };
-          v.addEventListener('loadedmetadata', updateDims);
-          updateDims();
+          if (v.videoWidth && v.videoHeight) {
+            setVideoDims({ w: v.videoWidth, h: v.videoHeight });
+          }
         }
         setPermission('ok');
       } catch (e) {
@@ -318,6 +331,7 @@ export function FaceScanModal({
             )}
             <video
               ref={videoRef}
+              autoPlay
               playsInline
               muted
               style={{
@@ -517,6 +531,27 @@ type MediaPipeDetector = {
   close(): void;
 };
 
+/**
+ * Converts a canvas to a JPEG Blob. Uses toBlob() first, with a
+ * toDataURL() fallback for iOS Safari where toBlob() can return null
+ * (known issue with the quality parameter on certain WebKit builds).
+ */
+async function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.92),
+  );
+  if (blob) return blob;
+
+  // Fallback: toDataURL is universally supported and never returns null.
+  try {
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.92);
+    const resp = await fetch(dataUrl);
+    return await resp.blob();
+  } catch {
+    return null;
+  }
+}
+
 async function grabFrame(
   video: HTMLVideoElement | null,
   canvas: HTMLCanvasElement | null,
@@ -543,9 +578,7 @@ async function grabFrame(
     canvas.width = w;
     canvas.height = h;
     ctx.drawImage(video, x0, y0, w, h, 0, 0, w, h);
-    const blob = await new Promise<Blob | null>((resolve) =>
-      canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.92),
-    );
+    const blob = await canvasToBlob(canvas);
     return { blob, preDetected: true };
   }
 
@@ -553,9 +586,7 @@ async function grabFrame(
   canvas.width = vw;
   canvas.height = vh;
   ctx.drawImage(video, 0, 0, vw, vh);
-  const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.92),
-  );
+  const blob = await canvasToBlob(canvas);
   return { blob, preDetected: false };
 }
 

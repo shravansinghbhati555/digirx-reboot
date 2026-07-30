@@ -1,4 +1,4 @@
-# DigiRx — QA Testing Checklist
+# DiziRx — QA Testing Checklist
 
 Module-wise test plan for distribution across QA / engineering colleagues.
 
@@ -230,7 +230,7 @@ Module-wise test plan for distribution across QA / engineering colleagues.
 | 15.1 | P0 | Bottom tab bar switches between `home / patients / appointments / billing / reports / me` correctly; selected tab persists across reloads if expected. |
 | 15.2 | P0 | `apiFetch` attaches `Authorization` (or `x-user-id` fallback) + `x-clinic-id` + `x-branch-id`; uses `credentials: 'include'`. |
 | 15.3 | P0 | 401 → silent `/auth/refresh` retry once; on second 401 → redirect to LoginScreen. |
-| 15.4 | P1 | MeScreen: change clinicId/branchId/userId/token → context persisted to `localStorage` key `digirx.devContext.v1`. |
+| 15.4 | P1 | MeScreen: change clinicId/branchId/userId/token → context persisted to `localStorage` key `DiziRx.devContext.v1`. |
 | 15.5 | P1 | Tailwind brand tokens / pastel gradients used consistently — no raw hex creeping in (sample 5 screens). |
 | 15.6 | P2 | Mobile viewport (375×812): no horizontal scroll, all CTAs reachable, modals/sheets fit. |
 | 15.7 | P2 | Keyboard navigation on web: Tab order is sensible; focus-visible rings present. |

@@ -1,6 +1,6 @@
 # Security policy
 
-DigiRx handles patient health information (PHI). Vulnerabilities affecting
+DiziRx handles patient health information (PHI). Vulnerabilities affecting
 data confidentiality, integrity, or availability are treated as severity-1
 issues and fixed ahead of feature work.
 

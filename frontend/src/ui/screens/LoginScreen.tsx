@@ -257,6 +257,7 @@ function SignInStep({
   const { ctx, setCtx } = useApp();
   const toast = useToast();
   const [email, setEmail] = useState('admin@digirx.local');
+  const [emailTouched, setEmailTouched] = useState(false);
   const [password, setPassword] = useState('');
   const [showPw, setShowPw] = useState(false);
   const [errors, setErrors] = useState<{ email?: string; password?: string; general?: string }>({});
@@ -359,7 +360,10 @@ function SignInStep({
         style={shakeKey ? { animation: 'shakeX 240ms var(--ease-out)' } : undefined}>
         <FormGroup label="Email address">
           <InputWrap icon="mail">
-            <input type="email" placeholder="you@clinic.in" value={email} onChange={(e) => setEmail(e.target.value)} autoComplete="email"
+            <input type="email" placeholder="you@clinic.in" value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              onFocus={() => { if (!emailTouched) { setEmail(''); setEmailTouched(true); } }}
+              autoComplete="email"
               className="form-input" style={inputStyle(!!errors.email)} />
           </InputWrap>
           {errors.email && <FieldError>{errors.email}</FieldError>}

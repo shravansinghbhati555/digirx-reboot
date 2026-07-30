@@ -1,4 +1,4 @@
-# DigiRx
+# DiziRx
 
 Enterprise-style split repo layout:
 
@@ -10,7 +10,7 @@ Enterprise-style split repo layout:
 ### 1) Start infrastructure (MongoDB + Redis)
 
 ```bash
-cd /mnt/Dev/Vidhema/DigiRx
+cd /mnt/Dev/Vidhema/DiziRx
 docker compose up -d
 ```
 
@@ -19,7 +19,7 @@ If Docker daemon isn’t running, start Docker first.
 ### 2) Backend
 
 ```bash
-cd /mnt/Dev/Vidhema/DigiRx/backend
+cd /mnt/Dev/Vidhema/DiziRx/backend
 cp .env.example .env
 pnpm install
 pnpm start:dev
@@ -34,7 +34,7 @@ curl http://localhost:4000/health
 ### 3) Frontend
 
 ```bash
-cd /mnt/Dev/Vidhema/DigiRx/frontend
+cd /mnt/Dev/Vidhema/DiziRx/frontend
 cp .env.example .env
 pnpm install
 pnpm dev
