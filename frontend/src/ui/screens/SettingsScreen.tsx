@@ -1818,14 +1818,19 @@ function WindowsEditor({ value, onChange, disabled, compact, isMobile }: { value
       )}
       {value.map((w, i) => (
         <span key={i} style={{ display: isMobile ? 'flex' : 'inline-flex', alignItems: 'center', gap: 4, padding: compact ? '3px 6px' : '6px 10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 8, width: isMobile ? '100%' : undefined, boxSizing: 'border-box' }}>
-          <Icon name="clock" size={12} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-          <input type="time" value={toHHMM(w.startMinutes)} disabled={disabled}
-            onChange={(e) => { const v = fromHHMM(e.target.value); if (v !== null) update(i, { startMinutes: v }); }}
-            style={{ height: compact ? 24 : 30, padding: '0 4px', border: 'none', background: 'transparent', fontSize: 12, color: 'var(--text)', outline: 'none', fontFamily: 'monospace', flex: isMobile ? 1 : undefined, minWidth: 0 }} />
+          <TimePickerInput
+            compact
+            value={toHHMM(w.startMinutes)}
+            disabled={disabled}
+            onChange={(val) => { const v = fromHHMM(val); if (v !== null) update(i, { startMinutes: v }); }}
+          />
           <span style={{ color: 'var(--text-subtle)', fontSize: 11, flexShrink: 0 }}>→</span>
-          <input type="time" value={toHHMM(w.endMinutes)} disabled={disabled}
-            onChange={(e) => { const v = fromHHMM(e.target.value); if (v !== null) update(i, { endMinutes: v }); }}
-            style={{ height: compact ? 24 : 30, padding: '0 4px', border: 'none', background: 'transparent', fontSize: 12, color: 'var(--text)', outline: 'none', fontFamily: 'monospace', flex: isMobile ? 1 : undefined, minWidth: 0 }} />
+          <TimePickerInput
+            compact
+            value={toHHMM(w.endMinutes)}
+            disabled={disabled}
+            onChange={(val) => { const v = fromHHMM(val); if (v !== null) update(i, { endMinutes: v }); }}
+          />
           {!disabled && (
             <button onClick={() => remove(i)}
               style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 2, marginLeft: 2, flexShrink: 0 }}>
@@ -2178,16 +2183,8 @@ function BranchSheet({ mode, initial, onClose, onSaved }: {
           <Field label="Phone number" value={phone} onChange={setPhone} placeholder="+91 22 XXXX XXXX" />
           <Field label="UPI ID" value={upiId} onChange={setUpiId} placeholder="e.g. branchname@upi" />
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10 }}>
-            <div>
-              <label style={labelStyle}>Opens at</label>
-              <input type="time" value={open} onChange={(e) => setOpen(e.target.value)}
-                style={timeInputStyle} />
-            </div>
-            <div>
-              <label style={labelStyle}>Closes at</label>
-              <input type="time" value={close} onChange={(e) => setClose(e.target.value)}
-                style={timeInputStyle} />
-            </div>
+            <TimePickerInput label="Opens at" value={open} onChange={setOpen} />
+            <TimePickerInput label="Closes at" value={close} onChange={setClose} />
             <div>
               <label style={labelStyle}>Slots / day</label>
               <input type="number" min={0} max={1000} value={slotsPerDay}
@@ -2223,18 +2220,31 @@ const timeInputStyle: React.CSSProperties = {
   fontSize: 13, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
 };
 
+function format12h(timeStr: string): string {
+  if (!timeStr) return '';
+  const [hStr, mStr] = timeStr.split(':');
+  const h = parseInt(hStr, 10);
+  if (isNaN(h)) return timeStr;
+  const m = mStr ?? '00';
+  const isPM = h >= 12;
+  const displayH = isPM ? (h === 12 ? 12 : h - 12) : (h === 0 ? 12 : h);
+  return `${displayH.toString().padStart(2, '0')}:${m} ${isPM ? 'PM' : 'AM'}`;
+}
+
 function TimePickerInput({
   label,
   value,
   onChange,
   disabled,
+  compact,
   refObj,
 }: {
-  label: string;
+  label?: string;
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
-  refObj: React.RefObject<HTMLInputElement | null>;
+  compact?: boolean;
+  refObj?: React.RefObject<HTMLInputElement | null>;
 }) {
   const [show, setShow] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -2249,120 +2259,130 @@ function TimePickerInput({
     return () => window.removeEventListener('mousedown', click);
   }, [show]);
 
-  return (
-    <div style={{ flex: 1 }}>
-      <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>{label}</label>
-      <div
-        ref={containerRef}
-        style={{ position: 'relative' }}
-      >
-        <div
-          onClick={() => !disabled && setShow(!show)}
-          style={{ position: 'relative', cursor: disabled ? 'not-allowed' : 'pointer' }}
-        >
-          <div style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none', color: !disabled ? 'var(--brand-500)' : 'var(--text-subtle)', transition: 'color 0.2s', zIndex: 5 }}>
-            <Icon name="clock" size={14} />
-          </div>
-          <input
-            ref={refObj}
-            type="time"
-            value={value}
-            disabled={disabled}
-            onChange={(e) => onChange(e.target.value)}
-            className="time-picker-custom"
-            style={{
-              width: '100%', height: 40, padding: '0 12px 0 34px',
-              background: 'var(--surface-muted)', border: `1.5px solid ${show ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 10,
-              fontSize: 13, fontWeight: 600, color: 'var(--text)', outline: 'none', boxSizing: 'border-box',
-              fontFamily: 'inherit',
-              opacity: disabled ? 0.6 : 1,
-              transition: 'all 0.2s ease-out',
-              cursor: 'inherit'
-            }}
-          />
-        </div>
+  const displayVal = useMemo(() => format12h(value), [value]);
 
-        {show && !disabled && (
-          <div style={{
-            position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 100,
-            width: 240, background: 'var(--surface)', border: '1px solid var(--border)',
-            borderRadius: 14, boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
-            padding: 12, display: 'flex', flexDirection: 'column', gap: 12,
-            animation: 'pickerIn 180ms var(--ease-out)'
-          }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
-              {/* Hours */}
-              <div style={pickerColStyle}>
-                {Array.from({ length: 12 }).map((_, i) => {
-                  const h = i === 0 ? 12 : i;
-                  const hStr = h.toString().padStart(2, '0');
-                  const currentH = parseInt(value.split(':')[0]);
-                  const isPM = currentH >= 12;
-                  const displayH = isPM ? (currentH === 12 ? 12 : currentH - 12) : (currentH === 0 ? 12 : currentH);
-                  const active = displayH === h;
-                  return (
-                    <div
-                      key={h}
-                      onClick={() => {
-                        const [_, m] = value.split(':');
-                        const newH = isPM ? (h === 12 ? 12 : h + 12) : (h === 12 ? 0 : h);
-                        onChange(`${newH.toString().padStart(2, '0')}:${m}`);
-                      }}
-                      style={{ ...pickerItemStyle, background: active ? 'var(--brand-500)' : 'transparent', color: active ? 'var(--brand-text)' : 'var(--text)' }}
-                    >
-                      {hStr}
-                    </div>
-                  );
-                })}
-              </div>
-              {/* Minutes */}
-              <div style={pickerColStyle}>
-                {['00', '15', '30', '45'].map((m) => {
-                  const active = value.split(':')[1] === m;
-                  return (
-                    <div
-                      key={m}
-                      onClick={() => onChange(`${value.split(':')[0]}:${m}`)}
-                      style={{ ...pickerItemStyle, background: active ? 'var(--brand-500)' : 'transparent', color: active ? 'var(--brand-text)' : 'var(--text)' }}
-                    >
-                      {m}
-                    </div>
-                  );
-                })}
-              </div>
-              {/* AM/PM */}
-              <div style={pickerColStyle}>
-                {['AM', 'PM'].map((p) => {
-                  const currentH = parseInt(value.split(':')[0]);
-                  const isPM = currentH >= 12;
-                  const active = p === (isPM ? 'PM' : 'AM');
-                  return (
-                    <div
-                      key={p}
-                      onClick={() => {
-                        const [h, m] = value.split(':').map(Number);
-                        let newH = h;
-                        if (p === 'AM' && isPM) newH = h === 12 ? 0 : h - 12;
-                        if (p === 'PM' && !isPM) newH = h === 0 ? 12 : h + 12;
-                        onChange(`${newH.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`);
-                      }}
-                      style={{ ...pickerItemStyle, background: active ? 'var(--brand-500)' : 'transparent', color: active ? 'var(--brand-text)' : 'var(--text)' }}
-                    >
-                      {p}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-            <button
-              onClick={() => setShow(false)}
-              style={{ width: '100%', height: 32, background: 'var(--brand-50)', color: 'var(--brand-500)', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
-            >
-              Done
-            </button>
-          </div>
-        )}
+  return (
+    <div style={{ flex: compact ? undefined : 1, position: 'relative' }} ref={containerRef}>
+      {label && (
+        <label style={{ display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 8 }}>
+          {label}
+        </label>
+      )}
+      <div
+        onClick={() => !disabled && setShow((s) => !s)}
+        style={{
+          display: 'flex', alignItems: 'center', gap: 6,
+          height: compact ? 28 : 40,
+          padding: compact ? '0 8px' : '0 12px',
+          background: 'var(--surface-muted)',
+          border: `1.5px solid ${show ? 'var(--brand-500)' : 'var(--border)'}`,
+          borderRadius: compact ? 8 : 10,
+          fontSize: compact ? 12 : 13,
+          fontWeight: 600,
+          color: 'var(--text)',
+          cursor: disabled ? 'not-allowed' : 'pointer',
+          opacity: disabled ? 0.6 : 1,
+          transition: 'all 0.2s ease-out',
+          userSelect: 'none',
+          WebkitUserSelect: 'none',
+        }}
+      >
+        <Icon name="clock" size={compact ? 12 : 14} style={{ color: !disabled ? 'var(--brand-500)' : 'var(--text-subtle)', flexShrink: 0 }} />
+        <span style={{ flex: 1, whiteSpace: 'nowrap' }}>{displayVal || value || 'Select time'}</span>
+        <Icon name="chevronDown" size={10} style={{ opacity: 0.5, transform: show ? 'rotate(180deg)' : 'none', transition: 'transform 0.15s', flexShrink: 0 }} />
       </div>
+
+      {show && !disabled && (
+        <div style={{
+          position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 300,
+          width: 230, background: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 14, boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
+          padding: 12, display: 'flex', flexDirection: 'column', gap: 12,
+          animation: 'pickerIn 180ms var(--ease-out)'
+        }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
+            {/* Hours */}
+            <div style={pickerColStyle}>
+              {Array.from({ length: 12 }).map((_, i) => {
+                const h = i === 0 ? 12 : i;
+                const hStr = h.toString().padStart(2, '0');
+                const parts = (value || '09:00').split(':');
+                const currentH = parseInt(parts[0], 10) || 0;
+                const isPM = currentH >= 12;
+                const displayH = isPM ? (currentH === 12 ? 12 : currentH - 12) : (currentH === 0 ? 12 : currentH);
+                const active = displayH === h;
+                return (
+                  <div
+                    key={h}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const m = parts[1] ?? '00';
+                      const newH = isPM ? (h === 12 ? 12 : h + 12) : (h === 12 ? 0 : h);
+                      onChange(`${newH.toString().padStart(2, '0')}:${m}`);
+                    }}
+                    style={{ ...pickerItemStyle, background: active ? 'var(--brand-500)' : 'transparent', color: active ? 'var(--brand-text)' : 'var(--text)' }}
+                  >
+                    {hStr}
+                  </div>
+                );
+              })}
+            </div>
+            {/* Minutes */}
+            <div style={pickerColStyle}>
+              {['00', '15', '30', '45'].map((m) => {
+                const parts = (value || '09:00').split(':');
+                const active = parts[1] === m;
+                return (
+                  <div
+                    key={m}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const h = parts[0] ?? '09';
+                      onChange(`${h}:${m}`);
+                    }}
+                    style={{ ...pickerItemStyle, background: active ? 'var(--brand-500)' : 'transparent', color: active ? 'var(--brand-text)' : 'var(--text)' }}
+                  >
+                    {m}
+                  </div>
+                );
+              })}
+            </div>
+            {/* AM/PM */}
+            <div style={pickerColStyle}>
+              {['AM', 'PM'].map((p) => {
+                const parts = (value || '09:00').split(':');
+                const currentH = parseInt(parts[0], 10) || 0;
+                const isPM = currentH >= 12;
+                const active = p === (isPM ? 'PM' : 'AM');
+                return (
+                  <div
+                    key={p}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      const h = parseInt(parts[0], 10) || 0;
+                      const m = parts[1] ?? '00';
+                      let newH = h;
+                      if (p === 'AM' && isPM) newH = h === 12 ? 0 : h - 12;
+                      if (p === 'PM' && !isPM) newH = h === 0 ? 12 : h + 12;
+                      onChange(`${newH.toString().padStart(2, '0')}:${m}`);
+                    }}
+                    style={{ ...pickerItemStyle, background: active ? 'var(--brand-500)' : 'transparent', color: active ? 'var(--brand-text)' : 'var(--text)' }}
+                  >
+                    {p}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setShow(false); }}
+            style={{ width: '100%', height: 32, background: 'var(--brand-50)', color: 'var(--brand-500)', border: 'none', borderRadius: 8, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}
+          >
+            Done
+          </button>
+        </div>
+      )}
     </div>
   );
 }
