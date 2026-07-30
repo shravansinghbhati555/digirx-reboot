@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { apiGet, apiPatch, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { useIsMobile } from '../../app/useIsMobile';
@@ -1533,17 +1534,38 @@ function MedicineTypeahead({
   const [results, setResults] = useState<SuggestionItem[]>([]);
   const [loading, setLoading] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const dropdownRef = useRef<HTMLDivElement>(null);
+  const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 300 });
   const toast = useToast();
 
   const hasSpecial = /[^a-zA-Z0-9\s\-.]/.test(value);
+
+  // Recalculate dropdown position when open
+  useEffect(() => {
+    if (!open || !inputRef.current) return;
+    function updatePos() {
+      if (!inputRef.current) return;
+      const rect = inputRef.current.getBoundingClientRect();
+      setDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+    }
+    updatePos();
+    window.addEventListener('scroll', updatePos, { capture: true, passive: true });
+    window.addEventListener('resize', updatePos, { passive: true });
+    return () => {
+      window.removeEventListener('scroll', updatePos, true);
+      window.removeEventListener('resize', updatePos);
+    };
+  }, [open]);
 
   // Close on outside click.
   useEffect(() => {
     if (!open) return;
     function onDocMouseDown(e: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(e.target as Node)) {
-        setOpen(false);
-      }
+      const target = e.target as Node;
+      if (wrapperRef.current?.contains(target)) return;
+      if (dropdownRef.current?.contains(target)) return;
+      setOpen(false);
     }
     document.addEventListener('mousedown', onDocMouseDown);
     return () => document.removeEventListener('mousedown', onDocMouseDown);
@@ -1691,6 +1713,7 @@ function MedicineTypeahead({
     <div ref={wrapperRef} style={{ position: 'relative' }}>
       <div style={{ position: 'relative' }}>
         <input
+          ref={inputRef}
           value={value}
           onChange={(e) => {
             onChange({
@@ -1736,9 +1759,10 @@ function MedicineTypeahead({
           </span>
         )}
       </div>
-      {SUGGESTIONS_ENABLED && open && !disabled && (
-        <div style={{
-          position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 30, marginTop: 4,
+      {SUGGESTIONS_ENABLED && open && !disabled && createPortal(
+        <div ref={dropdownRef} style={{
+          position: 'fixed', top: dropdownPos.top, left: dropdownPos.left, width: dropdownPos.width,
+          zIndex: 9999,
           background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10,
           boxShadow: '0 12px 32px rgba(15,23,42,0.16)',
           maxHeight: 280, overflowY: 'auto',
@@ -1802,7 +1826,8 @@ function MedicineTypeahead({
               </button>
             );
           })}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );
