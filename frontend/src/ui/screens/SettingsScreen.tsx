@@ -1569,82 +1569,82 @@ function AvailabilityTab() {
           TEMPORARILY HIDDEN from the Availability section per request.
           Re-enable by removing the `false && (` guard and its closing `)}`. */}
       {false && (
-      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>Visit types & pricing</div>
-        <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginBottom: 12 }}>
-          Each visit type sets a price the front desk collects at booking time before check-in.
-        </div>
+        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
+          <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>Visit types & pricing</div>
+          <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginBottom: 12 }}>
+            Each visit type sets a price the front desk collects at booking time before check-in.
+          </div>
 
-        {canWriteThis && (
-          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 8, alignItems: 'flex-end', marginBottom: 12 }}>
-            <Field label="Name" value={vtName} onChange={setVtName} placeholder="e.g. Consultation" />
-            <Field label="Price" value={vtPrice} onChange={setVtPrice} placeholder="e.g. 500" />
-            <button onClick={() => void addVisitType()} disabled={vtSaving || !vtName.trim() || !vtPrice.trim()}
-              style={{
-                height: 40, padding: '0 18px', background: 'var(--brand-500)', color: 'var(--brand-text)',
-                border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600,
-                cursor: vtSaving ? 'wait' : (!vtName.trim() || !vtPrice.trim() ? 'not-allowed' : 'pointer'),
-                opacity: vtSaving || !vtName.trim() || !vtPrice.trim() ? 0.6 : 1,
-              }}>
-              {vtSaving ? <Spinner /> : 'Add'}
-            </button>
-          </div>
-        )}
-        {vtError && (
-          <div style={{ marginBottom: 10, padding: '8px 12px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, fontSize: 12, color: 'var(--danger-500)' }}>
-            {vtError}
-          </div>
-        )}
-
-        {visitTypes.length === 0 ? (
-          <div style={{ padding: 16, textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)', background: 'var(--surface-muted)', border: '1px dashed var(--border)', borderRadius: 10 }}>
-            No visit types yet. Add one above so the front desk can pick it during booking.
-          </div>
-        ) : (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-            {visitTypes.map((vt) => (
-              <div key={vt._id}
+          {canWriteThis && (
+            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr auto', gap: 8, alignItems: 'flex-end', marginBottom: 12 }}>
+              <Field label="Name" value={vtName} onChange={setVtName} placeholder="e.g. Consultation" />
+              <Field label="Price" value={vtPrice} onChange={setVtPrice} placeholder="e.g. 500" />
+              <button onClick={() => void addVisitType()} disabled={vtSaving || !vtName.trim() || !vtPrice.trim()}
                 style={{
-                  display: 'flex', alignItems: 'center', gap: 10,
-                  padding: '8px 12px',
-                  background: vt.active ? 'var(--surface-muted)' : 'var(--surface)',
-                  borderRadius: 9, border: '1px solid var(--border)',
-                  opacity: vt.active ? 1 : 0.55,
+                  height: 40, padding: '0 18px', background: 'var(--brand-500)', color: 'var(--brand-text)',
+                  border: 'none', borderRadius: 10, fontSize: 13, fontWeight: 600,
+                  cursor: vtSaving ? 'wait' : (!vtName.trim() || !vtPrice.trim() ? 'not-allowed' : 'pointer'),
+                  opacity: vtSaving || !vtName.trim() || !vtPrice.trim() ? 0.6 : 1,
                 }}>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{vt.name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1 }}>
-                    {vt.currency} {vt.price.toLocaleString('en-IN')}
-                    {!vt.active && <span style={{ marginLeft: 8, fontWeight: 600 }}>· Inactive</span>}
+                {vtSaving ? <Spinner /> : 'Add'}
+              </button>
+            </div>
+          )}
+          {vtError && (
+            <div style={{ marginBottom: 10, padding: '8px 12px', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 8, fontSize: 12, color: 'var(--danger-500)' }}>
+              {vtError}
+            </div>
+          )}
+
+          {visitTypes.length === 0 ? (
+            <div style={{ padding: 16, textAlign: 'center', fontSize: 12, color: 'var(--text-subtle)', background: 'var(--surface-muted)', border: '1px dashed var(--border)', borderRadius: 10 }}>
+              No visit types yet. Add one above so the front desk can pick it during booking.
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {visitTypes.map((vt) => (
+                <div key={vt._id}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 10,
+                    padding: '8px 12px',
+                    background: vt.active ? 'var(--surface-muted)' : 'var(--surface)',
+                    borderRadius: 9, border: '1px solid var(--border)',
+                    opacity: vt.active ? 1 : 0.55,
+                  }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{vt.name}</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 1 }}>
+                      {vt.currency} {vt.price.toLocaleString('en-IN')}
+                      {!vt.active && <span style={{ marginLeft: 8, fontWeight: 600 }}>· Inactive</span>}
+                    </div>
                   </div>
+                  {canWriteThis && (
+                    <div style={{ display: 'flex', gap: 6 }}>
+                      <button type="button" onClick={() => void setVisitTypeActive(vt, !vt.active)}
+                        title={vt.active ? 'Deactivate (hide from booking)' : 'Reactivate'}
+                        style={{
+                          width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7,
+                          cursor: 'pointer', color: 'var(--text-muted)',
+                        }}>
+                        <Icon name={vt.active ? 'eyeOff' : 'eye'} size={13} />
+                      </button>
+                      <button type="button" onClick={() => void deleteVisitType(vt)}
+                        title="Remove (soft delete)"
+                        style={{
+                          width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7,
+                          cursor: 'pointer', color: 'var(--danger-500)',
+                        }}>
+                        <Icon name="trash" size={13} />
+                      </button>
+                    </div>
+                  )}
                 </div>
-                {canWriteThis && (
-                  <div style={{ display: 'flex', gap: 6 }}>
-                    <button type="button" onClick={() => void setVisitTypeActive(vt, !vt.active)}
-                      title={vt.active ? 'Deactivate (hide from booking)' : 'Reactivate'}
-                      style={{
-                        width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7,
-                        cursor: 'pointer', color: 'var(--text-muted)',
-                      }}>
-                      <Icon name={vt.active ? 'eyeOff' : 'eye'} size={13} />
-                    </button>
-                    <button type="button" onClick={() => void deleteVisitType(vt)}
-                      title="Remove (soft delete)"
-                      style={{
-                        width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 7,
-                        cursor: 'pointer', color: 'var(--danger-500)',
-                      }}>
-                      <Icon name="trash" size={13} />
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
 
       {/* Preview */}
@@ -1888,13 +1888,13 @@ function AboutTab() {
           </div>
           <div>
             <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.4px' }}>
-              Digi<span style={{ color: 'var(--brand-500)' }}>Rx</span>
+              Dizi<span style={{ color: 'var(--brand-500)' }}>Rx</span>
             </div>
             <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2 }}>Clinic management, end to end</div>
           </div>
         </div>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
-          DigiRx is a clinic management platform that runs the day-to-day of a
+          DiziRx is a clinic management platform that runs the day-to-day of a
           modern outpatient practice — from a patient's first booking through
           their visit, prescription, and bill. It is built for solo doctors,
           multi-doctor clinics, and multi-branch chains, with the safeguards
@@ -1903,7 +1903,7 @@ function AboutTab() {
       </div>
 
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 14 }}>What DigiRx covers</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 14 }}>What DiziRx covers</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
           {features.map((f) => (
             <div key={f.title} style={{ display: 'flex', gap: 10, padding: '12px 14px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10 }}>
@@ -1920,8 +1920,8 @@ function AboutTab() {
       </div>
 
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, fontSize: 12, color: 'var(--text-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <span>© {new Date().getFullYear()} DigiRx. All rights reserved.</span>
-        <span>Need help? Reach support at <a href="mailto:support@digirx.local" style={{ color: 'var(--brand-500)', textDecoration: 'none' }}>support@digirx.local</a></span>
+        <span>© {new Date().getFullYear()} DiziRx. All rights reserved.</span>
+        <span>Need help? Reach support at <a href="mailto:support@dizirx.com" style={{ color: 'var(--brand-500)', textDecoration: 'none' }}>support@dizirx.com</a></span>
       </div>
     </div>
   );

@@ -103,7 +103,7 @@ export function LoginScreen() {
 
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, overflowY: 'auto', position: 'relative' }}>
         <div style={{ width: '100%', maxWidth: 420, animation: 'slideUp 320ms var(--ease-out)' }}>
-          {/* On mobile the brand hero is hidden, so surface the DigiRx logo
+          {/* On mobile the brand hero is hidden, so surface the DiziRx logo
               above the form (shown for both sign-in and sign-up). */}
           {isMobile && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 8, marginBottom: 28 }}>
@@ -111,7 +111,7 @@ export function LoginScreen() {
                 <Icon name="cross" size={17} style={{ color: 'var(--brand-text)' }} strokeWidth={2.5} />
               </div>
               <span style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.4px' }}>
-                Digi<span style={{ color: 'var(--brand-500)' }}>Rx</span>
+                Dizi<span style={{ color: 'var(--brand-500)' }}>Rx</span>
               </span>
             </div>
           )}
@@ -190,7 +190,7 @@ function BrandPanel() {
           <Icon name="cross" size={18} style={{ color: 'var(--brand-text)' }} strokeWidth={2.5} />
         </div>
         <span style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 800, color: 'var(--brand-text)', letterSpacing: '-0.5px' }}>
-          Digi<span style={{ opacity: 0.7, fontWeight: 600 }}>Rx</span>
+          Dizi<span style={{ opacity: 0.7, fontWeight: 600 }}>Rx</span>
         </span>
       </div>
 
@@ -346,7 +346,7 @@ function SignInStep({
         Welcome back
       </h1>
       <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 24 }}>
-        Sign in to your DigiRx account.
+        Sign in to your DiziRx account.
       </p>
 
       {errors.general && (
@@ -814,7 +814,7 @@ function SignUpStep({
         Create your clinic
       </h1>
       <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 24 }}>
-        Set up a new DigiRx workspace. You'll be the admin.
+        Set up a new DiziRx workspace. You'll be the admin.
       </p>
 
       {errors.general && (
