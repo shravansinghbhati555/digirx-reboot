@@ -309,13 +309,27 @@ export function AppointmentsScreen() {
   const [doctors, setDoctors] = useState<Map<string, string>>(new Map());
 
   // Doctor filter states
-  const isDoctorUser = roleNames.has('doctor');
+  const isAdminLike = roleNames.has('super admin') || roleNames.has('super_admin') || roleNames.has('admin') || roleNames.has('manager');
+  const isDoctorUser = roleNames.has('doctor') && !isAdminLike;
   const [filterDoctorId, setFilterDoctorId] = useState<string>(() => {
     return isDoctorUser ? (ctx.userId ?? 'all') : 'all';
   });
   const [doctorList, setDoctorList] = useState<Array<{ _id: string; name: string }>>([]);
   const [availability, setAvailability] = useState<Array<{ startHour: number; endHour: number }>>([]);
   const [loadingAvailability, setLoadingAvailability] = useState(false);
+  const [docDropdownOpen, setDocDropdownOpen] = useState(false);
+  const docDropdownRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!docDropdownOpen) return;
+    function handleClickOutside(e: MouseEvent) {
+      if (docDropdownRef.current && !docDropdownRef.current.contains(e.target as Node)) {
+        setDocDropdownOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [docDropdownOpen]);
 
   useEffect(() => {
     if (isDoctorUser && filterDoctorId === 'all' && ctx.userId) {
@@ -635,11 +649,12 @@ export function AppointmentsScreen() {
         for (const u of list) next.set(u._id, u.name);
         setDoctors(next);
 
-        // Filter doctors for the dropdown
+        // Filter doctors for the dropdown - show ONLY practicing doctors, strictly exclude Super Admin / non-doctor accounts
         const branchDoctors = list.filter((u) => {
-          const hasBranch = u.branchIds?.includes(ctx.branchId ?? '');
-          const isDoctor = u.roles?.some((r) => r.name.toLowerCase() === 'doctor');
-          return hasBranch && isDoctor;
+          const hasBranch = !ctx.branchId || !u.branchIds || u.branchIds.length === 0 || u.branchIds.includes(ctx.branchId);
+          const isDoctorRole = u.roles?.some((r: any) => typeof r === 'string' ? r.toLowerCase() === 'doctor' : r?.name?.toLowerCase() === 'doctor');
+          const isSuperAdminName = /super\s*admin/i.test(u.name);
+          return hasBranch && isDoctorRole && !isSuperAdminName;
         });
         setDoctorList(branchDoctors);
       })
@@ -681,32 +696,91 @@ export function AppointmentsScreen() {
         </button>
 
         {!isDoctorUser && (
-          <select
-            value={filterDoctorId}
-            disabled={loadingAvailability}
-            onChange={(e) => setFilterDoctorId(e.target.value)}
-            style={{
-              height: 32,
-              padding: '0 12px',
-              background: 'var(--surface)',
-              border: '1px solid var(--border)',
-              borderRadius: 8,
-              fontSize: 12,
-              fontWeight: 500,
-              color: 'var(--text)',
-              outline: 'none',
-              cursor: loadingAvailability ? 'wait' : 'pointer',
-              marginLeft: 8,
-              opacity: loadingAvailability ? 0.7 : 1,
-            }}
-          >
-            <option value="all">All Doctors</option>
-            {doctorList.map((d) => (
-              <option key={d._id} value={d._id}>
-                {formatDrName(d.name)}
-              </option>
-            ))}
-          </select>
+          <div ref={docDropdownRef} style={{ position: 'relative', display: 'inline-block' }}>
+            <button
+              type="button"
+              onClick={() => setDocDropdownOpen((o) => !o)}
+              disabled={loadingAvailability}
+              style={{
+                display: 'flex', alignItems: 'center', gap: 6, height: 32, padding: '0 12px',
+                background: docDropdownOpen ? 'var(--brand-50)' : 'var(--surface-muted)',
+                border: `1px solid ${docDropdownOpen ? 'var(--brand-500)' : 'var(--border)'}`,
+                borderRadius: 10, fontSize: 12, fontWeight: 600,
+                color: docDropdownOpen ? 'var(--brand-600)' : 'var(--text)',
+                cursor: loadingAvailability ? 'wait' : 'pointer',
+                transition: 'all 120ms',
+              }}
+            >
+              <Icon name="stethoscope" size={14} style={{ color: 'var(--brand-500)', flexShrink: 0 }} />
+              <span style={{ whiteSpace: 'nowrap' }}>
+                {filterDoctorId === 'all'
+                  ? 'All Doctors'
+                  : (doctorList.find((d) => d._id === filterDoctorId)?.name
+                      ? formatDrName(doctorList.find((d) => d._id === filterDoctorId)?.name)
+                      : 'All Doctors')}
+              </span>
+              <Icon
+                name="chevronDown"
+                size={12}
+                style={{
+                  opacity: 0.6,
+                  color: 'var(--text-subtle)',
+                  transform: docDropdownOpen ? 'rotate(180deg)' : 'none',
+                  transition: 'transform 0.15s ease',
+                  flexShrink: 0,
+                }}
+              />
+            </button>
+
+            {docDropdownOpen && (
+              <div style={{
+                position: 'absolute', top: 'calc(100% + 6px)', left: 0,
+                minWidth: 190, background: 'var(--surface)', border: '1px solid var(--border)',
+                borderRadius: 12, boxShadow: '0 10px 28px rgba(15,23,42,0.14)',
+                zIndex: 300, padding: 4, overflow: 'hidden',
+              }}>
+                <button
+                  type="button"
+                  onClick={() => { setFilterDoctorId('all'); setDocDropdownOpen(false); }}
+                  style={{
+                    width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none',
+                    borderRadius: 8, background: filterDoctorId === 'all' ? 'var(--brand-50)' : 'transparent',
+                    color: filterDoctorId === 'all' ? 'var(--brand-600)' : 'var(--text)',
+                    fontSize: 12, fontWeight: filterDoctorId === 'all' ? 700 : 500,
+                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  }}
+                  onMouseEnter={(e) => { if (filterDoctorId !== 'all') e.currentTarget.style.background = 'var(--surface-muted)'; }}
+                  onMouseLeave={(e) => { if (filterDoctorId !== 'all') e.currentTarget.style.background = 'transparent'; }}
+                >
+                  All Doctors
+                  {filterDoctorId === 'all' && <Icon name="check" size={12} color="var(--brand-500)" />}
+                </button>
+
+                {doctorList.map((d) => {
+                  const isSelected = filterDoctorId === d._id;
+                  return (
+                    <button
+                      key={d._id}
+                      type="button"
+                      onClick={() => { setFilterDoctorId(d._id); setDocDropdownOpen(false); }}
+                      style={{
+                        width: '100%', padding: '8px 12px', textAlign: 'left', border: 'none',
+                        borderRadius: 8, background: isSelected ? 'var(--brand-50)' : 'transparent',
+                        color: isSelected ? 'var(--brand-600)' : 'var(--text)',
+                        fontSize: 12, fontWeight: isSelected ? 700 : 500,
+                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                      }}
+                      onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.background = 'var(--surface-muted)'; }}
+                      onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.background = 'transparent'; }}
+                    >
+                      {formatDrName(d.name)}
+                      {isSelected && <Icon name="check" size={12} color="var(--brand-500)" />}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         )}
 
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>

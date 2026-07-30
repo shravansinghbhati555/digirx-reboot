@@ -191,8 +191,10 @@ export function PatientsScreen() {
         const data = await apiGet<Patient[]>(ctx, `/patients?${qs.toString()}`);
         if (cancelled) return;
         setItems(data);
-        if (data.length > 0 && !selected) setSelected(data[0]);
-        if (selected && !data.some((p) => p._id === selected._id)) setSelected(data[0] ?? null);
+        if (!isMobile && data.length > 0 && !selected) setSelected(data[0]);
+        if (selected && !data.some((p) => p._id === selected._id)) {
+          setSelected(isMobile ? null : (data[0] ?? null));
+        }
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       } finally {
