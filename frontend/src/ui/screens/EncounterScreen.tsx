@@ -959,7 +959,15 @@ function EncounterEditor({
       const rawPhone = patient?.phones?.[0] || '';
       const cleanedPhone = rawPhone.replace(/\D/g, '');
       const formattedPhone = cleanedPhone.length === 10 ? `91${cleanedPhone}` : cleanedPhone;
-      window.open(`https://wa.me/${formattedPhone}?text=${text}`, '_blank');
+      
+      const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !(window as any).MSStream;
+      const isWebView = navigator.userAgent.includes('wv') || (isIOS && !navigator.userAgent.includes('Safari'));
+
+      if (isWebView) {
+        window.location.href = `whatsapp://send?phone=${formattedPhone}&text=${text}`;
+      } else {
+        window.open(`https://wa.me/${formattedPhone}?text=${text}`, '_blank');
+      }
     } catch (e) {
       toast('Could not generate sharing link', 'error');
     } finally {
