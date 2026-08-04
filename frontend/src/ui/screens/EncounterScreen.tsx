@@ -668,8 +668,6 @@ function EncounterEditor({
   const { ctx } = useApp();
   const isMobile = useIsMobile();
   const toast = useToast();
-  // Mobile: the preview toolbar's actions collapse into a ⋮ overflow menu.
-  const [previewMenuOpen, setPreviewMenuOpen] = useState(false);
   const signed = encounter.status === 'SIGNED';
   // Billing is no longer initiated from the encounter — the consultation
   // bill is auto-issued at booking time (BookSheet → /appointments) and
@@ -832,7 +830,7 @@ function EncounterEditor({
     // Used to early-return when signed; we now allow post-sign edits
     // so the doctor can swap a medicine after a patient says it's
     // out of stock. The original signedAt stays put.
-    const hasSpecial = rx.some((r) => /[^a-zA-Z0-9\s\-.]/.test(r.med.trim()));
+    const hasSpecial = rx.some((r) => /[^a-zA-Z0-9\s\-./%+(),]/.test(r.med.trim()));
     if (hasSpecial) {
       toast("Please remove special characters from medicine names.", "error");
       setError("Please remove special characters from medicine names.");
@@ -1002,34 +1000,23 @@ function EncounterEditor({
             </div>
           </div>
           {isMobile ? (
-            <div style={{ position: 'relative', flexShrink: 0 }}>
-              <button onClick={() => setPreviewMenuOpen((o) => !o)} aria-label="Actions"
-                style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', cursor: 'pointer' }}>
-                <Icon name="moreVert" size={18} />
+            <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
+              <button onClick={() => setViewMode('chart')} aria-label="Edit"
+                style={{ width: 34, height: 34, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                <Icon name="edit" size={15} />
               </button>
-              {previewMenuOpen && (
-                <>
-                  <div onClick={() => setPreviewMenuOpen(false)} style={{ position: 'fixed', inset: 0, zIndex: 40 }} />
-                  <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 41, minWidth: 168, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 12px 32px rgba(15,23,42,0.16)', padding: 4, display: 'flex', flexDirection: 'column' }}>
-                    {(() => {
-                      const shareDisabled = sharing || (!signed && !prescriptionId);
-                      const items: Array<{ icon: IconName; label: string; onClick: () => void; disabled?: boolean; color?: string }> = [
-                        { icon: 'edit', label: 'Edit', onClick: () => setViewMode('chart') },
-                        { icon: 'printer', label: 'Print', onClick: () => previewIframeRef.current?.contentWindow?.print() },
-                        { icon: 'share', label: 'Share on WhatsApp', onClick: () => void shareOnWhatsApp(), disabled: shareDisabled, color: '#25D366' },
-                        { icon: 'x', label: 'Close', onClick: onClose },
-                      ];
-                      return items.map((it) => (
-                        <button key={it.label} disabled={it.disabled}
-                          onClick={() => { setPreviewMenuOpen(false); it.onClick(); }}
-                          style={{ display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '10px 12px', background: 'none', border: 'none', borderRadius: 8, textAlign: 'left', fontSize: 13, fontWeight: 600, color: it.disabled ? 'var(--text-subtle)' : (it.color ?? 'var(--text)'), cursor: it.disabled ? 'not-allowed' : 'pointer', opacity: it.disabled ? 0.5 : 1 }}>
-                          <Icon name={it.icon} size={15} style={{ color: it.disabled ? 'var(--text-subtle)' : (it.color ?? 'var(--text-muted)') }} /> {it.label}
-                        </button>
-                      ));
-                    })()}
-                  </div>
-                </>
-              )}
+              <button onClick={() => previewIframeRef.current?.contentWindow?.print()} aria-label="Print"
+                style={{ width: 34, height: 34, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--brand-500)', border: '1px solid var(--brand-500)', borderRadius: 8, color: 'var(--brand-text)', cursor: 'pointer' }}>
+                <Icon name="printer" size={15} />
+              </button>
+              <button onClick={shareOnWhatsApp} disabled={sharing || (!signed && !prescriptionId)} aria-label="Share on WhatsApp"
+                style={{ width: 34, height: 34, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)', borderRadius: 8, color: '#25D366', cursor: (sharing || (!signed && !prescriptionId)) ? 'not-allowed' : 'pointer', opacity: (sharing || (!signed && !prescriptionId)) ? 0.5 : 1 }}>
+                {sharing ? <Spinner size={13} /> : <Icon name="share" size={15} />}
+              </button>
+              <button onClick={onClose} aria-label="Close"
+                style={{ width: 34, height: 34, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', cursor: 'pointer' }}>
+                <Icon name="x" size={15} />
+              </button>
             </div>
           ) : (
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -1470,37 +1457,103 @@ const rxInputStyle: React.CSSProperties = {
  * to avoid a stale "in stock" claim if levels changed.
  */
 const POPULAR_MEDICINES: Array<{ name: string; dose?: string; freq?: string; dur?: string }> = [
-  { name: 'Paracetamol 650mg', dose: '650mg', freq: 'TDS', dur: '3 days' },
-  { name: 'Paracetamol 500mg', dose: '500mg', freq: 'TDS', dur: '3 days' },
-  { name: 'Dolo 650', dose: '650mg', freq: 'TDS', dur: '3 days' },
-  { name: 'Calpol 650', dose: '650mg', freq: 'TDS', dur: '3 days' },
-  { name: 'Crocin 500', dose: '500mg', freq: 'TDS', dur: '3 days' },
-  { name: 'Amoxicillin 500mg', dose: '500mg', freq: 'BD', dur: '5 days' },
-  { name: 'Augmentin 625mg', dose: '625mg', freq: 'BD', dur: '5 days' },
-  { name: 'Azithromycin 500mg', dose: '500mg', freq: 'OD', dur: '3 days' },
-  { name: 'Pantoprazole 40mg', dose: '40mg', freq: 'OD', dur: '7 days' },
+  { name: 'Paracetamol 650mg', dose: '1 tab', freq: 'TDS', dur: '3 days' },
+  { name: 'Paracetamol 500mg', dose: '1 tab', freq: 'TDS', dur: '3 days' },
+  { name: 'Dolo 650', dose: '1 tab', freq: 'TDS', dur: '3 days' },
+  { name: 'Calpol 650', dose: '1 tab', freq: 'TDS', dur: '3 days' },
+  { name: 'Crocin 500', dose: '1 tab', freq: 'TDS', dur: '3 days' },
+  { name: 'Amoxicillin 500mg', dose: '1 tab', freq: 'BD', dur: '5 days' },
+  { name: 'Augmentin 625mg', dose: '1 tab', freq: 'BD', dur: '5 days' },
+  { name: 'Azithromycin 500mg', dose: '1 tab', freq: 'OD', dur: '3 days' },
+  { name: 'Pantoprazole 40mg', dose: '1 tab', freq: 'OD', dur: '7 days' },
   { name: 'Pan D', dose: '1 cap', freq: 'OD', dur: '7 days' },
-  { name: 'Pantocid 40', dose: '40mg', freq: 'OD', dur: '7 days' },
-  { name: 'Omeprazole 20mg', dose: '20mg', freq: 'OD', dur: '7 days' },
-  { name: 'Cetirizine 10mg', dose: '10mg', freq: 'OD', dur: '5 days' },
-  { name: 'Montelukast 10mg', dose: '10mg', freq: 'OD', dur: '10 days' },
-  { name: 'Allegra 120mg', dose: '120mg', freq: 'OD', dur: '5 days' },
+  { name: 'Pantocid 40', dose: '1 tab', freq: 'OD', dur: '7 days' },
+  { name: 'Omeprazole 20mg', dose: '1 tab', freq: 'OD', dur: '7 days' },
+  { name: 'Cetirizine 10mg', dose: '1 tab', freq: 'OD', dur: '5 days' },
+  { name: 'Montelukast 10mg', dose: '1 tab', freq: 'OD', dur: '10 days' },
+  { name: 'Allegra 120mg', dose: '1 tab', freq: 'OD', dur: '5 days' },
   { name: 'Combiflam', dose: '1 tab', freq: 'BD', dur: '3 days' },
-  { name: 'Ibuprofen 400mg', dose: '400mg', freq: 'BD', dur: '3 days' },
-  { name: 'Metformin 500mg', dose: '500mg', freq: 'BD', dur: '30 days' },
-  { name: 'Telmisartan 40mg', dose: '40mg', freq: 'OD', dur: '30 days' },
-  { name: 'Amlodipine 5mg', dose: '5mg', freq: 'OD', dur: '30 days' },
-  { name: 'Atorvastatin 10mg', dose: '10mg', freq: 'OD', dur: '30 days' },
-  { name: 'Ciprofloxacin 500mg', dose: '500mg', freq: 'BD', dur: '5 days' },
-  { name: 'Ondansetron 4mg', dose: '4mg', freq: 'SOS', dur: '3 days' },
-  { name: 'Vomikind 4mg', dose: '4mg', freq: 'SOS', dur: '3 days' },
-  { name: 'Ranitidine 150mg', dose: '150mg', freq: 'BD', dur: '7 days' },
-  { name: 'Gelusil Syrup', dose: '10ml', freq: 'TDS', dur: '5 days' },
-  { name: 'Ascoril LS Syrup', dose: '5ml', freq: 'TDS', dur: '5 days' },
-  { name: 'Benadryl Syrup', dose: '5ml', freq: 'TDS', dur: '5 days' },
+  { name: 'Ibuprofen 400mg', dose: '1 tab', freq: 'BD', dur: '3 days' },
+  { name: 'Metformin 500mg', dose: '1 tab', freq: 'BD', dur: '30 days' },
+  { name: 'Telmisartan 40mg', dose: '1 tab', freq: 'OD', dur: '30 days' },
+  { name: 'Amlodipine 5mg', dose: '1 tab', freq: 'OD', dur: '30 days' },
+  { name: 'Atorvastatin 10mg', dose: '1 tab', freq: 'OD', dur: '30 days' },
+  { name: 'Ciprofloxacin 500mg', dose: '1 tab', freq: 'BD', dur: '5 days' },
+  { name: 'Ondansetron 4mg', dose: '1 tab', freq: 'SOS', dur: '3 days' },
+  { name: 'Vomikind 4mg', dose: '1 tab', freq: 'SOS', dur: '3 days' },
+  { name: 'Ranitidine 150mg', dose: '1 tab', freq: 'BD', dur: '7 days' },
+  { name: 'Gelusil Syrup', dose: '1 tab', freq: 'TDS', dur: '5 days' },
+  { name: 'Ascoril LS Syrup', dose: '1 tab', freq: 'TDS', dur: '5 days' },
+  { name: 'Benadryl Syrup', dose: '1 tab', freq: 'TDS', dur: '5 days' },
   { name: 'Meftal Spas', dose: '1 tab', freq: 'SOS', dur: '3 days' },
   { name: 'Zerodol SP', dose: '1 tab', freq: 'BD', dur: '3 days' },
 ];
+
+function parseRxTermStrengthAndForm(strengthForm: string): { strength: string; dose: string } {
+  const clean = strengthForm.replace(/\s+/g, ' ').trim();
+  const lower = clean.toLowerCase();
+  let dose = '1 tab';
+
+  if (lower.includes('tab') || lower.includes('tablet')) {
+    dose = '1 tab';
+  } else if (lower.includes('cap') || lower.includes('capsule')) {
+    dose = '1 cap';
+  } else if (lower.includes('drop') || lower.includes('ophth') || lower.includes('otic') || lower.includes('nasal') || lower.includes('eye') || lower.includes('ear')) {
+    dose = '2 drops';
+  } else if (lower.includes('susp') || lower.includes('suspension') || lower.includes('syr') || lower.includes('syrup') || lower.includes('soln') || lower.includes('solution') || lower.includes('liquid') || lower.includes('elixir')) {
+    if (lower.includes('/5 ml')) {
+      dose = '5 ml';
+    } else if (lower.includes('/1 ml') || lower.includes('/ml')) {
+      dose = '1 ml';
+    } else {
+      dose = '5 ml';
+    }
+  } else if (lower.includes('inj') || lower.includes('injection') || lower.includes('vial') || lower.includes('ampoule')) {
+    dose = '1 vial';
+  } else if (lower.includes('cream') || lower.includes('ointment') || lower.includes('gel')) {
+    dose = 'Apply';
+  } else if (lower.includes('inhal') || lower.includes('inhaler') || lower.includes('spray') || lower.includes('aerosol')) {
+    dose = '1 puff';
+  } else if (lower.includes('patch') || lower.includes('transdermal')) {
+    dose = '1 patch';
+  } else if (lower.includes('powder') || lower.includes('sachet')) {
+    dose = '1 sachet';
+  }
+
+  const formKeywords = [
+    'oral susp', 'suspension', 'susp', 'syrup', 'syr', 'soln', 'solution',
+    'tablet', 'tablets', 'tabs', 'tab', 'capsule', 'capsules', 'caps', 'cap',
+    'injection', 'inj', 'vial', 'ampoule', 'cream', 'ointment', 'oint', 'gel',
+    'spray', 'inhaler', 'inhal', 'aerosol', 'patch', 'transdermal', 'powder',
+    'sachet', 'drops', 'drop'
+  ];
+
+  let strength = clean;
+  let minIndex = -1;
+  for (const kw of formKeywords) {
+    const idx = lower.indexOf(kw);
+    if (idx !== -1 && (minIndex === -1 || idx < minIndex)) {
+      minIndex = idx;
+    }
+  }
+
+  if (minIndex !== -1) {
+    strength = clean.substring(0, minIndex).trim();
+  }
+
+  strength = strength.replace(/[\s,/]+$/, '').trim();
+
+  // Normalize strength spacing
+  strength = strength
+    .replace(/(\d+)\s*mg/gi, '$1mg')
+    .replace(/(\d+)\s*mcg/gi, '$1mcg')
+    .replace(/(\d+)\s*g/gi, '$1g')
+    .replace(/(\d+)\s*ml/gi, '$1ml')
+    .replace(/(\d+)\s*mL/gi, '$1ml')
+    .replace(/(\d+)\s*%/g, '$1%');
+
+  return { strength, dose };
+}
 
 type SuggestionItem = {
   key: string;
@@ -1539,7 +1592,7 @@ function MedicineTypeahead({
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number }>({ top: 0, left: 0, width: 300 });
   const toast = useToast();
 
-  const hasSpecial = /[^a-zA-Z0-9\s\-.]/.test(value);
+  const hasSpecial = /[^a-zA-Z0-9\s\-./%+(),]/.test(value);
 
   // Recalculate dropdown position when open
   useEffect(() => {
@@ -1605,11 +1658,28 @@ function MedicineTypeahead({
                 if (Array.isArray(data) && Array.isArray(data[1])) {
                   const names: string[] = data[1];
                   const strengthsArr = data[2]?.STRENGTHS_AND_FORMS || [];
-                  return names.map((rawName, i) => ({
-                    name: rawName.replace(/\s*\([^)]*\)/g, '').trim(),
-                    dose: strengthsArr[i]?.[0] || undefined,
-                  }));
+                  const resultsList: any[] = [];
+                  names.forEach((rawName, i) => {
+                    const baseName = rawName.replace(/\s*\([^)]*\)/g, '').trim();
+                    const strengths = strengthsArr[i] || [];
+                    if (strengths.length === 0) {
+                      resultsList.push({
+                        name: baseName,
+                        dose: undefined,
+                      });
+                    } else {
+                      strengths.forEach((strForm: string) => {
+                        const parsed = parseRxTermStrengthAndForm(strForm);
+                        resultsList.push({
+                          name: `${baseName} ${parsed.strength}`.trim(),
+                          dose: parsed.dose,
+                        });
+                      });
+                    }
+                  });
+                  return resultsList;
                 }
+                console.log("MED DATAAAAA=====", data);
                 return [];
               })
               .catch(() => [])
@@ -1725,7 +1795,7 @@ function MedicineTypeahead({
             });
           }}
           onBlur={() => {
-            const currentHasSpecial = /[^a-zA-Z0-9\s\-.]/.test(value);
+            const currentHasSpecial = /[^a-zA-Z0-9\s\-./%+(),]/.test(value);
             if (currentHasSpecial) {
               toast("Special characters are not allowed in medicine name.", "error");
             }

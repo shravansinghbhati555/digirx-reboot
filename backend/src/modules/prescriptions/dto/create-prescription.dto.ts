@@ -21,9 +21,9 @@ export class CreatePrescriptionItemDto {
   @IsOptional()
   @IsString()
   @MaxLength(200)
-  @Matches(/^[a-zA-Z0-9\s\-.]*$/, {
+  @Matches(/^[a-zA-Z0-9\s\-./%+(),]*$/, {
     message:
-      'Medicine name must not contain special characters except spaces, hyphens, and dots.',
+      'Medicine name must not contain special characters except spaces, hyphens, dots, slashes, percentage, plus, parentheses, and commas.',
   })
   customName?: string;
 

@@ -36,7 +36,7 @@ describe('CreatePrescriptionDto', () => {
     );
     await expectInvalid(
       CreatePrescriptionDto,
-      { items: [{ customName: 'Crocin %' }] },
+      { items: [{ customName: 'Crocin #' }] },
       'customName',
     );
   });
