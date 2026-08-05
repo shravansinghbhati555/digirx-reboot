@@ -2237,17 +2237,23 @@ function TimePickerInput({
   onChange,
   disabled,
   compact,
-  refObj,
 }: {
   label?: string;
   value: string;
   onChange: (v: string) => void;
   disabled?: boolean;
   compact?: boolean;
-  refObj?: React.RefObject<HTMLInputElement | null>;
 }) {
   const [show, setShow] = useState(false);
+  const [alignRight, setAlignRight] = useState(false);
   const containerRef = useRef<HTMLDivElement>(null);
+
+  // Detect viewport collision to flip popover alignment on mobile/tablet
+  useEffect(() => {
+    if (!show || !containerRef.current) return;
+    const rect = containerRef.current.getBoundingClientRect();
+    setAlignRight(rect.left + 240 > window.innerWidth - 12);
+  }, [show]);
 
   // Close on outside click
   useEffect(() => {
@@ -2294,11 +2300,22 @@ function TimePickerInput({
 
       {show && !disabled && (
         <div style={{
-          position: 'absolute', top: 'calc(100% + 8px)', left: 0, zIndex: 300,
-          width: 230, background: 'var(--surface)', border: '1px solid var(--border)',
-          borderRadius: 14, boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
-          padding: 12, display: 'flex', flexDirection: 'column', gap: 12,
-          animation: 'pickerIn 180ms var(--ease-out)'
+          position: 'absolute',
+          top: 'calc(100% + 8px)',
+          left: alignRight ? 'auto' : 0,
+          right: alignRight ? 0 : 'auto',
+          zIndex: 300,
+          width: 230,
+          maxWidth: 'calc(100vw - 24px)',
+          background: 'var(--surface)',
+          border: '1px solid var(--border)',
+          borderRadius: 14,
+          boxShadow: '0 12px 40px rgba(0,0,0,0.25)',
+          padding: 12,
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 12,
+          animation: 'pickerIn 180ms var(--ease-out)',
         }}>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 6 }}>
             {/* Hours */}
@@ -2400,9 +2417,6 @@ function NotifConfigTab() {
   const { ctx, permissions } = useApp();
   const toast = useToast();
   const canWrite = permissions.has('clinic:write');
-
-  const startRef = useRef<HTMLInputElement>(null);
-  const endRef = useRef<HTMLInputElement>(null);
 
   const [data, setData] = useState<ClinicSettingsResp | null>(null);
   const [loading, setLoading] = useState(false);
@@ -2520,14 +2534,12 @@ function NotifConfigTab() {
             value={start}
             disabled={!enabled || !canWrite}
             onChange={setStart}
-            refObj={startRef}
           />
           <TimePickerInput
             label="To"
             value={end}
             disabled={!enabled || !canWrite}
             onChange={setEnd}
-            refObj={endRef}
           />
         </div>
 

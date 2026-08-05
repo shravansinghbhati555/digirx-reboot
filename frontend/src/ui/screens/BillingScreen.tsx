@@ -632,7 +632,7 @@ function BillDetail({
               {shareOpen && (
                 <div style={{ position: 'absolute', top: 'calc(100% + 6px)', right: 0, zIndex: 50, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10, boxShadow: '0 12px 32px rgba(15,23,42,0.12)', padding: 4, minWidth: 170 }}>
                   <div style={{ padding: '6px 10px 4px', fontSize: 10, fontWeight: 700, color: 'var(--text-subtle)', textTransform: 'uppercase', letterSpacing: '0.06em' }}>Share invoice</div>
-                  {([['whatsapp', 'WhatsApp', 'share'], ['sms', 'SMS', 'smartphone'], ['email', 'Email', 'mail']] as const).map(([ch, lbl, ic]) => (
+                  {([['whatsapp', 'WhatsApp', 'whatsapp'], ['sms', 'SMS', 'smartphone'], ['email', 'Email', 'mail']] as const).map(([ch, lbl, ic]) => (
                     <button key={ch} onClick={() => void shareInvoice(ch)}
                       style={{ width: '100%', display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', borderRadius: 8, background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', fontSize: 13, color: 'var(--text)' }}
                       onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--surface-muted)')}

@@ -1019,7 +1019,7 @@ function EncounterEditor({
               </button>
               <button onClick={shareOnWhatsApp} disabled={sharing || (!signed && !prescriptionId)} aria-label="Share on WhatsApp"
                 style={{ width: 34, height: 34, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)', borderRadius: 8, color: '#25D366', cursor: (sharing || (!signed && !prescriptionId)) ? 'not-allowed' : 'pointer', opacity: (sharing || (!signed && !prescriptionId)) ? 0.5 : 1 }}>
-                {sharing ? <Spinner size={13} /> : <Icon name="share" size={15} />}
+                {sharing ? <Spinner size={13} /> : <Icon name="whatsapp" size={15} />}
               </button>
               <button onClick={onClose} aria-label="Close"
                 style={{ width: 34, height: 34, padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', cursor: 'pointer' }}>
@@ -1039,7 +1039,7 @@ function EncounterEditor({
               <button onClick={shareOnWhatsApp} disabled={sharing || (!signed && !prescriptionId)}
                 title={prescriptionId || signed ? 'Share via WhatsApp' : 'Save and sign first to enable sharing'}
                 style={{ height: 34, padding: '0 12px', background: 'rgba(37,211,102,0.1)', border: '1px solid rgba(37,211,102,0.3)', borderRadius: 8, color: '#25D366', fontSize: 12, fontWeight: 600, cursor: (sharing || (!signed && !prescriptionId)) ? 'not-allowed' : 'pointer', display: 'flex', alignItems: 'center', gap: 5, opacity: (sharing || (!signed && !prescriptionId)) ? 0.5 : 1 }}>
-                {sharing ? <Spinner size={13} /> : <><Icon name="share" size={13} /> Share</>}
+                {sharing ? <Spinner size={13} /> : <><Icon name="whatsapp" size={13} /> Share</>}
               </button>
               <button onClick={onClose}
                 style={{ height: 34, padding: '0 12px', background: 'none', border: '1px solid var(--border)', borderRadius: 8, color: 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 5 }}>
@@ -1233,7 +1233,7 @@ function EncounterEditor({
                   cursor: sharing ? 'not-allowed' : 'pointer',
                   opacity: sharing ? 0.6 : 1
                 }}>
-                {sharing ? <Spinner size={13} /> : <Icon name="share" size={13} />}
+                {sharing ? <Spinner size={13} /> : <Icon name="whatsapp" size={13} />}
               </button>
             </div>
           </div>
