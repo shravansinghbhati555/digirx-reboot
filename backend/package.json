@@ -19,6 +19,7 @@
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
     "test:e2e": "jest --config ./test/jest-e2e.json",
+    "platform:admin": "node scripts/platform-admin.cjs",
     "migrate:up": "migrate-mongo up -f migrate-mongo-config.cjs",
     "migrate:down": "migrate-mongo down -f migrate-mongo-config.cjs",
     "migrate:status": "migrate-mongo status -f migrate-mongo-config.cjs",

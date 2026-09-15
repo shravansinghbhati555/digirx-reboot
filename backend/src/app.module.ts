@@ -21,6 +21,7 @@ import { AuthModule } from './modules/auth/auth.module';
 import { AuthzModule } from './modules/authz/authz.module';
 import { PermissionsGuard } from './modules/authz/permissions.guard';
 import { TenancyModule } from './modules/tenancy/tenancy.module';
+import { PlatformModule } from './modules/platform/platform.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
 import { PatientsModule } from './modules/patients/patients.module';
 import { AppointmentsModule } from './modules/appointments/appointments.module';
@@ -88,6 +89,7 @@ import { FxModule } from './modules/fx/fx.module';
     AuthModule,
     AuthzModule,
     TenancyModule,
+    PlatformModule,
     AvailabilityModule,
     PatientsModule,
     AppointmentsModule,

@@ -122,27 +122,14 @@ export class AuthController {
   // Capped at 3/min/IP — signup creates a Clinic + admin User and we
   // don't want it abused for tenant-spam. Lighter than the 10/min login
   // throttle because the cost of a successful signup is much higher.
+  // Registers the clinic and parks it in the approval queue. No session is
+  // issued and no refresh cookie is set: the caller cannot enter the app
+  // until a platform admin approves the clinic.
   @Post('signup')
   @Public()
   @Throttle({ default: { limit: 3, ttl: 60_000 } })
-  async signup(
-    @Body() body: SignupDto,
-    @Res({ passthrough: true }) res: Response,
-  ) {
-    const out = await this.auth.signup(body);
-    res.cookie(
-      REFRESH_COOKIE,
-      `${out.refresh.sessionId}.${out.refresh.refreshToken}`,
-      refreshCookieOptions(out.refresh.expiresAt),
-    );
-    return {
-      accessToken: out.accessToken,
-      userId: out.userId,
-      clinicId: out.clinicId,
-      branchId: out.branchId,
-      clinicName: out.clinicName,
-      branchName: out.branchName,
-    };
+  async signup(@Body() body: SignupDto) {
+    return this.auth.signup(body);
   }
 
   // Admin-only forgot-password flow. Always returns { ok: true } — see

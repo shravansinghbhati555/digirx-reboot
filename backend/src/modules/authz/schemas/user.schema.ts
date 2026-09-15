@@ -31,6 +31,17 @@ export class User {
   @Prop({ required: true, enum: UserStatus, default: UserStatus.Active })
   status!: UserStatus;
 
+  /**
+   * DigiRx platform operator, not a clinic role.
+   *
+   * Deliberately kept out of the Permission enum: a clinic's own Super Admin
+   * is seeded with every Permission, so a platform capability expressed as a
+   * permission would hand cross-tenant access to every customer. This flag is
+   * never writable through the API — set it with `pnpm platform:grant`.
+   */
+  @Prop({ type: Boolean, default: false, index: true })
+  isPlatformAdmin?: boolean;
+
   @Prop({ select: false })
   passwordHash?: string;
 

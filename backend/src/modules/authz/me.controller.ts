@@ -99,6 +99,10 @@ export class MeController {
         ? {
             _id: clinic._id,
             name: clinic.name,
+            // Onboarding state, so the app can tell an approved clinic from
+            // one still sitting in the queue. Missing on pre-existing rows,
+            // which are active by definition.
+            status: clinic.status ?? 'ACTIVE',
             currency: clinic.currency,
             timezone: clinic.timezone,
             countryCode: clinic.countryCode,
@@ -114,6 +118,10 @@ export class MeController {
           }
         : null,
       features,
+      // Platform operators get the clinic approval queue in the app shell.
+      // This is a DigiRx-staff flag, not a clinic role.
+      isPlatformAdmin:
+        (actor.user as { isPlatformAdmin?: boolean }).isPlatformAdmin === true,
       user: actor.user,
       roles: actor.roles,
       permissions: actor.permissions,

@@ -1,4 +1,10 @@
-import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  ForbiddenException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { InjectModel } from '@nestjs/mongoose';
 import bcrypt from 'bcrypt';
@@ -8,7 +14,7 @@ import { Model, Types } from 'mongoose';
 import { Role } from '../authz/schemas/role.schema';
 import { User, UserStatus } from '../authz/schemas/user.schema';
 import { Permission } from '../authz/permissions';
-import { Clinic } from '../tenancy/schemas/clinic.schema';
+import { Clinic, ClinicStatus } from '../tenancy/schemas/clinic.schema';
 import { Branch } from '../tenancy/schemas/branch.schema';
 import { JwtClaims } from './auth.types';
 import { Session } from './schemas/session.schema';
@@ -23,6 +29,49 @@ export class AuthService {
     @InjectModel(Session.name) private readonly sessionModel: Model<Session>,
     private readonly jwt: JwtService,
   ) { }
+
+  /**
+   * Refuse a session when the clinic has not been approved yet.
+   *
+   * Called only AFTER credentials have been verified, so it never tells an
+   * anonymous caller whether a clinic or an email exists. A clinic written
+   * before the status field existed has no status, and is treated as active
+   * so this can't lock out an existing tenant.
+   */
+  private async assertClinicCanSignIn(clinicId: Types.ObjectId) {
+    const clinic = await this.clinicModel
+      .findById(clinicId)
+      .select({ status: 1, name: 1, statusReason: 1 })
+      .lean();
+
+    if (!clinic) throw new UnauthorizedException('Invalid credentials');
+
+    const status = clinic.status ?? ClinicStatus.Active;
+    if (status === ClinicStatus.Active) return;
+
+    const detail =
+      status === ClinicStatus.Pending
+        ? {
+            code: 'CLINIC_PENDING_APPROVAL',
+            message:
+              'Your clinic is waiting for DigiRx to approve it. We will email you as soon as it is activated.',
+          }
+        : status === ClinicStatus.Rejected
+          ? {
+              code: 'CLINIC_REJECTED',
+              message:
+                clinic.statusReason ||
+                'This clinic registration was not approved. Contact DigiRx support for details.',
+            }
+          : {
+              code: 'CLINIC_SUSPENDED',
+              message:
+                clinic.statusReason ||
+                'This clinic account is suspended. Contact DigiRx support to restore access.',
+            };
+
+    throw new ForbiddenException({ ...detail, clinicStatus: status });
+  }
 
   private accessToken(claims: JwtClaims) {
     const expiresIn = (process.env.JWT_ACCESS_TTL ?? '8h') as unknown as string;
@@ -62,8 +111,11 @@ export class AuthService {
   /**
    * Bootstrap a new clinic + admin in one call. Creates Clinic, a default
    * Branch, an "Admin" Role with every Permission, and the admin User with
-   * a bcrypt-hashed password. Auto-issues an access token + refresh session
-   * so the caller can drop straight into the app like login does.
+   * a bcrypt-hashed password.
+   *
+   * The clinic lands in PENDING and NO session is issued: a platform admin
+   * has to approve it before anyone can sign in. The caller gets back the
+   * pending state so the UI can say what happens next.
    *
    * Idempotency is intentionally NOT provided: a clinic with the same name
    * is allowed (clinics aren't unique by name in the schema), but the
@@ -94,6 +146,10 @@ export class AuthService {
       currency: (input.currency || 'INR').toUpperCase(),
       phoneCountryCode: input.phoneCountryCode || '+91',
       settings: {},
+      // Self-service signups always start in the approval queue. The schema
+      // default is ACTIVE so that clinics created before this queue existed
+      // keep working, which means signup has to say PENDING explicitly.
+      status: ClinicStatus.Pending,
     });
 
     const branch = await this.branchModel.create({
@@ -265,30 +321,29 @@ export class AuthService {
       throw e;
     }
 
-    const claims: JwtClaims = {
-      sub: user._id.toHexString(),
-      clinicId: clinic._id.toHexString(),
-      branchId: branch._id.toHexString(),
-    };
-    const accessToken = await this.accessToken(claims);
-    const refresh = await this.issueRefreshSession({
-      clinicId: clinic._id,
-      userId: user._id,
-      branchId: branch._id,
-    });
+    // Record who asked, so the approval queue can show it without joining
+    // back through users on every row.
+    await this.clinicModel.updateOne(
+      { _id: clinic._id },
+      {
+        $set: {
+          requestedByUserId: user._id,
+          requestedByName: user.name,
+          requestedByEmail: email,
+        },
+      },
+    );
 
     return {
-      accessToken,
-      refresh: {
-        sessionId: refresh.sessionId,
-        refreshToken: refresh.refreshToken,
-        expiresAt: refresh.expiresAt,
-      },
-      userId: claims.sub,
-      clinicId: claims.clinicId,
-      branchId: claims.branchId!,
+      status: ClinicStatus.Pending,
+      clinicId: clinic._id.toHexString(),
+      branchId: branch._id.toHexString(),
+      userId: user._id.toHexString(),
       clinicName: clinic.name,
       branchName: branch.name,
+      adminEmail: email,
+      message:
+        'Your clinic has been registered and is waiting for DigiRx approval. We will email you as soon as it is activated.',
     };
   }
 
@@ -312,6 +367,8 @@ export class AuthService {
 
     const ok = await bcrypt.compare(input.password, user.passwordHash);
     if (!ok) throw invalid;
+
+    await this.assertClinicCanSignIn(clinicId);
 
     const effectiveBranchId = input.branchId ?? user.defaultBranchId?.toHexString();
     const claims: JwtClaims = {
@@ -441,6 +498,11 @@ export class AuthService {
    * same shape as `login`.
    */
   private async completeLoginForUser(user: any) {
+    // Every session ultimately funnels through here (email login, the
+    // clinic-picker path, and face login), so the approval gate lives here
+    // too rather than being repeated at each entry point.
+    await this.assertClinicCanSignIn(user.clinicId);
+
     // Look up roles before issuing the token so we can apply the
     // branch-required rule role-by-role.
     const roleDocs = user.roleIds?.length
@@ -516,6 +578,10 @@ export class AuthService {
     if (!matchesCurrent) {
       throw new UnauthorizedException('Invalid session');
     }
+
+    // A clinic suspended mid-session must not be able to ride an existing
+    // refresh token onwards, so the gate applies on rotation too.
+    await this.assertClinicCanSignIn(session.clinicId);
 
     // Atomic compare-and-swap: only the first concurrent caller for this
     // (sessionId, currentHash) wins. Late racers find the hash already rotated
