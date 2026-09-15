@@ -9,36 +9,28 @@ import { Spinner, useToast, labelStyle } from '../shared/primitives';
 import { FaceScanModal } from '../shared/FaceScanModal';
 
 type ClinicResult = { id: string; name: string; countryCode?: string; timezone?: string };
-type BranchAddress = { street?: string; city?: string; state?: string; zip?: string; country?: string };
-type BranchResult = { id: string; name: string; address?: BranchAddress | string | null };
-
-function formatAddress(addr: BranchResult['address']): string {
-  if (!addr) return '';
-  if (typeof addr === 'string') return addr;
-  const parts = [addr.street, addr.city, addr.state, addr.zip, addr.country].filter(Boolean);
-  return parts.join(', ');
-}
 
 
+
+// Signup no longer returns a session: the clinic is parked in the DigiRx
+// approval queue and the response says so. Nobody gets into the workspace
+// until a platform admin approves it.
 type SignupResponse = {
-  accessToken: string;
+  status: 'PENDING';
   userId: string;
   clinicId: string;
   branchId: string;
   clinicName: string;
   branchName: string;
+  adminEmail: string;
+  message: string;
 };
 
-type PendingAuth = {
-  clinic: ClinicResult;
-  accessToken: string;
-  userId: string;
-  email: string;
-  roles?: string[];
-};
+type SignupPending = { clinicName: string; adminEmail: string; message: string };
+
 
 export function LoginScreen() {
-  const { ctx, setCtx } = useApp();
+  const { ctx } = useApp();
   const toast = useToast();
   const isMobile = useIsMobile();
   const location = useLocation();
@@ -55,47 +47,20 @@ export function LoginScreen() {
     }
   }, [expiredReason, toast]);
 
-  // 'signin' uses the 3-step wizard (sign in → pick branch → welcome).
-  // 'signup' uses a single bootstrap form that creates the clinic + admin
-  // + default branch in one shot, then jumps straight to welcome (step 2).
-  const [mode, setMode] = useState<'signin' | 'signup'>('signin');
-  const [step, setStep] = useState<0 | 1 | 2>(0);
+  // Both flows are single-step now. Sign-in resolves clinic + branch on the
+  // server and sets the context directly; signup ends at the approval notice
+  // because the clinic cannot be entered until DigiRx approves it.
+  const [mode, setMode] = useState<'signin' | 'signup' | 'pending'>('signin');
+  const [pendingSignup, setPendingSignup] = useState<SignupPending | null>(null);
   const [apiBaseUrl] = useState(ctx.apiBaseUrl);
-  const [pendingAuth, setPendingAuth] = useState<PendingAuth | null>(null);
-  const [pendingBranch, setPendingBranch] = useState<BranchResult | null>(null);
 
-  // Sign-in is now single-step (SignInStep handles login + setCtx
-  // directly via /auth/login-by-email). The signup flow still uses
-  // the 3-step wizard so finishSignup / branch picker stay below.
-  const finishBranch = (branch: BranchResult | null) => { setPendingBranch(branch); setStep(2); };
-
-  // Signup short-circuits the branch picker — the freshly created clinic
-  // has exactly one branch and the BE already returned it, so we set
-  // both pendingAuth and pendingBranch in one move and jump to step 2.
-  const finishSignup = (auth: PendingAuth, branch: BranchResult) => {
-    setPendingAuth(auth);
-    setPendingBranch(branch);
-    setStep(2);
+  // Signup ends at the approval notice rather than in the workspace.
+  const finishSignup = (info: SignupPending) => {
+    setPendingSignup(info);
+    setMode('pending');
   };
 
-  const finalize = () => {
-    if (!pendingAuth) return;
-    setCtx({
-      ...ctx,
-      apiBaseUrl,
-      userId: pendingAuth.userId,
-      clinicId: pendingAuth.clinic.id,
-      clinicName: pendingAuth.clinic.name,
-      branchId: pendingBranch?.id,
-      branchName: pendingBranch?.name,
-      accessToken: pendingAuth.accessToken,
-      email: pendingAuth.email,
-      timezone: pendingAuth.clinic.timezone,
-    });
-    toast(mode === 'signup' ? 'Account created' : 'Signed in', 'success');
-  };
 
-  const back = () => setStep((s) => (s > 0 ? ((s - 1) as 0 | 1 | 2) : s));
 
   return (
     <div style={{ display: 'flex', height: '100vh', minHeight: 600 }}>
@@ -103,7 +68,7 @@ export function LoginScreen() {
 
       <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 32, overflowY: 'auto', position: 'relative' }}>
         <div style={{ width: '100%', maxWidth: 420, animation: 'slideUp 320ms var(--ease-out)' }}>
-          {/* On mobile the brand hero is hidden, so surface the DiziRx logo
+          {/* On mobile the brand hero is hidden, so surface the DigiRx logo
               above the form (shown for both sign-in and sign-up). */}
           {isMobile && (
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-start', gap: 8, marginBottom: 28 }}>
@@ -111,15 +76,11 @@ export function LoginScreen() {
                 <Icon name="cross" size={17} style={{ color: 'var(--brand-text)' }} strokeWidth={2.5} />
               </div>
               <span style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 800, color: 'var(--text)', letterSpacing: '-0.4px' }}>
-                Dizi<span style={{ color: 'var(--brand-500)' }}>Rx</span>
+                Digi<span style={{ color: 'var(--brand-500)' }}>Rx</span>
               </span>
             </div>
           )}
-          {/* Signin is single-step now — only show the step dots for
-              the signup wizard (which still has Create / Welcome). */}
-          {mode === 'signup' && <StepDots current={step} total={3} />}
-
-          {expiredReason && step === 0 && (
+          {expiredReason && mode === 'signin' && (
             <div
               role="status"
               style={{
@@ -141,14 +102,14 @@ export function LoginScreen() {
             </div>
           )}
 
-          {step === 0 && mode === 'signin' && (
+          {mode === 'signin' && (
             <SignInStep
               apiBaseUrl={apiBaseUrl}
               onSwitchToSignup={() => setMode('signup')}
             />
           )}
 
-          {step === 0 && mode === 'signup' && (
+          {mode === 'signup' && (
             <SignUpStep
               apiBaseUrl={apiBaseUrl}
               onSuccess={finishSignup}
@@ -156,22 +117,17 @@ export function LoginScreen() {
             />
           )}
 
-          {step === 1 && pendingAuth && (
-            <BranchPickerStep
-              apiBaseUrl={apiBaseUrl}
-              auth={pendingAuth}
-              onBack={back}
-              onSuccess={finishBranch}
+          {mode === 'pending' && pendingSignup && (
+            <SignupPendingPanel
+              info={pendingSignup}
+              onBackToSignin={() => {
+                setPendingSignup(null);
+                setMode('signin');
+              }}
             />
           )}
 
-          {step === 2 && pendingAuth && (
-            <WelcomeStep
-              auth={pendingAuth}
-              branch={pendingBranch}
-              onFinish={finalize}
-            />
-          )}
+
         </div>
       </div>
     </div>
@@ -190,7 +146,7 @@ function BrandPanel() {
           <Icon name="cross" size={18} style={{ color: 'var(--brand-text)' }} strokeWidth={2.5} />
         </div>
         <span style={{ fontFamily: "'Manrope',sans-serif", fontSize: 22, fontWeight: 800, color: 'var(--brand-text)', letterSpacing: '-0.5px' }}>
-          Dizi<span style={{ opacity: 0.7, fontWeight: 600 }}>Rx</span>
+          Digi<span style={{ opacity: 0.7, fontWeight: 600 }}>Rx</span>
         </span>
       </div>
 
@@ -215,25 +171,6 @@ function BrandPanel() {
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-function StepDots({ current, total }: { current: number; total: number }) {
-  return (
-    <div role="progressbar" aria-valuenow={current + 1} aria-valuemax={total}
-      style={{ display: 'flex', gap: 6, marginBottom: 32 }}>
-      {Array.from({ length: total }).map((_, i) => (
-        <div key={i}
-          style={{
-            height: 4,
-            borderRadius: 2,
-            width: i === current ? 24 : 8,
-            background: i < current ? 'var(--success-500)' : i === current ? 'var(--brand-500)' : 'var(--border)',
-            transition: 'width 320ms var(--ease-out), background 200ms var(--ease-out)',
-          }}
-        />
-      ))}
     </div>
   );
 }
@@ -346,7 +283,7 @@ function SignInStep({
         Welcome back
       </h1>
       <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 24 }}>
-        Sign in to your DiziRx account.
+        Sign in to your DigiRx account.
       </p>
 
       {errors.general && (
@@ -653,7 +590,7 @@ function SignUpStep({
   apiBaseUrl, onSuccess, onSwitchToSignin,
 }: {
   apiBaseUrl: string;
-  onSuccess: (auth: PendingAuth, branch: BranchResult) => void;
+  onSuccess: (info: SignupPending) => void;
   onSwitchToSignin: () => void;
 }) {
   const { ctx } = useApp();
@@ -791,15 +728,15 @@ function SignUpStep({
         countryCode: localCountry,
       });
       setBtnState('success');
-      setTimeout(() => onSuccess(
-        {
-          clinic: { id: res.clinicId, name: res.clinicName },
-          accessToken: res.accessToken,
-          userId: res.userId,
-          email,
-        },
-        { id: res.branchId, name: res.branchName },
-      ), 600);
+      setTimeout(
+        () =>
+          onSuccess({
+            clinicName: res.clinicName,
+            adminEmail: res.adminEmail ?? email,
+            message: res.message,
+          }),
+        600,
+      );
     } catch (err) {
       setBtnState('error');
       setShakeKey((k) => k + 1);
@@ -814,7 +751,7 @@ function SignUpStep({
         Create your clinic
       </h1>
       <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 24 }}>
-        Set up a new DiziRx workspace. You'll be the admin.
+        Set up a new DigiRx workspace. You'll be the admin.
       </p>
 
       {errors.general && (
@@ -894,175 +831,73 @@ function SignUpStep({
 
 /* ── Step 1: Branch Picker ────────────────────────────────── */
 
-function BranchPickerStep({
-  apiBaseUrl, auth, onBack, onSuccess,
+/**
+ * Shown once a clinic has been registered. There is no session yet — the
+ * clinic sits in the DigiRx approval queue, so this screen tells the admin
+ * what happens next instead of dropping them into an empty workspace.
+ */
+function SignupPendingPanel({
+  info,
+  onBackToSignin,
 }: {
-  apiBaseUrl: string;
-  auth: PendingAuth;
-  onBack: () => void;
-  onSuccess: (branch: BranchResult | null) => void;
+  info: SignupPending;
+  onBackToSignin: () => void;
 }) {
-  const { ctx } = useApp();
-  const [branches, setBranches] = useState<BranchResult[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<BranchResult | null>(null);
-  const [continuing, setContinuing] = useState(false);
-
-  useEffect(() => {
-    apiGet<BranchResult[]>({ ...ctx, apiBaseUrl } as DevContext, `/clinic/${auth.clinic.id}/branches`)
-      .then((data) => {
-        setBranches(data);
-        if (data.length === 1) setSelected(data[0]);
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)));
-  }, [apiBaseUrl, auth.clinic.id, ctx]);
-
-  function handleContinue() {
-    if (branches && branches.length > 0 && !selected) return;
-    setContinuing(true);
-    setTimeout(() => onSuccess(selected), 400);
-  }
-
   return (
     <div style={{ animation: 'slideUp 200ms var(--ease-out) both' }}>
-      <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 26, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.4px', marginBottom: 6 }}>
-        Pick a branch
+      <div style={{
+        width: 52, height: 52, borderRadius: 14, background: 'var(--warning-bg)',
+        display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 18,
+      }}>
+        <Icon name="clock" size={26} style={{ color: 'var(--warning-500)' }} />
+      </div>
+
+      <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 26, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.4px', marginBottom: 8 }}>
+        Waiting for approval
       </h1>
-      <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 24 }}>
-        Select the branch you are operating from today.
+      <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.6, marginBottom: 20 }}>
+        {info.message}
       </p>
 
-      {error && (
-        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, padding: '12px 14px', borderRadius: 8, marginBottom: 16, background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', color: 'var(--danger-500)', fontSize: 13 }}>
-          <Icon name="alertTriangle" size={16} style={{ flexShrink: 0 }} />
-          <span>{error}</span>
-        </div>
-      )}
+      <div style={{
+        border: '1px solid var(--border)', borderRadius: 12, padding: 16,
+        background: 'var(--surface-muted)', marginBottom: 22,
+      }}>
+        <Row label="Clinic" value={info.clinicName} />
+        <Row label="Admin email" value={info.adminEmail} />
+        <Row label="Status" value="Pending approval" />
+      </div>
 
-      {!branches && !error && (
-        <div style={{ padding: 24, textAlign: 'center', color: 'var(--text-subtle)', fontSize: 13 }}>Loading branches…</div>
-      )}
+      <p style={{ fontSize: 12.5, color: 'var(--text-subtle)', lineHeight: 1.6, marginBottom: 22 }}>
+        Once DigiRx approves the clinic you can sign in with the email and password
+        you just chose. Nothing else is needed from you.
+      </p>
 
-      {branches && branches.length === 0 && (
-        <div style={{ padding: '20px 16px', textAlign: 'center', background: 'var(--surface-muted)', border: '1px dashed var(--border)', borderRadius: 12, color: 'var(--text-muted)', fontSize: 13, marginBottom: 24 }}>
-          This clinic has no branches configured. You can continue without one.
-        </div>
-      )}
-
-      {branches && branches.length > 0 && (
-        <div role="radiogroup" aria-label="Branches" style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 24 }}>
-          {branches.map((b, i) => {
-            const isSel = selected?.id === b.id;
-            return (
-              <div key={b.id} role="radio" aria-checked={isSel} tabIndex={0}
-                onClick={() => setSelected(b)}
-                onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') setSelected(b); }}
-                style={{
-                  padding: 16, border: `1.5px solid ${isSel ? 'var(--brand-500)' : 'var(--border)'}`,
-                  borderRadius: 12, cursor: 'pointer',
-                  display: 'flex', alignItems: 'center', gap: 14,
-                  background: isSel ? 'var(--brand-50)' : 'var(--surface)',
-                  boxShadow: isSel ? '0 0 0 3px rgba(59,130,246,0.12)' : 'none',
-                  transition: 'all 200ms var(--ease-out)',
-                  animation: `slideUp 200ms var(--ease-out) ${i * 50}ms both`,
-                }}>
-                <div style={{ width: 40, height: 40, borderRadius: 10, background: 'var(--brand-100)', color: 'var(--brand-600)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                  <Icon name="mapPin" size={18} />
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 600, fontSize: 14, color: 'var(--text)' }}>{b.name}</div>
-                  <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    {formatAddress(b.address) || <span style={{ fontFamily: 'monospace' }}>{b.id.slice(-12)}</span>}
-                  </div>
-                </div>
-                <div style={{ color: 'var(--brand-500)', opacity: isSel ? 1 : 0, transform: isSel ? 'scale(1)' : 'scale(0.8)', transition: 'opacity 200ms, transform 200ms var(--ease-out)' }}>
-                  <Icon name="check" size={18} strokeWidth={2.5} />
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      <button onClick={handleContinue} disabled={continuing || (branches !== null && branches.length > 0 && !selected)}
+      <button type="button" onClick={onBackToSignin}
         style={{
-          width: '100%', height: 48, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none',
-          borderRadius: 12, fontSize: 15, fontWeight: 600,
-          cursor: continuing ? 'wait' : (branches && branches.length > 0 && !selected ? 'not-allowed' : 'pointer'),
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-          opacity: (branches && branches.length > 0 && !selected) ? 0.6 : 1,
+          width: '100%', height: 44, borderRadius: 10, border: '1px solid var(--border)',
+          background: 'var(--surface)', color: 'var(--text)', fontSize: 14, fontWeight: 600,
+          cursor: 'pointer',
         }}>
-        {continuing ? <Spinner size={18} /> : null}
-        {continuing ? 'Loading…' : 'Continue'}
-        {!continuing && <Icon name="chevronRight" size={16} />}
+        Back to sign in
       </button>
+    </div>
+  );
+}
 
-      <button onClick={onBack} type="button"
-        style={{
-          width: '100%', height: 44, background: 'none', border: '1.5px solid var(--border)', borderRadius: 12,
-          fontSize: 14, fontWeight: 500, color: 'var(--text-muted)', cursor: 'pointer', marginTop: 10,
-        }}>
-        ← Back
-      </button>
+/** Label / value line used by the approval notice. */
+function Row({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'baseline', justifyContent: 'space-between', gap: 12, padding: '5px 0' }}>
+      <span style={{ fontSize: 12, color: 'var(--text-subtle)' }}>{label}</span>
+      <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)', textAlign: 'right', wordBreak: 'break-word' }}>
+        {value}
+      </span>
     </div>
   );
 }
 
 /* ── Step 2: Welcome ──────────────────────────────────────── */
-
-function WelcomeStep({ auth, branch, onFinish }: { auth: PendingAuth; branch: BranchResult | null; onFinish: () => void }) {
-  const firstName = (auth.email.split('@')[0].split('.')[0] || 'there').replace(/[^a-zA-Z]/g, '');
-  const name = firstName ? firstName[0].toUpperCase() + firstName.slice(1) : 'there';
-  const hour = new Date().getHours();
-  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
-
-  return (
-    <div style={{ textAlign: 'center', animation: 'slideInRight 320ms var(--ease-out)' }}>
-      <div style={{
-        width: 80, height: 80, borderRadius: '50%',
-        background: 'rgba(16,185,129,0.1)', border: '2px solid var(--success-500)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 24px',
-        animation: 'slideUp 300ms var(--ease-out)',
-      }}>
-        <svg width={36} height={36} viewBox="0 0 24 24" fill="none" stroke="var(--success-500)" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-          <polyline points="20 6 9 17 4 12" strokeDasharray="24" strokeDashoffset="0" style={{ animation: 'checkDraw 280ms var(--ease-out) forwards' }} />
-        </svg>
-      </div>
-
-      <h1 style={{ fontFamily: "'Manrope',sans-serif", fontSize: 26, fontWeight: 700, color: 'var(--text)', letterSpacing: '-0.4px', marginBottom: 6 }}>
-        {greeting}, {name}
-      </h1>
-      <p style={{ fontSize: 14, color: 'var(--text-muted)', lineHeight: 1.5, marginBottom: 0 }}>
-        You're signed in and ready to go.
-      </p>
-
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, margin: '16px 0 32px', flexWrap: 'wrap' }}>
-        <span style={{ padding: '4px 12px', borderRadius: 100, fontSize: 12, fontWeight: 600, background: 'var(--brand-50)', color: 'var(--brand-600)', border: '1px solid var(--brand-100)' }}>
-          {auth.clinic.name}
-        </span>
-        {branch && (
-          <span style={{ padding: '4px 12px', borderRadius: 100, fontSize: 12, fontWeight: 500, background: 'var(--surface-muted)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
-            {branch.name}
-          </span>
-        )}
-        <span style={{ padding: '4px 12px', borderRadius: 100, fontSize: 12, fontWeight: 500, background: 'var(--surface-muted)', color: 'var(--text-muted)', border: '1px solid var(--border)' }}>
-          {auth.email}
-        </span>
-      </div>
-
-      <button onClick={onFinish}
-        style={{
-          width: '100%', height: 48, background: 'var(--brand-500)', color: 'var(--brand-text)', border: 'none',
-          borderRadius: 12, fontSize: 15, fontWeight: 600, cursor: 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-          animation: 'slideUp 200ms var(--ease-out) 100ms both',
-        }}>
-        Go to dashboard
-        <Icon name="chevronRight" size={16} />
-      </button>
-    </div>
-  );
-}
 
 /* ── Clinic Combobox ──────────────────────────────────────── */
 // Kept around for potential future MULTIPLE_CLINICS fallback (when

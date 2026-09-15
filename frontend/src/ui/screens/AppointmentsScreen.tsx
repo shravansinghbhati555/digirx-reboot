@@ -3150,7 +3150,7 @@ function PaymentCheckoutOverlay({
             key: keyId,
             amount: orderResponse.amount,
             currency: orderResponse.currency,
-            name: 'DiziRx Clinic',
+            name: 'DigiRx Clinic',
             description: billLabel,
             order_id: orderResponse.orderId,
             handler: async function (response: any) {
@@ -3399,7 +3399,7 @@ function PaymentCheckoutOverlay({
                       }}>
                         {/* Real dynamic UPI QR code generator using clinic UPI ID */}
                         {(() => {
-                          const upiUri = `upi://pay?pa=${upiId}&pn=DiziRx%20Clinic&am=${amount}&cu=INR`;
+                          const upiUri = `upi://pay?pa=${upiId}&pn=DigiRx%20Clinic&am=${amount}&cu=INR`;
                           return (
                             <img
                               src={`https://api.qrserver.com/v1/create-qr-code/?size=150x150&data=${encodeURIComponent(upiUri)}`}

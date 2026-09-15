@@ -19,6 +19,7 @@ import { ProfileScreen } from './ui/screens/ProfileScreen';
 import { RolesScreen } from './ui/screens/RolesScreen';
 import { UsersScreen } from './ui/screens/UsersScreen';
 import { SharePrescriptionScreen } from './ui/screens/SharePrescriptionScreen';
+import { PlatformScreen } from './ui/screens/PlatformScreen';
 
 /**
  * Permission-gated route wrapper. Renders nothing when the user lacks the
@@ -37,6 +38,19 @@ function Guarded({
     canAccessScreen(permissions, screenKey) &&
     isScreenAllowedForRoles(roleNames, screenKey);
   return allowed ? <>{children}</> : null;
+}
+
+/**
+ * The clinic approval queue is DigiRx-staff only. It hangs off the
+ * `isPlatformAdmin` flag from /me, not off clinic permissions, so the normal
+ * `Guarded` wrapper cannot express it.
+ */
+function PlatformGuarded({ children }: { children: React.ReactNode }) {
+  const { isPlatformAdmin, loadingMe } = useApp();
+  // Wait for /me before deciding: bouncing during the first paint would
+  // kick a platform admin off their own screen on a hard refresh.
+  if (loadingMe) return null;
+  return isPlatformAdmin ? <>{children}</> : <Navigate to="/" replace />;
 }
 
 function AuthedShell() {
@@ -61,6 +75,7 @@ function AuthedShell() {
         <Route path="/settings/*" element={<Guarded screenKey="settings"><SettingsScreen /></Guarded>} />
         <Route path="/availability/*" element={<Guarded screenKey="availability"><AvailabilityScreen /></Guarded>} />
         <Route path="/profile/*" element={<Guarded screenKey="profile"><ProfileScreen /></Guarded>} />
+        <Route path="/platform/*" element={<PlatformGuarded><PlatformScreen /></PlatformGuarded>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>

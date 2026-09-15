@@ -82,6 +82,10 @@ export const SCREEN_REQUIRED: Record<ScreenKey, PermName[] | null> = {
   availability: [Perm.SettingsAvailabilityRead],
   // Own profile — available to any signed-in user.
   profile: null,
+  // The approval queue is not a clinic capability, so it has no permission
+  // to require. Access is decided by the `isPlatformAdmin` flag from /me in
+  // App.tsx and enforced again by PlatformAdminGuard on the server.
+  platform: null,
 };
 
 export function hasPerm(set: Set<string>, perm: PermName): boolean {

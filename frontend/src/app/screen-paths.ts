@@ -23,6 +23,7 @@ export const SCREEN_PATHS: Record<ScreenKey, string> = {
   settings: '/settings',
   availability: '/availability',
   profile: '/profile',
+  platform: '/platform',
 };
 
 const PATH_PREFIX_TO_SCREEN: Array<[string, ScreenKey]> = (

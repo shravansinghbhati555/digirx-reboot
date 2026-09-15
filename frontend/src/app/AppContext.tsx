@@ -25,6 +25,9 @@ export type ScreenKey =
   // sidebar instead of as a Settings tab. Other roles still edit
   // availability inside Settings.
   | 'availability'
+  // DigiRx staff only: the cross-clinic approval queue. Gated by the
+  // `isPlatformAdmin` flag from /me, never by a clinic permission.
+  | 'platform'
   // Per-user profile: photo, role, clinic, and the user's personal
   // display-timezone preference + their appointments.
   | 'profile';
@@ -51,6 +54,9 @@ type AppState = {
   // them the underlying `user:read` permission.
   roleNames: Set<string>;
   features: Features;
+  // True when the signed-in user is a DigiRx platform operator, which
+  // unlocks the clinic approval queue. Not a clinic role.
+  isPlatformAdmin: boolean;
   loadingMe: boolean;
   meError: string | null;
   refreshMe: () => Promise<void>;
@@ -122,6 +128,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
     user?: { name?: string; fullName?: string; email?: string };
     roles?: Array<{ name?: string }>;
     branch?: { _id?: string; name?: string } | null;
+    // DigiRx staff flag, used to surface the clinic approval queue.
+    isPlatformAdmin?: boolean;
   } | null>(null);
   const [loadingMe, setLoadingMe] = useState(false);
   const [meError, setMeError] = useState<string | null>(null);
@@ -210,6 +218,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       const data = await apiGet<{
         permissions: string[];
         features?: Partial<Features>;
+        isPlatformAdmin?: boolean;
         user?: { name?: string; fullName?: string; email?: string };
         roles?: Array<{ name?: string }>;
         branch?: { _id?: string; name?: string; upiId?: string | null; upiQrUrl?: string | null } | null;
@@ -314,6 +323,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
     [meData],
   );
 
+  // Defaults to false until /me resolves, so the queue never flashes for
+  // an ordinary clinic user on first paint.
+  const isPlatformAdmin = meData?.isPlatformAdmin === true;
+
   const value: AppState = {
     ctx,
     setCtx,
@@ -321,6 +334,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     permissions,
     roleNames,
     features,
+    isPlatformAdmin,
     loadingMe,
     meError,
     refreshMe,

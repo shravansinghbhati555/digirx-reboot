@@ -1899,7 +1899,7 @@ function AboutTab() {
           </div>
         </div>
         <p style={{ fontSize: 13, color: 'var(--text-muted)', lineHeight: 1.6, margin: 0 }}>
-          DiziRx is a clinic management platform that runs the day-to-day of a
+          DigiRx is a clinic management platform that runs the day-to-day of a
           modern outpatient practice — from a patient's first booking through
           their visit, prescription, and bill. It is built for solo doctors,
           multi-doctor clinics, and multi-branch chains, with the safeguards
@@ -1908,7 +1908,7 @@ function AboutTab() {
       </div>
 
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>
-        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 14 }}>What DiziRx covers</div>
+        <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)', marginBottom: 14 }}>What DigiRx covers</div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
           {features.map((f) => (
             <div key={f.title} style={{ display: 'flex', gap: 10, padding: '12px 14px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10 }}>
@@ -1925,8 +1925,8 @@ function AboutTab() {
       </div>
 
       <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20, fontSize: 12, color: 'var(--text-subtle)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-        <span>© {new Date().getFullYear()} DiziRx. All rights reserved.</span>
-        <span>Need help? Reach support at <a href="mailto:support@dizirx.com" style={{ color: 'var(--brand-500)', textDecoration: 'none' }}>support@dizirx.com</a></span>
+        <span>© {new Date().getFullYear()} DigiRx. All rights reserved.</span>
+        <span>Need help? Reach support at <a href="mailto:support@digirx.online" style={{ color: 'var(--brand-500)', textDecoration: 'none' }}>support@digirx.online</a></span>
       </div>
     </div>
   );

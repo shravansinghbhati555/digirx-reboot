@@ -31,6 +31,12 @@ const NAV_ITEMS: NavItem[] = [
 // Anything else they can see follows in NAV_ITEMS order.
 const DOCTOR_NAV_ORDER: ScreenKey[] = ['availability', 'appointments', 'encounters', 'patients'];
 
+// DigiRx-staff only. Rendered from the `isPlatformAdmin` flag on /me, not
+// from clinic permissions, so no customer role can surface it.
+const PLATFORM_ITEMS: NavItem[] = [
+  { id: 'platform', label: 'Clinic approvals', icon: 'shield' },
+];
+
 const ADMIN_ITEMS: NavItem[] = [
   { id: 'users', label: 'Users', icon: 'users' },
   { id: 'roles', label: 'Roles & Permissions', icon: 'shield' },
@@ -103,7 +109,7 @@ function CommandPalette({ commands, onNavigate, onClose }: { commands: typeof AL
 }
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { screen, setScreen, theme, toggleTheme, ctx, setCtx, logout, selectedDate, setSelectedDate, permissions, roleNames, refreshMe, setNewPatientRequested } = useApp();
+  const { screen, setScreen, theme, toggleTheme, ctx, setCtx, logout, selectedDate, setSelectedDate, permissions, roleNames, isPlatformAdmin, refreshMe, setNewPatientRequested } = useApp();
   const toast = useToast();
   const [collapsed, setCollapsed] = useState(false);
   const [cmdOpen, setCmdOpen] = useState(false);
@@ -443,6 +449,12 @@ export function AppShell({ children }: { children: ReactNode }) {
             <>
               {!collapsed && <div style={{ height: 1, background: 'var(--border)', margin: '8px 4px' }} />}
               {visibleAdmin.map((item) => <NavItemBtn key={item.id} item={item} />)}
+            </>
+          )}
+          {isPlatformAdmin && (
+            <>
+              {!collapsed && <div style={{ height: 1, background: 'var(--border)', margin: '8px 4px' }} />}
+              {PLATFORM_ITEMS.map((item) => <NavItemBtn key={item.id} item={item} />)}
             </>
           )}
         </nav>
@@ -1012,7 +1024,7 @@ function LocationPermissionModal({
             marginBottom: 20,
           }}
         >
-          DiziRx uses your location to customize clinic branches, automate timezones, and log secure access audit logs for compliance.
+          DigiRx uses your location to customize clinic branches, automate timezones, and log secure access audit logs for compliance.
         </p>
 
         <div
