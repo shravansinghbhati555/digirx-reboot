@@ -7,6 +7,7 @@ import {
   SendNotificationResult,
 } from './notification-provider';
 import { NotificationChannel } from '../schemas/notification-template.schema';
+import { deriveSubject, toHtmlBody } from './email-format';
 
 /**
  * Real-delivery provider for SMS + WhatsApp (Twilio) and Email (Twilio
@@ -78,10 +79,7 @@ export class TwilioNotificationProvider implements NotificationProvider {
     // same on email clients that prefer HTML, while keeping plain-text
     // delivery for everyone else (multipart MIME).
     const subject = deriveSubject(input.body);
-    const htmlBody = input.body
-      .split('\n')
-      .map((line) => escapeHtml(line))
-      .join('<br/>');
+    const htmlBody = toHtmlBody(input.body);
 
     const [res] = await sendgrid.send({
       to: input.to,
@@ -145,26 +143,4 @@ export class TwilioNotificationProvider implements NotificationProvider {
       },
     };
   }
-}
-
-/**
- * Picks a subject for the outbound email. We use the first non-empty
- * line of the body — typically a sentence like "Hi <name>, your
- * appointment has been rescheduled…" — capped to 78 chars so most
- * clients render it without truncation. Strips trailing punctuation
- * since subjects look cleaner without it.
- */
-function deriveSubject(body: string): string {
-  const firstLine = body.split('\n').map((l) => l.trim()).find((l) => l.length) ?? 'Notification';
-  const trimmed = firstLine.length > 78 ? `${firstLine.slice(0, 75)}…` : firstLine;
-  return trimmed.replace(/[.!?,;:\s]+$/, '');
-}
-
-function escapeHtml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
 }

@@ -15,6 +15,7 @@ import { NotificationsService } from './notifications.service';
 import { NotificationsController } from './notifications.controller';
 import { ConsoleNotificationProvider } from './providers/console.provider';
 import { TwilioNotificationProvider } from './providers/twilio.provider';
+import { SmtpNotificationProvider } from './providers/smtp.provider';
 import { NOTIFICATION_PROVIDER } from './providers/notification-provider';
 import { NotificationsProcessor } from './notifications.processor';
 import { NotificationsScheduler } from './notifications.scheduler';
@@ -72,6 +73,7 @@ export class NotificationsModule {
         NotificationsService,
         ConsoleNotificationProvider,
         TwilioNotificationProvider,
+        SmtpNotificationProvider,
         {
           // Single source of truth for which provider the worker uses.
           // Toggle via NOTIFICATION_PROVIDER env var (one line in .env).
@@ -79,24 +81,39 @@ export class NotificationsModule {
           useFactory: (
             consoleP: ConsoleNotificationProvider,
             twilioP: TwilioNotificationProvider,
+            smtpP: SmtpNotificationProvider,
           ) => {
             const choice = (
               process.env.NOTIFICATION_PROVIDER ?? 'console'
             ).toLowerCase();
             const log = new Logger('NotificationsModule');
             if (choice === 'twilio') {
-              log.log('Notification provider: TWILIO (real SMS/WhatsApp)');
+              log.log('Notification provider: TWILIO (real SMS/WhatsApp/email)');
               return twilioP;
+            }
+            if (choice === 'smtp') {
+              // Real email over SMTP. SMS and WhatsApp have no SMTP
+              // equivalent, so the provider logs those to the console
+              // rather than failing the job.
+              log.log('Notification provider: SMTP (real email, console for SMS/WhatsApp)');
+              return smtpP;
             }
             log.log('Notification provider: CONSOLE (no real delivery)');
             return consoleP;
           },
-          inject: [ConsoleNotificationProvider, TwilioNotificationProvider],
+          inject: [
+            ConsoleNotificationProvider,
+            TwilioNotificationProvider,
+            SmtpNotificationProvider,
+          ],
         },
         NotificationsScheduler,
         ...(enableQueue && redisUrl ? [NotificationsProcessor] : []),
       ],
-      exports: [NotificationsService],
+      // NOTIFICATION_PROVIDER is exported so platform-level features that are
+      // not clinic-scoped (the leads inbox) can send through the same
+      // configured provider without going via NotificationsService.
+      exports: [NotificationsService, NOTIFICATION_PROVIDER],
     };
   }
 }

@@ -19,5 +19,7 @@ import { PlatformAdminGuard } from './platform-admin.guard';
   ],
   controllers: [PlatformController],
   providers: [PlatformService, PlatformAdminGuard],
+  // The leads inbox reuses the same staff-only gate.
+  exports: [PlatformAdminGuard, MongooseModule],
 })
 export class PlatformModule {}

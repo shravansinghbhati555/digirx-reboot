@@ -22,6 +22,7 @@ import { AuthzModule } from './modules/authz/authz.module';
 import { PermissionsGuard } from './modules/authz/permissions.guard';
 import { TenancyModule } from './modules/tenancy/tenancy.module';
 import { PlatformModule } from './modules/platform/platform.module';
+import { LeadsModule } from './modules/leads/leads.module';
 import { AvailabilityModule } from './modules/availability/availability.module';
 import { PatientsModule } from './modules/patients/patients.module';
 import { AppointmentsModule } from './modules/appointments/appointments.module';
@@ -90,6 +91,7 @@ import { FxModule } from './modules/fx/fx.module';
     AuthzModule,
     TenancyModule,
     PlatformModule,
+    LeadsModule,
     AvailabilityModule,
     PatientsModule,
     AppointmentsModule,
@@ -140,6 +142,10 @@ export class AppModule implements NestModule {
         // tenant context needed.
         { path: 'clinics/:id/logo', method: RequestMethod.GET },
         { path: 'share/*path', method: RequestMethod.ALL },
+        // Contact-form intake from the marketing site. POST only: the
+        // matching GET/PATCH inbox at /platform/leads still runs through the
+        // middleware and the platform-admin guard.
+        { path: 'leads', method: RequestMethod.POST },
       )
       // In Nest 11 / Express 5, `forRoutes('*')` walks the registered
       // controllers and applies the middleware to each — but
