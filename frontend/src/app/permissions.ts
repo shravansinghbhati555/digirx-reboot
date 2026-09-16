@@ -86,6 +86,8 @@ export const SCREEN_REQUIRED: Record<ScreenKey, PermName[] | null> = {
   // to require. Access is decided by the `isPlatformAdmin` flag from /me in
   // App.tsx and enforced again by PlatformAdminGuard on the server.
   platform: null,
+  // Same story as `platform`: gated by isPlatformAdmin, not a clinic permission.
+  leads: null,
 };
 
 export function hasPerm(set: Set<string>, perm: PermName): boolean {

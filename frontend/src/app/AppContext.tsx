@@ -28,6 +28,8 @@ export type ScreenKey =
   // DigiRx staff only: the cross-clinic approval queue. Gated by the
   // `isPlatformAdmin` flag from /me, never by a clinic permission.
   | 'platform'
+  // DigiRx staff only: enquiries from the marketing site's contact form.
+  | 'leads'
   // Per-user profile: photo, role, clinic, and the user's personal
   // display-timezone preference + their appointments.
   | 'profile';

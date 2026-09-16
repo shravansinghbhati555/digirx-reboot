@@ -35,6 +35,7 @@ const DOCTOR_NAV_ORDER: ScreenKey[] = ['availability', 'appointments', 'encounte
 // from clinic permissions, so no customer role can surface it.
 const PLATFORM_ITEMS: NavItem[] = [
   { id: 'platform', label: 'Clinic approvals', icon: 'shield' },
+  { id: 'leads', label: 'Website enquiries', icon: 'mail' },
 ];
 
 const ADMIN_ITEMS: NavItem[] = [

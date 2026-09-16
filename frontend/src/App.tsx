@@ -20,6 +20,7 @@ import { RolesScreen } from './ui/screens/RolesScreen';
 import { UsersScreen } from './ui/screens/UsersScreen';
 import { SharePrescriptionScreen } from './ui/screens/SharePrescriptionScreen';
 import { PlatformScreen } from './ui/screens/PlatformScreen';
+import { LeadsScreen } from './ui/screens/LeadsScreen';
 
 /**
  * Permission-gated route wrapper. Renders nothing when the user lacks the
@@ -76,6 +77,7 @@ function AuthedShell() {
         <Route path="/availability/*" element={<Guarded screenKey="availability"><AvailabilityScreen /></Guarded>} />
         <Route path="/profile/*" element={<Guarded screenKey="profile"><ProfileScreen /></Guarded>} />
         <Route path="/platform/*" element={<PlatformGuarded><PlatformScreen /></PlatformGuarded>} />
+        <Route path="/leads/*" element={<PlatformGuarded><LeadsScreen /></PlatformGuarded>} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>

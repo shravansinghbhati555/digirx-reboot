@@ -24,6 +24,7 @@ export const SCREEN_PATHS: Record<ScreenKey, string> = {
   availability: '/availability',
   profile: '/profile',
   platform: '/platform',
+  leads: '/leads',
 };
 
 const PATH_PREFIX_TO_SCREEN: Array<[string, ScreenKey]> = (
