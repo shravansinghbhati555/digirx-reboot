@@ -64,7 +64,15 @@ async function bootstrap() {
     origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
       if (!origin) return callback(null, true);
       if (allowedOrigins.has(origin)) return callback(null, true);
-      return callback(new Error(`CORS blocked for origin: ${origin}`), false);
+      // Refuse by withholding the header rather than throwing. Throwing here
+      // surfaces as a 500 with a stack trace in the logs, which reads like a
+      // server fault when it is really a configuration gap — add the origin
+      // to CORS_ORIGINS. The browser blocks the response either way.
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[cors] blocked origin: ${origin} — add it to CORS_ORIGINS if this is one of ours`,
+      );
+      return callback(null, false);
     },
     credentials: true,
     methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
