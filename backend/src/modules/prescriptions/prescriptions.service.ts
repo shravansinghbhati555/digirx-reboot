@@ -27,6 +27,7 @@ import { DocumentsService } from '../documents/documents.service';
 import { DocumentCategory, DocumentOwnerType, DocumentStatus } from '../documents/schemas/document.schema';
 import { Branch, legacyAddressLine } from '../tenancy/schemas/branch.schema';
 import { Encounter, EncounterStatus } from '../encounters/schemas/encounter.schema';
+import { clientIdFields } from '../offline/client-id.util';
 
 const DEFAULT_RX_SHARE_EXPIRY_SECONDS = 7 * 24 * 60 * 60;
 
@@ -106,6 +107,7 @@ export class PrescriptionsService {
     // (auditors flag duplicates, not gaps).
     const prescriptionNo = await this.numbering.mint(clinicId);
     const rx = await this.rxModel.create({
+      ...clientIdFields(dto._id),
       clinicId,
       branchId: enc.branchId,
       doctorId: enc.doctorId,

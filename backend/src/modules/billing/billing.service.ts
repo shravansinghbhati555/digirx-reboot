@@ -34,6 +34,7 @@ import { InventoryService } from '../inventory/inventory.service';
 import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationChannel } from '../notifications/schemas/notification-template.schema';
 import { renderTemplate } from '../notifications/template.utils';
+import { clientIdFields } from '../offline/client-id.util';
 
 const CURRENCY_RE = /^[A-Z]{3}$/;
 
@@ -161,6 +162,7 @@ export class BillingService {
     const currency = await this.resolveCurrency(clinicId, dto.currency);
 
     return await this.billModel.create({
+      ...clientIdFields(dto._id),
       clinicId,
       branchId,
       patientId,

@@ -22,6 +22,7 @@ import {
   AppointmentStatus,
 } from '../appointments/schemas/appointment.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
+import { clientIdFields } from '../offline/client-id.util';
 
 @Injectable()
 export class EncountersService implements OnModuleInit {
@@ -100,6 +101,7 @@ export class EncountersService implements OnModuleInit {
     const readableId = await this.mintReadableId(clinicId);
 
     return await this.encounterModel.create({
+      ...clientIdFields(dto._id),
       clinicId,
       branchId,
       doctorId,

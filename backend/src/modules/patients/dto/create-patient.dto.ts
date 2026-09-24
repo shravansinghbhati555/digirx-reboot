@@ -1,8 +1,9 @@
 import { ArrayNotEmpty, IsArray, IsEmail, IsEnum, IsISO8601, IsMongoId, IsOptional, IsString, MaxLength, MinLength, Matches } from 'class-validator';
 // import { IsArray, IsEmail, IsEnum, IsISO8601, IsMongoId, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { PatientGender } from '../schemas/patient.schema';
+import { ClientIdDto } from '../../offline/dto/client-id.dto';
 
-export class CreatePatientDto {
+export class CreatePatientDto extends ClientIdDto {
   @IsString()
   @MinLength(1)
   @MaxLength(200)

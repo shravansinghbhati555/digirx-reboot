@@ -1,6 +1,7 @@
 import { IsISO8601, IsMongoId, IsOptional, IsString, MaxLength } from 'class-validator';
+import { ClientIdDto } from '../../offline/dto/client-id.dto';
 
-export class CreateEncounterDto {
+export class CreateEncounterDto extends ClientIdDto {
   @IsMongoId()
   branchId!: string;
 

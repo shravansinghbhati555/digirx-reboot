@@ -12,6 +12,7 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { ClientIdDto } from '../../offline/dto/client-id.dto';
 
 export class CreatePrescriptionItemDto {
   @IsOptional()
@@ -55,7 +56,7 @@ export class CreatePrescriptionItemDto {
   quantity?: number;
 }
 
-export class CreatePrescriptionDto {
+export class CreatePrescriptionDto extends ClientIdDto {
   @IsArray()
   @IsOptional()
   @ValidateNested({ each: true })

@@ -91,6 +91,7 @@ export class AuditInterceptor implements NestInterceptor {
             clinicId: req.context!.clinicId,
             branchId: req.context!.branchId,
             actorUserId: req.context!.actorUserId,
+            deviceId: req.context!.deviceId,
             action,
             entityType,
             entityId,

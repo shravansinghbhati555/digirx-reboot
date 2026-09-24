@@ -33,6 +33,14 @@ export class AuditLog {
   @Prop({ trim: true })
   targetLabel?: string;
 
+  /**
+   * Opaque id of the device that produced the change, from `x-device-id`.
+   * Set for anything entered on an offline-capable client so a write that
+   * synced hours later is still traceable to where it was actually made.
+   */
+  @Prop({ trim: true })
+  deviceId?: string;
+
   @Prop({ type: Object })
   meta?: Record<string, unknown>;
 

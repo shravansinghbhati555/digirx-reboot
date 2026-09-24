@@ -83,6 +83,10 @@ async function bootstrap() {
       'x-clinic-id',
       'x-branch-id',
       'x-user-id',
+      // Offline device identity. Sent on every request, so omitting it here
+      // fails the CORS preflight and takes the whole API down from the
+      // browser's point of view.
+      'x-device-id',
     ],
   });
 

@@ -27,6 +27,7 @@ import { NotificationChannel } from '../notifications/schemas/notification-templ
 import { VisitType } from '../visit-types/schemas/visit-type.schema';
 import { Bill, BillKind, BillStatus, type BillLineItem } from '../billing/schemas/bill.schema';
 import { BillNumberingService } from '../billing/bill-numbering.service';
+import { clientIdFields } from '../offline/client-id.util';
 
 // Statuses that hold a TIME slot and therefore block another appointment
 // from being created over the same window. CANCELLED and NO_SHOW are
@@ -226,6 +227,7 @@ export class AppointmentsService {
               .create(
                 [
                   {
+                    ...clientIdFields(dto._id),
                     clinicId,
                     branchId,
                     doctorId,
@@ -279,6 +281,7 @@ export class AppointmentsService {
       }
 
       const createdTime = await this.apptModel.create({
+        ...clientIdFields(dto._id),
         clinicId,
         branchId,
         doctorId,
@@ -347,6 +350,7 @@ export class AppointmentsService {
               .create(
                 [
                   {
+                    ...clientIdFields(dto._id),
                     clinicId,
                     branchId,
                     doctorId,
@@ -387,6 +391,7 @@ export class AppointmentsService {
       );
       const queueNumber = counter.lastNumber;
       const createdQueue = await this.apptModel.create({
+        ...clientIdFields(dto._id),
         clinicId,
         branchId,
         doctorId,

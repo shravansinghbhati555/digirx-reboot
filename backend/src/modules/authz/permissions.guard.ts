@@ -54,6 +54,12 @@ export class PermissionsGuard implements CanActivate {
     );
 
     const have = new Set(actor.permissions);
+    // Expose the flattened set too. The guard reads static metadata, so a
+    // handler whose required permission depends on the request body (e.g. the
+    // counter a number lease is for) has to check that part itself rather
+    // than re-loading the actor.
+    req.actorPermissions = have;
+
     for (const p of required) {
       if (!have.has(p)) throw new ForbiddenException('Missing permission');
     }

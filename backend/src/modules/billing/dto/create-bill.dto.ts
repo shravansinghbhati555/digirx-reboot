@@ -2,8 +2,9 @@ import { ArrayMinSize, IsArray, IsEnum, IsMongoId, IsNumber, IsOptional, IsStrin
 import { Type } from 'class-transformer';
 import { BillItemDto } from './bill-item.dto';
 import { BillKind } from '../schemas/bill.schema';
+import { ClientIdDto } from '../../offline/dto/client-id.dto';
 
-export class CreateBillDto {
+export class CreateBillDto extends ClientIdDto {
   @IsMongoId()
   branchId!: string;
 

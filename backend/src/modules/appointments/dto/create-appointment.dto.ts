@@ -3,8 +3,9 @@ import {
   AppointmentSource,
   AppointmentType,
 } from '../schemas/appointment.schema';
+import { ClientIdDto } from '../../offline/dto/client-id.dto';
 
-export class CreateAppointmentDto {
+export class CreateAppointmentDto extends ClientIdDto {
   @IsEnum(AppointmentType)
   type!: AppointmentType;
 

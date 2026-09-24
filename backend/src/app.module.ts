@@ -12,6 +12,7 @@ import { APP_GUARD } from '@nestjs/core';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { HealthModule } from './health/health.module';
+import { OfflineModule } from './modules/offline/offline.module';
 import { ClinicContextMiddleware } from './common/clinic-context.middleware';
 import { RetentionModule } from './common/retention/retention.module';
 import { AppThrottlerModule } from './common/throttler.config';
@@ -111,6 +112,7 @@ import { FxModule } from './modules/fx/fx.module';
     FaceModule,
     FxModule,
     HealthModule,
+    OfflineModule,
   ],
   controllers: [AppController],
   providers: [

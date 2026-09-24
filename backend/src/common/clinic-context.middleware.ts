@@ -3,7 +3,7 @@ import { JwtService } from '@nestjs/jwt';
 import { Response, NextFunction } from 'express';
 import { TokenExpiredError, JsonWebTokenError } from 'jsonwebtoken';
 import { AppRequest } from './types';
-import { parseObjectId } from './request-context';
+import { parseDeviceId, parseObjectId } from './request-context';
 import type { JwtClaims } from '../modules/auth/auth.types';
 
 /**
@@ -38,6 +38,7 @@ export class ClinicContextMiddleware implements NestMiddleware {
             ? parseObjectId(claims.branchId, 'branchId')
             : undefined,
           actorUserId: parseObjectId(claims.sub, 'sub'),
+          deviceId: parseDeviceId(req.header('x-device-id')),
         };
 
         next();
@@ -72,6 +73,7 @@ export class ClinicContextMiddleware implements NestMiddleware {
         actorUserId: userIdHeader
           ? parseObjectId(userIdHeader, 'x-user-id')
           : undefined,
+        deviceId: parseDeviceId(req.header('x-device-id')),
       };
 
       next();

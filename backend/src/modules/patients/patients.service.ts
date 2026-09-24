@@ -25,6 +25,7 @@ import { Prescription } from '../prescriptions/schemas/prescription.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
 import { mergeClinicSettings } from '../tenancy/clinic-settings.types';
 import { StorageService } from '../storage/storage.service';
+import { clientIdFields } from '../offline/client-id.util';
 
 function dedupeTags(tags: string[] | undefined): string[] {
   if (!tags) return [];
@@ -104,6 +105,7 @@ export class PatientsService {
     }
 
     const patient = await this.patientModel.create({
+      ...clientIdFields(dto._id),
       clinicId,
       primaryBranchId: dto.primaryBranchId
         ? new Types.ObjectId(dto.primaryBranchId)

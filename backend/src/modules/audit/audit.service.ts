@@ -24,6 +24,8 @@ export class AuditService {
      *  entityId so the activity feed can show "Bill BX-000123" rather
      *  than a raw ObjectId. */
     targetLabel?: string;
+    /** Originating device, for writes made on an offline-capable client. */
+    deviceId?: string;
     meta?: Record<string, unknown>;
   }) {
     // Redact before persist — even if today's interceptor only stores
