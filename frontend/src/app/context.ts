@@ -27,6 +27,19 @@ export type DevContext = {
   profileImageUrl?: string;
   permissions?: string[];
   /**
+   * Epoch ms of the last request the server accepted. Anchors the offline
+   * grace window — see `src/offline/session.ts`. Absent means we have no
+   * record of the server ever confirming this session, which is treated as
+   * expired rather than trusted.
+   */
+  sessionVerifiedAt?: number;
+  /**
+   * Epoch ms of the last successful `/me`. Only `/me` proves the cached
+   * `permissions` above are current; an ordinary successful request proves
+   * only that the session is still alive.
+   */
+  permissionsVerifiedAt?: number;
+  /**
    * Clinic branding mirror, populated from /me. The prescription print
    * template reads it for the header name / logo / primary color so a
    * separate settings fetch isn't needed on every print.

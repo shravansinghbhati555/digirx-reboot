@@ -3,6 +3,10 @@ import { useLocation, useNavigate } from 'react-router-dom';
 import { apiGet, apiPost, AUTH_EXPIRED_EVENT } from './api';
 import { clearContext, isLoggedIn, loadContext, saveContext, type DevContext } from './context';
 import { SCREEN_PATHS, pathToScreen } from './screen-paths';
+import { subscribeConnectivity } from '../offline/connectivity';
+import type { OfflineSession } from '../offline/session';
+import { readOfflineSession } from '../offline/session-store';
+import { startOfflineSync } from '../offline/bootstrap';
 
 // Top-level screens. `branches` and `audit` were here previously but they
 // live as tabs inside SettingsScreen, never as standalone shells —
@@ -56,6 +60,14 @@ type AppState = {
   // them the underlying `user:read` permission.
   roleNames: Set<string>;
   features: Features;
+  /**
+   * Offline session state — how long this device may keep working without
+   * reaching the server, and whether it has run out. See
+   * `src/offline/session.ts`. The shell reads this to warn before expiry and
+   * to lock afterwards; `permissionsStale` flags a cached snapshot that may
+   * no longer match the server.
+   */
+  offlineSession: OfflineSession;
   // True when the signed-in user is a DigiRx platform operator, which
   // unlocks the clinic approval queue. Not a clinic role.
   isPlatformAdmin: boolean;
@@ -248,6 +260,14 @@ export function AppProvider({ children }: { children: ReactNode }) {
         email: data.user?.email,
         fullName: data.user?.fullName ?? data.user?.name,
         permissions: data.permissions,
+        // `/me` is the only response that proves the cached permission
+        // snapshot is current; an ordinary successful request proves only
+        // that the session is alive. Stamped inline rather than via
+        // `markPermissionsVerified()` because `next` is rebuilt from React
+        // state and would otherwise overwrite a separately-written stamp.
+        // `now` is the freshest value either path could produce.
+        permissionsVerifiedAt: Date.now(),
+        sessionVerifiedAt: Date.now(),
         clinicName: data.clinic?.name ?? ctx.clinicName,
         // The single-step login only ships branchId — branchName falls
         // out of /me so the sidebar / header chip shows the readable
@@ -301,6 +321,46 @@ export function AppProvider({ children }: { children: ReactNode }) {
     setMeData(null);
   }
 
+  // Offline session state has to be polled as well as event-driven: the
+  // grace → expiring → expired transitions happen with the passage of time,
+  // not in response to anything the app does. A minute's resolution is ample
+  // against a window measured in days.
+  const [offlineSession, setOfflineSession] = useState<OfflineSession>(() =>
+    readOfflineSession(),
+  );
+  useEffect(() => {
+    const tick = () => setOfflineSession(readOfflineSession());
+    const timer = window.setInterval(tick, 60_000);
+    const stop = subscribeConnectivity(tick);
+    // Coming back to a backgrounded tab should re-evaluate immediately
+    // rather than waiting out the interval.
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      window.clearInterval(timer);
+      stop();
+      document.removeEventListener('visibilitychange', tick);
+    };
+  }, []);
+  // `ctx` changing means the stamps may have moved (login, /me, logout).
+  useEffect(() => {
+    setOfflineSession(readOfflineSession());
+  }, [ctx.sessionVerifiedAt, ctx.permissionsVerifiedAt, ctx.clinicId]);
+
+  // Background offline sync: drain the write queue, then refresh the working
+  // set (B2/B5). Reads `ctx` through a ref so reconnects always use the
+  // current session without restarting the timers on every context change.
+  const ctxRef = useRef(ctx);
+  ctxRef.current = ctx;
+  useEffect(() => {
+    if (!isLoggedIn(ctx)) return;
+    return startOfflineSync(
+      () => ctxRef.current,
+      (c, path) => apiGet<unknown>(c, path),
+    );
+    // Restart only when the identity of the session changes, not on every
+    // token refresh — otherwise the interval resets constantly.
+  }, [ctx.clinicId, ctx.branchId, ctx.userId]);
+
   const permissions = useMemo(() => new Set(meData?.permissions ?? ctx.permissions ?? []), [meData, ctx.permissions]);
   const roleNames = useMemo(
     () =>
@@ -337,6 +397,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     roleNames,
     features,
     isPlatformAdmin,
+    offlineSession,
     loadingMe,
     meError,
     refreshMe,

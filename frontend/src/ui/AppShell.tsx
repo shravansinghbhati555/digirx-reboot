@@ -7,6 +7,7 @@ import { apiGet, apiPost, apiPatch } from '../app/api';
 import { Avatar, Spinner, useToast } from './shared/primitives';
 import { Icon, type IconName } from './shared/Icon';
 import { DatePickerChip } from './shared/DatePickerChip';
+import { OfflineBanner } from './shared/OfflineBanner';
 
 type NavItem = { id: ScreenKey; label: string; icon: IconName };
 
@@ -559,6 +560,11 @@ export function AppShell({ children }: { children: ReactNode }) {
             <Icon name={theme === 'light' ? 'moon' : 'sun'} size={14} />
           </button>
         </div>
+
+        {/* Offline status (E1). Renders nothing when there is nothing to say,
+            so it costs no vertical space in the normal case. Sits above the
+            content rather than inside it so it survives screen changes. */}
+        <OfflineBanner />
 
         {/* Content */}
         <div style={{ flex: 1, overflow: 'hidden', background: 'var(--bg)', display: 'flex', flexDirection: 'column' }}>

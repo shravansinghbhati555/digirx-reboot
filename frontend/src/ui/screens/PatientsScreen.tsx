@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { apiDelete, apiGet, apiPatch, apiPost, apiPostMultipart } from '../../app/api';
+import { apiDelete, apiGet, apiPatch, apiPostMultipart, apiPostQueued } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { useIsMobile } from '../../app/useIsMobile';
 import { Perm, usePerm } from '../../app/permissions';
@@ -594,7 +594,31 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
         countryCode: countryForTimezone(ctx.timezone),
       };
       if (form.email.trim()) body.emails = [form.email.trim()];
-      const res = await apiPost<any>(ctx, '/patients', body);
+      // Survives the server being unreachable: the `_id` is minted here, the
+      // write goes on the queue, and replay reconciles it later.
+      const { data: res, queued } = await apiPostQueued<any>(ctx, '/patients', body, {
+        label: `Patient — ${fullName}`,
+      });
+
+      if (queued) {
+        // Offline, the response is the record we just built rather than the
+        // server's `{ duplicateCandidate, created }` envelope.
+        //
+        // Two things genuinely cannot happen here, and pretending otherwise
+        // would be worse than saying so:
+        //  - duplicate detection is a server-side query, so a double
+        //    registration can only be caught on sync;
+        //  - the MRN comes from a server counter, so this patient has none
+        //    until then (the number lease in C4 is what fixes that).
+        //
+        // Face enrollment and document upload both need the network too, so
+        // we skip step 2 rather than offering buttons that will fail.
+        onCreated(res as Patient);
+        toast('Saved on this device. It will sync when you reconnect.', 'success');
+        onClose();
+        return;
+      }
+
       if (res.duplicateCandidate) {
         setDuplicate(res.existing?.[0] ?? null);
         setError('A similar patient already exists.');
