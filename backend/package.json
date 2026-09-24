@@ -23,7 +23,8 @@
     "migrate:up": "migrate-mongo up -f migrate-mongo-config.cjs",
     "migrate:down": "migrate-mongo down -f migrate-mongo-config.cjs",
     "migrate:status": "migrate-mongo status -f migrate-mongo-config.cjs",
-    "migrate:create": "migrate-mongo create -f migrate-mongo-config.cjs"
+    "migrate:create": "migrate-mongo create -f migrate-mongo-config.cjs",
+    "preview:emails": "node scripts/preview-emails.cjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1030.0",

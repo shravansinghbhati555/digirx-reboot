@@ -18,6 +18,7 @@ import { Clinic, ClinicStatus } from '../tenancy/schemas/clinic.schema';
 import { Branch } from '../tenancy/schemas/branch.schema';
 import { JwtClaims } from './auth.types';
 import { Session } from './schemas/session.schema';
+import { ClinicMailService } from '../notifications/clinic-mail.service';
 
 @Injectable()
 export class AuthService {
@@ -28,6 +29,7 @@ export class AuthService {
     @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
     @InjectModel(Session.name) private readonly sessionModel: Model<Session>,
     private readonly jwt: JwtService,
+    private readonly clinicMail: ClinicMailService,
   ) { }
 
   /**
@@ -333,6 +335,21 @@ export class AuthService {
         },
       },
     );
+
+    // Receipt to the applicant + a heads-up to the platform inbox. Awaited
+    // like the leads mail so the applicant has their receipt before we reply,
+    // but every failure inside is swallowed and logged: a clinic that is
+    // already in the queue must not see its signup fail over a mail server.
+    await this.clinicMail.sendRegistrationEmails({
+      clinicId: clinic._id.toHexString(),
+      clinicName: clinic.name,
+      adminName: user.name,
+      adminEmail: email,
+      countryCode: clinic.countryCode,
+      timezone: clinic.timezone,
+      currency: clinic.currency,
+      requestedAt: new Date(),
+    });
 
     return {
       status: ClinicStatus.Pending,

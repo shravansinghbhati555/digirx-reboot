@@ -77,9 +77,10 @@ export class TwilioNotificationProvider implements NotificationProvider {
     // The notification body is plain text (it's also reused for SMS and
     // WhatsApp). Convert newlines to <br/> so the HTML version reads the
     // same on email clients that prefer HTML, while keeping plain-text
-    // delivery for everyone else (multipart MIME).
-    const subject = deriveSubject(input.body);
-    const htmlBody = toHtmlBody(input.body);
+    // delivery for everyone else (multipart MIME). Email-only mail that
+    // ships its own designed template passes subject/html instead.
+    const subject = input.subject ?? deriveSubject(input.body);
+    const htmlBody = input.html ?? toHtmlBody(input.body);
 
     const [res] = await sendgrid.send({
       to: input.to,

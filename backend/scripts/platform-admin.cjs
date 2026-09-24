@@ -227,6 +227,9 @@ async function bootstrap({ users, clinics, flags }) {
     settings: {},
     // The operator's own clinic is approved by definition.
     status: 'ACTIVE',
+    // Not a customer tenant: this is the DigiRx admin workspace. Keeps it out
+    // of the approval queue and out of reach of suspend/reject.
+    isPlatformClinic: true,
     createdAt: now,
     updatedAt: now,
   });

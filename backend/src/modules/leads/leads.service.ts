@@ -9,6 +9,7 @@ import { NOTIFICATION_PROVIDER } from '../notifications/providers/notification-p
 // `isolatedModules` + `emitDecoratorMetadata` require to be imported as a type.
 import type { NotificationProvider } from '../notifications/providers/notification-provider';
 import { NotificationChannel } from '../notifications/schemas/notification-template.schema';
+import { parseRecipientList } from '../notifications/recipients';
 
 @Injectable()
 export class LeadsService {
@@ -150,8 +151,10 @@ export class LeadsService {
    * otherwise. Returns whether it was actually accepted for delivery.
    */
   private async notifySalesInbox(lead: Lead & { _id: Types.ObjectId }): Promise<boolean> {
-    const to = process.env.LEADS_NOTIFY_EMAIL?.trim();
-    if (!to) {
+    // The var takes a comma-separated list, so a second person can be copied
+    // in without anyone having to watch one inbox.
+    const recipients = parseRecipientList(process.env.LEADS_NOTIFY_EMAIL);
+    if (recipients.length === 0) {
       this.logger.warn(
         'LEADS_NOTIFY_EMAIL is not set — lead saved but no email sent. Set it in .env to receive enquiries.',
       );
@@ -173,21 +176,32 @@ export class LeadsService {
       `Reply to: ${lead.email}`,
     ];
 
-    try {
-      await this.notifications.send({
-        channel: NotificationChannel.Email,
-        to,
-        body: lines.join('\n'),
-      });
-      return true;
-    } catch (e) {
-      // Never fail the visitor's submission because of the mailer.
-      this.logger.error(
-        `Lead ${lead._id.toHexString()} saved but the notification email failed: ${
-          e instanceof Error ? e.message : String(e)
-        }`,
-      );
-      return false;
-    }
+    const body = lines.join('\n');
+
+    // One message per recipient: a single bad address then costs only its own
+    // delivery, and the enquiry still reaches everyone else.
+    const results = await Promise.all(
+      recipients.map(async (to) => {
+        try {
+          await this.notifications.send({
+            channel: NotificationChannel.Email,
+            to,
+            body,
+          });
+          return true;
+        } catch (e) {
+          // Never fail the visitor's submission because of the mailer.
+          this.logger.error(
+            `Lead ${lead._id.toHexString()} saved but the notification email to ${to} failed: ${
+              e instanceof Error ? e.message : String(e)
+            }`,
+          );
+          return false;
+        }
+      }),
+    );
+
+    // `notified` means somebody got it — a partial failure is already logged.
+    return results.some(Boolean);
   }
 }

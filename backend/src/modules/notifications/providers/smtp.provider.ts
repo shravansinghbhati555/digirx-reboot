@@ -81,14 +81,14 @@ export class SmtpNotificationProvider implements NotificationProvider {
       throw new Error('Missing EMAIL_FROM (or SMTP_USER) for outbound email.');
     }
 
-    const subject = deriveSubject(input.body);
+    const subject = input.subject ?? deriveSubject(input.body);
 
     const info = await this.transporter.sendMail({
       to: input.to,
       from: fromName ? `"${fromName}" <${fromEmail}>` : fromEmail,
       subject,
       text: input.body,
-      html: toHtmlBody(input.body),
+      html: input.html ?? toHtmlBody(input.body),
     });
 
     this.logger.log(`SMTP email sent to=${input.to} subject="${subject}" id=${info.messageId}`);

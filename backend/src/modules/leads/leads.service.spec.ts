@@ -96,6 +96,22 @@ describe('LeadsService', () => {
     );
   });
 
+  it('copies every address listed in LEADS_NOTIFY_EMAIL', async () => {
+    const { service, send, updateOne } = build({
+      notifyEmail: 'sales@digirx.online, raj.baptla@vidhema.com',
+    });
+
+    await service.create(input);
+
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(send.mock.calls.map((c) => (c[0] as { to: string }).to)).toEqual([
+      'sales@digirx.online',
+      'raj.baptla@vidhema.com',
+    ]);
+    // One delivery is enough for the lead to count as seen.
+    expect(updateOne).toHaveBeenCalledWith({ _id: leadId }, { $set: { notified: true } });
+  });
+
   it('still succeeds for the visitor when the mailer fails', async () => {
     const { service, updateOne } = build({ sendFails: true });
 

@@ -12,6 +12,7 @@ import {
 } from './schemas/notification-template.schema';
 import { NOTIFICATIONS_QUEUE } from './notifications.queue';
 import { NotificationsService } from './notifications.service';
+import { ClinicMailService } from './clinic-mail.service';
 import { NotificationsController } from './notifications.controller';
 import { ConsoleNotificationProvider } from './providers/console.provider';
 import { TwilioNotificationProvider } from './providers/twilio.provider';
@@ -108,12 +109,15 @@ export class NotificationsModule {
           ],
         },
         NotificationsScheduler,
+        ClinicMailService,
         ...(enableQueue && redisUrl ? [NotificationsProcessor] : []),
       ],
       // NOTIFICATION_PROVIDER is exported so platform-level features that are
       // not clinic-scoped (the leads inbox) can send through the same
       // configured provider without going via NotificationsService.
-      exports: [NotificationsService, NOTIFICATION_PROVIDER],
+      // ClinicMailService rides the same route for the approval-lifecycle
+      // mail that auth (signup) and platform (approve) both send.
+      exports: [NotificationsService, ClinicMailService, NOTIFICATION_PROVIDER],
     };
   }
 }

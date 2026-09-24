@@ -52,6 +52,8 @@ describe('AuthService clinic approval gate', () => {
     const sessionModel = { create: sessionCreate } as never;
     const jwt = { signAsync: jest.fn().mockResolvedValue('access-token') } as never;
 
+    const clinicMail = { sendRegistrationEmails: jest.fn() } as never;
+
     const service = new AuthService(
       userModel,
       roleModel,
@@ -59,6 +61,7 @@ describe('AuthService clinic approval gate', () => {
       branchModel,
       sessionModel,
       jwt,
+      clinicMail,
     );
     return { service, sessionCreate };
   };
