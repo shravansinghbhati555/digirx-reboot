@@ -10,7 +10,7 @@
 import { subscribeConnectivity, isOnline } from './connectivity';
 import { recoverInflight } from './queue';
 import { replayQueue } from './replay';
-import { syncWorkingSet } from './working-set';
+import { prefetchSlots, syncWorkingSet } from './working-set';
 import { ensureAllLeases, reportLeaseUsage } from './leases';
 import type { DevContext } from '../app/context';
 
@@ -67,6 +67,9 @@ export function startOfflineSync(
       await reportLeaseUsage(ctx, leaseApi);
       await ensureAllLeases(ctx, leaseApi);
       await syncWorkingSet(ctx, (p) => fetchJson(ctx, p), opts);
+      // Slot availability is computed, not stored, so it has to be warmed
+      // per doctor per day — otherwise the booking sheet has no times.
+      await prefetchSlots(ctx, (p) => fetchJson(ctx, p));
     } catch {
       // Background work never surfaces as an app error; the queue and the
       // sync markers both survive to the next attempt.

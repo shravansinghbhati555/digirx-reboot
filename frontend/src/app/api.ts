@@ -6,7 +6,15 @@ import { markSessionVerified, readOfflineSession } from '../offline/session-stor
 import { getDeviceId } from '../offline/device';
 import { newObjectId } from '../offline/ids';
 import { enqueue } from '../offline/queue';
-import { cacheResponse, matchCacheable, readFromCache } from '../offline/working-set';
+import {
+  cacheResponse,
+  cacheResponseBody,
+  isResponseCacheable,
+  matchCacheable,
+  patchCachedRecord,
+  readFromCache,
+  readResponseBody,
+} from '../offline/working-set';
 
 export const AUTH_EXPIRED_EVENT = 'digirx:auth-expired';
 
@@ -20,12 +28,23 @@ export const AUTH_EXPIRED_EVENT = 'digirx:auth-expired';
  */
 export async function apiGet<T>(ctx: DevContext, path: string): Promise<T> {
   const match = ctx.clinicId ? matchCacheable(path) : null;
+  // Paths whose response is computed rather than stored — availability slots,
+  // the doctor list — are cached verbatim against the full path, since the
+  // record cache has no documents to answer them with.
+  const byResponse = ctx.clinicId && !match && isResponseCacheable(path);
   try {
     const out = await apiFetch<T>(ctx, path, { method: 'GET' });
     if (match) void cacheResponse(ctx.clinicId, match, out);
+    if (byResponse) void cacheResponseBody(ctx.clinicId, path, out);
     return out;
   } catch (err) {
-    if (!match || !isOfflineError(err)) throw err;
+    if (!isOfflineError(err)) throw err;
+    if (byResponse) {
+      const body = await readResponseBody(ctx.clinicId, path);
+      if (body !== undefined) return body as T;
+      throw err;
+    }
+    if (!match) throw err;
     const cached = await readFromCache(ctx.clinicId, match);
     // Nothing cached is NOT an empty result. Returning [] here would render
     // as "this patient has no appointments" rather than "we cannot reach the
@@ -106,6 +125,30 @@ export async function apiPostQueued<T>(
      * for it anyway.
      */
     enrichOnQueue?: () => Promise<Record<string, unknown>>;
+    /**
+     * Local effect to apply when the write is queued.
+     *
+     * Queueing the request is only half the job for actions whose result the
+     * *server* computes — checking a patient in changes a status that exists
+     * nowhere in the request body. Without this the cached record still reads
+     * `BOOKED`, and the UI refuses to offer the next step in the flow even
+     * though the work was saved.
+     */
+    optimistic?: { collection: string; id: string; patch: Record<string, unknown> };
+    /**
+     * Fields the **server** would have filled in on create, merged into the
+     * local record but never sent.
+     *
+     * A queued create is cached as the request body plus its `_id`, which
+     * omits every server-side default — an appointment booked offline had no
+     * `status`, so every status-gated action (check in, cancel, start
+     * consultation) silently disappeared and the flow dead-ended.
+     *
+     * These must stay out of the request: the global ValidationPipe runs with
+     * `forbidNonWhitelisted`, so sending `status` would be rejected with a
+     * 400 on replay.
+     */
+    localRecord?: Record<string, unknown>;
   } = {},
 ): Promise<QueuedResult<T>> {
   const withId = { ...body, _id: (body._id as string) ?? newObjectId() };
@@ -125,10 +168,23 @@ export async function apiPostQueued<T>(
       label: opts.label,
     });
     // Make it readable immediately — a patient registered offline has to show
-    // up in the list the doctor is looking at, not vanish until sync.
+    // up in the list the doctor is looking at, not vanish until sync. The
+    // cached copy carries the server's defaults so the UI can reason about it
+    // the same way it would a synced record.
+    const localDoc = { ...withId, ...(opts.localRecord ?? {}) };
     const match = matchCacheable(path);
-    if (match) void cacheResponse(ctx.clinicId, match, [withId]);
-    return { data: withId as T, queued: true };
+    if (match) void cacheResponse(ctx.clinicId, match, [localDoc]);
+
+    // Apply the action's local effect so the flow can continue offline.
+    if (opts.optimistic) {
+      await patchCachedRecord(
+        ctx.clinicId,
+        opts.optimistic.collection,
+        opts.optimistic.id,
+        opts.optimistic.patch,
+      );
+    }
+    return { data: localDoc as T, queued: true };
   }
 }
 

@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiGet, apiPost } from '../../app/api';
+import { apiGet, apiPost, apiPostQueued } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { drawNumber } from '../../offline/leases';
+import { isOnline, subscribeConnectivity } from '../../offline/connectivity';
 import { useIsMobile } from '../../app/useIsMobile';
 import { Perm, usePerm } from '../../app/permissions';
 import { Avatar, EmptyState, Spinner, StatusPill, formatMoney, labelStyle, useToast, getCurrencySymbol, getCurrencyConversionData } from '../shared/primitives';
@@ -490,9 +492,43 @@ function BillDetail({
   async function issue() {
     setBusy(true);
     try {
-      const updated = await apiPost<Bill>(ctx, `/bills/${bill._id}/issue`, {});
-      onChanged(updated);
-      toast(`Issued ${updated.billNo ?? ''}`, 'success');
+      // Offline the invoice number comes from this device's BILL lease, so
+      // the number on the paper the patient is handed is the one the record
+      // keeps. Without it the bill could not reach ISSUED, and no payment
+      // could be taken against it.
+      let drawnBillNo: string | null = null;
+      const { data: updated, queued } = await apiPostQueued<Bill>(
+        ctx,
+        `/bills/${bill._id}/issue`,
+        {},
+        {
+          label: `Issue bill — ${bill.billNo ?? bill._id.slice(-6)}`,
+          enrichOnQueue: async () => {
+            const drawn = await drawNumber(ctx.clinicId, 'BILL');
+            if (!drawn.ok) return {};
+            drawnBillNo = drawn.value;
+            return { billSeq: drawn.seq };
+          },
+          optimistic: {
+            collection: 'bills',
+            id: bill._id,
+            patch: { status: 'ISSUED', issuedAt: new Date().toISOString() },
+          },
+        },
+      );
+      if (queued) {
+        if (!drawnBillNo) {
+          // No lease, no number — and an unnumbered bill cannot take cash.
+          // Better to refuse than to issue something that cannot be receipted.
+          toast('No invoice numbers left on this device. Reconnect to issue this bill.', 'error');
+          return;
+        }
+        onChanged({ ...bill, status: 'ISSUED', billNo: drawnBillNo } as Bill);
+        toast(`Issued ${drawnBillNo} on this device. It will sync when you reconnect.`, 'success');
+      } else {
+        onChanged(updated);
+        toast(`Issued ${updated.billNo ?? ''}`, 'success');
+      }
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Issue failed', 'error');
     } finally {
@@ -828,7 +864,14 @@ function BillDetail({
 function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balance: number; onClose: () => void; onSuccess: () => void }) {
   const { ctx } = useApp();
   const toast = useToast();
-  const [method, setMethod] = useState('UPI');
+  // Offline, cash is the only method that can actually be taken — UPI, card
+  // and online all need a gateway or a reconciliation the device cannot do.
+  // Default to it and hide the rest rather than letting someone record a
+  // card payment that never happened.
+  const [online, setOnline] = useState(() => isOnline());
+  useEffect(() => subscribeConnectivity(setOnline), []);
+  const [method, setMethod] = useState(isOnline() ? 'UPI' : 'CASH');
+  useEffect(() => { if (!online) setMethod('CASH'); }, [online]);
 
   // Convert balance (which is in bill.currency) to detectedCurrency for input initialization
   const getConvertedBalance = () => {
@@ -869,10 +912,23 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
         }
       }
 
-      await apiPost(ctx, `/bills/${bill._id}/payments`, {
-        method, amount: backendAmount, providerRef: reference.trim() || undefined, idempotencyKey,
-      });
-      toast(`Payment of ${formatMoney(backendAmount, bill.currency)} recorded`, 'success');
+      // Replay is already idempotent here: the backend enforces a partial
+      // unique index on (clinic, bill, idempotencyKey), so re-sending a
+      // queued payment can never double-charge.
+      const { queued: payQueued } = await apiPostQueued(
+        ctx,
+        `/bills/${bill._id}/payments`,
+        {
+          method, amount: backendAmount, providerRef: reference.trim() || undefined, idempotencyKey,
+        },
+        { label: `Payment — ${formatMoney(backendAmount, bill.currency)}` },
+      );
+      toast(
+        payQueued
+          ? `Cash of ${formatMoney(backendAmount, bill.currency)} recorded on this device.`
+          : `Payment of ${formatMoney(backendAmount, bill.currency)} recorded`,
+        'success',
+      );
       onSuccess();
     } catch (e) {
       shake();
@@ -900,7 +956,7 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
           <div>
             <label style={labelStyle}>Method</label>
             <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-              {PAYMENT_METHODS.map((m) => (
+              {(online ? PAYMENT_METHODS : PAYMENT_METHODS.filter((m) => m.id === 'CASH')).map((m) => (
                 <button key={m.id} onClick={() => setMethod(m.id)}
                   style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '7px 14px', border: `1.5px solid ${method === m.id ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 10, background: method === m.id ? 'var(--brand-50)' : 'var(--surface-muted)', color: method === m.id ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
                   <Icon name={m.icon} size={13} />
@@ -908,6 +964,11 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
                 </button>
               ))}
             </div>
+            {!online && (
+              <div style={{ marginTop: 6, fontSize: 12, color: 'var(--text-subtle)' }}>
+                Cash only while offline — other methods need a connection.
+              </div>
+            )}
           </div>
 
           <div>
@@ -1100,7 +1161,7 @@ function CreateBillSheet({
       encounterId: initialEncounterId || initialBill?.encounterId,
       appointmentId: initialAppointmentId || initialBill?.appointmentId,
     };
-    return await apiPost<Bill>(ctx, '/bills', body);
+    return (await apiPostQueued<Bill>(ctx, '/bills', body, { label: 'Bill', localRecord: { status: 'DRAFT' } })).data;
   }
 
   async function saveDraft() {
@@ -1124,7 +1185,31 @@ function CreateBillSheet({
     try {
       const draft = await postDraft();
       if (!draft) throw new Error('Could not create draft');
-      const issued = await apiPost<Bill>(ctx, `/bills/${draft._id}/issue`, {});
+      // Same leased-number path as the detail-view issue button.
+      let draftBillNo: string | null = null;
+      const { data: issued, queued: issueQueued } = await apiPostQueued<Bill>(
+        ctx,
+        `/bills/${draft._id}/issue`,
+        {},
+        {
+          label: 'Issue bill',
+          enrichOnQueue: async () => {
+            const drawn = await drawNumber(ctx.clinicId, 'BILL');
+            if (!drawn.ok) return {};
+            draftBillNo = drawn.value;
+            return { billSeq: drawn.seq };
+          },
+          optimistic: {
+            collection: 'bills',
+            id: draft._id,
+            patch: { status: 'ISSUED', issuedAt: new Date().toISOString() },
+          },
+        },
+      );
+      if (issueQueued && !draftBillNo) {
+        toast('No invoice numbers left on this device. Reconnect to issue this bill.', 'error');
+        return;
+      }
       toast(`Bill ${issued.billNo ?? ''} issued`, 'success');
       onCreated(issued);
     } catch (e) {
@@ -1520,6 +1605,8 @@ function RefundCnSheet({ cn, currency, onClose, onSuccess }: { cn: CreditNote; c
           <div>
             <label style={labelStyle}>Refund method</label>
             <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+              {/* Refunds are online-only — they are not queued, so there is
+                  no offline case to restrict here. */}
               {PAYMENT_METHODS.map((m) => (
                 <button key={m.id} onClick={() => setMethod(m.id)}
                   style={{ display: 'flex', alignItems: 'center', gap: 5, padding: '6px 12px', border: `1.5px solid ${method === m.id ? 'var(--brand-500)' : 'var(--border)'}`, borderRadius: 9, background: method === m.id ? 'var(--brand-50)' : 'var(--surface-muted)', color: method === m.id ? 'var(--brand-600)' : 'var(--text-muted)', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>

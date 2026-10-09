@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { apiGet, apiPatch, apiPost, apiPostMultipart } from '../../app/api';
+import { apiGet, apiPatch, apiPatchQueued, apiPost, apiPostQueued, apiPostMultipart } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { nextLocalQueueNumber } from '../../offline/working-set';
+import { isOnline, subscribeConnectivity } from '../../offline/connectivity';
 import { useIsMobile } from '../../app/useIsMobile';
 import { AVAILABILITY_CHANGED_EVENT } from '../../app/events';
 import { Perm, usePerm } from '../../app/permissions';
@@ -1247,25 +1249,64 @@ function TriageModal({
   async function save() {
     setBusy(true);
     try {
+      // Triage is a four-step choreography against the server. Each step is
+      // queued so the whole thing survives an outage — previously the very
+      // first call failed and the vitals were lost.
+      let queuedAnything = false;
+
       // 1. Check in if still BOOKED
       if (appt.status === 'BOOKED') {
-        await apiPost(ctx, `/appointments/${appt._id}/checkin`, {});
+        const { queued } = await apiPostQueued(
+          ctx,
+          `/appointments/${appt._id}/checkin`,
+          {},
+          {
+            label: `Check-in — ${patientName || 'patient'}`,
+            // The status change is computed server-side, so queueing alone
+            // would leave the cached appointment reading BOOKED and the
+            // "Start consultation" action hidden — the flow would dead-end
+            // even though the triage was saved.
+            optimistic: {
+              collection: 'appointments',
+              id: appt._id,
+              patch: { status: 'CHECKED_IN' },
+            },
+          },
+        );
+        queuedAnything ||= queued;
       }
 
-      // 2. Create/Get Encounter Draft
+      // 2. Create/Get Encounter Draft.
+      //
+      // The lookup is cache-backed offline (see `matchCacheable`), so if this
+      // appointment already has an encounter we reuse its id rather than
+      // creating a second one. When we do create, the id is minted client-side
+      // (A1), which is what lets step 3 reference it before the server has
+      // ever seen it.
       let encId: string;
       try {
         const existing = await apiGet<any>(ctx, `/encounters/by-appointment/${appt._id}`);
+        if (!existing?._id) throw new Error('no encounter');
         encId = existing._id;
       } catch {
-        const newEnc = await apiPost<any>(ctx, '/encounters', {
-          appointmentId: appt._id,
-          patientId: appt.patientId?._id || appt.patientId,
-          doctorId: appt.doctorId,
-          branchId: ctx.branchId,
-          chiefComplaint: complaint,
-        });
+        const { data: newEnc, queued } = await apiPostQueued<any>(
+          ctx,
+          '/encounters',
+          {
+            appointmentId: appt._id,
+            patientId: appt.patientId?._id || appt.patientId,
+            doctorId: appt.doctorId,
+            branchId: ctx.branchId,
+            chiefComplaint: complaint,
+          },
+          {
+            label: `Consultation — ${patientName || 'patient'}`,
+            // Server default; the chart gates on it.
+            localRecord: { status: 'DRAFT' },
+          },
+        );
         encId = newEnc._id;
+        queuedAnything ||= queued;
       }
 
       // 3. Save Vitals (using same mapping as EncounterScreen)
@@ -1302,13 +1343,24 @@ function TriageModal({
         if (!isNaN(val)) out.heightCm = val;
       }
 
-      await apiPatch(ctx, `/encounters/${encId}`, {
-        vitals: out,
-        chiefComplaint: complaint || undefined
-      });
+      const { queued: vitalsQueued } = await apiPatchQueued(
+        ctx,
+        `/encounters/${encId}`,
+        {
+          vitals: out,
+          chiefComplaint: complaint || undefined,
+        },
+        { label: `Vitals — ${patientName || 'patient'}` },
+      );
+      queuedAnything ||= vitalsQueued;
 
       // 4. Status is already CHECKED_IN from step 1
-      toast('Triage completed & Patient checked in', 'success');
+      toast(
+        queuedAnything
+          ? 'Triage saved on this device. It will sync when you reconnect.'
+          : 'Triage completed & Patient checked in',
+        'success',
+      );
       onSaved();
     } catch (e) {
       toast(e instanceof Error ? e.message : 'Failed to save triage', 'error');
@@ -1561,6 +1613,22 @@ function BookSheet({
     if (apptModeSetting === 'TIME' && apptKind !== 'TIME') setApptKind('TIME');
     else if (apptModeSetting === 'QUEUE' && apptKind !== 'QUEUE') setApptKind('QUEUE');
   }, [apptModeSetting, apptKind]);
+
+  // Offline, booking falls back to the queue.
+  //
+  // A time-slot grid is computed server-side from the doctor's weekly rules
+  // and overrides, and it has to account for bookings made since. Offline we
+  // could only ever show a stale snapshot that does not include the
+  // appointments made during this very outage — so the one time it matters
+  // most, it would be wrong. A queue token needs no availability
+  // computation, and a walk-in queue is what a clinic without a connection
+  // is actually running.
+  const [bookingOnline, setBookingOnline] = useState(() => isOnline());
+  useEffect(() => subscribeConnectivity(setBookingOnline), []);
+  const queueAllowed = apptModeSetting !== 'TIME';
+  useEffect(() => {
+    if (!bookingOnline && queueAllowed && apptKind !== 'QUEUE') setApptKind('QUEUE');
+  }, [bookingOnline, queueAllowed, apptKind]);
   const [date, setDate] = useState(defaultDate);
   const [slotStart, setSlotStart] = useState(''); // 'HH:MM' local
   const [slots, setSlots] = useState<SlotChoice[]>([]);
@@ -1985,7 +2053,43 @@ function BookSheet({
           manualBillLabel: visitTypeId ? undefined : billLabel,
         };
       }
-      const created = await apiPost<{ _id: string; billId?: string }>(ctx, '/appointments', body);
+      const { data: created, queued: apptQueued } = await apiPostQueued<{
+        _id: string;
+        billId?: string;
+      }>(ctx, '/appointments', body, {
+        label: `Appointment — ${selectedPatient.fullName ?? 'patient'}`,
+        // The server stamps BOOKED on create. Without it the cached record
+        // has no status and the appointment sheet hides check-in, cancel and
+        // start-consultation — the flow would stop dead at booking.
+        localRecord: { status: 'BOOKED' },
+        // A QUEUE booking has to tell the patient a token number immediately,
+        // so offline we derive the next one locally and send it. The server
+        // honours it rather than renumbering the slip on sync.
+        enrichOnQueue: async () => {
+          if (body.type !== 'QUEUE') return {};
+          const n = await nextLocalQueueNumber(
+            ctx.clinicId,
+            String(body.doctorId ?? ''),
+            String(body.queueDate ?? ''),
+          );
+          return n > 0 ? { queueNumber: n } : {};
+        },
+      });
+
+      if (apptQueued) {
+        // The auto-issued bill is created server-side from `visitTypeId` /
+        // `manualBillAmount`, so there is no bill to pay against yet. The
+        // appointment is safe; payment is collected from Billing once the
+        // bill exists. Saying so is better than silently dropping it.
+        toast(
+          amountNum > 0
+            ? 'Appointment saved on this device. Collect payment from Billing once it syncs.'
+            : 'Appointment saved on this device. It will sync when you reconnect.',
+          'success',
+        );
+        onCreated();
+        return;
+      }
 
       // 2) Record the payment against the auto-issued bill. The BE will
       //    automatically transition the bill to paid if the amount covers
@@ -2421,13 +2525,21 @@ function DetailsStep({
           <div style={{ display: 'flex', gap: 4, padding: 3, background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10 }}>
             {(['TIME', 'QUEUE'] as const).map((k) => {
               const active = apptKind === k;
+              // Time slots are computed server-side and go stale the moment
+              // anything is booked, so offline the option is disabled rather
+              // than left clickable and leading to an empty grid.
+              const disabled = k === 'TIME' && !isOnline();
               return (
-                <button key={k} type="button" onClick={() => setApptKind(k)}
+                <button key={k} type="button" disabled={disabled}
+                  title={disabled ? 'Time slots need a connection' : undefined}
+                  onClick={() => { if (!disabled) setApptKind(k); }}
                   style={{
                     flex: 1, height: 36, border: 'none', borderRadius: 8,
                     background: active ? 'var(--surface)' : 'transparent',
-                    color: active ? 'var(--text)' : 'var(--text-muted)',
-                    fontSize: 12, fontWeight: active ? 700 : 500, cursor: 'pointer',
+                    color: disabled ? 'var(--text-subtle)' : active ? 'var(--text)' : 'var(--text-muted)',
+                    fontSize: 12, fontWeight: active ? 700 : 500,
+                    cursor: disabled ? 'not-allowed' : 'pointer',
+                    opacity: disabled ? 0.5 : 1,
                     boxShadow: active ? '0 1px 2px rgba(15,23,42,0.06)' : 'none',
                   }}>
                   {k === 'TIME' ? 'Time slot' : 'Walk-in queue'}
@@ -2478,6 +2590,7 @@ function DetailsStep({
               </div>
             </div >
             <TimeSlotGrid
+              queueFallbackAvailable={apptModeSetting !== 'TIME'}
               slotMinutes={slotMinutes}
               available={slots}
               value={slotStart}
@@ -2559,12 +2672,15 @@ function DetailsStep({
 }
 
 function TimeSlotGrid({
-  slotMinutes, available, value, onChange, date,
+  slotMinutes, available, value, onChange, date, queueFallbackAvailable = true,
 }: {
   slotMinutes: number;
   available: SlotChoice[];
   value: string;
   onChange: (v: string) => void;
+  /** Whether the clinic permits walk-in queue bookings, which is the
+   *  offline alternative when slots cannot be computed. */
+  queueFallbackAvailable?: boolean;
   // YYYY-MM-DD of the currently picked booking date. Drives the
   // "hide past slots" cutoff: when date === today we skip every
   // label before the current minute; future dates show the full
@@ -2678,7 +2794,11 @@ function TimeSlotGrid({
         })}
         {grid.length === 0 && (
           <div style={{ gridColumn: '1 / -1', textAlign: 'center', padding: 12, fontSize: 12, color: 'var(--text-subtle)' }}>
-            No slots configured.
+            {isOnline()
+              ? 'No slots configured.'
+              : queueFallbackAvailable
+                ? 'Time slots need a connection — they are worked out from the doctor’s schedule and the latest bookings. Book into the walk-in queue instead.'
+                : 'Time slots need a connection — they are worked out from the doctor’s schedule and the latest bookings. This clinic is set to time-slot booking only, so this appointment has to wait until you reconnect.'}
           </div>
         )}
       </div>

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { apiGet, apiPatchQueued, apiPost } from '../../app/api';
+import { apiGet, apiPatchQueued, apiPost, apiPostQueued } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { drawNumber } from '../../offline/leases';
 import { useIsMobile } from '../../app/useIsMobile';
 import { Avatar, Spinner, StatusPill, useToast } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
@@ -255,13 +256,13 @@ export function EncounterScreen() {
           setDoctorId(existing.doctorId);
         } else {
           // 3. Create a new encounter automatically
-          const created = await apiPost<Encounter>(ctx, '/encounters', {
+          const created = (await apiPostQueued<Encounter>(ctx, '/encounters', {
             branchId: ctx.branchId || appt.branchId,
             doctorId: appt.doctorId,
             patientId: typeof appt.patientId === 'object' ? appt.patientId._id : appt.patientId,
             appointmentId: selectedAppointmentId,
             visitedAt: new Date().toISOString(),
-          });
+          }, { label: 'Consultation', localRecord: { status: 'DRAFT' } })).data;
           if (cancelled) return;
           setEncounter(created);
           setEncounterId(created._id);
@@ -427,13 +428,13 @@ export function EncounterScreen() {
     setCreating(true);
     setError(null);
     try {
-      const created = await apiPost<Encounter>(ctx, '/encounters', {
+      const created = (await apiPostQueued<Encounter>(ctx, '/encounters', {
         branchId: ctx.branchId,
         doctorId: doctorId.trim(),
         patientId: patientId.trim(),
         appointmentId: selectedAppointmentId || undefined,
         visitedAt: new Date().toISOString(),
-      });
+      }, { label: 'Consultation', localRecord: { status: 'DRAFT' } })).data;
       setEncounter(created);
       setEncounterId(created._id);
       const pid = typeof created.patientId === 'object' ? created.patientId._id : created.patientId;
@@ -917,7 +918,14 @@ function EncounterEditor({
       await saveDraft();
       // Save Rx items as a prescription (always, to ensure prescriptionId is minted)
       const filled = rx.filter((r) => r.med.trim());
-      const res = await apiPost<{ _id: string; prescriptionNo?: string }>(ctx, `/encounters/${encounter._id}/prescriptions`, {
+      // The prescription number is printed on the slip, so offline it comes
+      // from this device's lease and the server honours that sequence on
+      // replay. `drawnRxNo` is what we show the doctor immediately.
+      let drawnRxNo: string | null = null;
+      const { data: res, queued: rxQueued } = await apiPostQueued<{
+        _id: string;
+        prescriptionNo?: string;
+      }>(ctx, `/encounters/${encounter._id}/prescriptions`, {
         items: filled.map((r) => ({
           medicineCatalogItemId: r.medicineCatalogItemId || undefined,
           customName: r.med,
@@ -927,14 +935,49 @@ function EncounterEditor({
           instructions: r.note || undefined,
           quantity: r.qty.trim() ? Number(r.qty) || undefined : undefined,
         })),
+      }, {
+        label: `Prescription — ${patient?.fullName ?? 'patient'}`,
+        enrichOnQueue: async () => {
+          const drawn = await drawNumber(ctx.clinicId, 'PRESCRIPTION');
+          if (!drawn.ok) return {};
+          drawnRxNo = drawn.value;
+          return { prescriptionSeq: drawn.seq };
+        },
       });
       setPrescriptionId(res._id);
       if (res.prescriptionNo) setPrescriptionNo(res.prescriptionNo);
-      const signedEnc = await apiPost<Encounter>(ctx, `/encounters/${encounter._id}/sign`, {});
-      onChanged(signedEnc);
+      else if (drawnRxNo) setPrescriptionNo(drawnRxNo);
+
+      const { data: signedEnc, queued: signQueued } = await apiPostQueued<Encounter>(
+        ctx,
+        `/encounters/${encounter._id}/sign`,
+        {},
+        {
+          label: `Sign — ${patient?.fullName ?? 'patient'}`,
+          // Signing flips status server-side, so offline we apply the same
+          // effect locally or the chart stays stuck on "draft".
+          optimistic: {
+            collection: 'encounters',
+            id: encounter._id,
+            patch: { status: 'SIGNED', signedAt: new Date().toISOString() },
+          },
+        },
+      );
+      onChanged(
+        signQueued
+          ? ({ ...encounter, status: 'SIGNED', signedAt: new Date().toISOString() } as Encounter)
+          : signedEnc,
+      );
       setJustSigned(true);
       setTimeout(() => setJustSigned(false), 1200);
-      toast('Consultation signed', 'success');
+      toast(
+        rxQueued || signQueued
+          ? drawnRxNo
+            ? `Signed on this device as ${drawnRxNo}. It will sync when you reconnect.`
+            : 'Signed on this device. It will sync when you reconnect.'
+          : 'Consultation signed',
+        'success',
+      );
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally {

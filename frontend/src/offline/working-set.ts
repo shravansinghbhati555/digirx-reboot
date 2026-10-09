@@ -50,6 +50,9 @@ export const WORKING_SET: WorkingSetEntry[] = [
   { collection: 'appointments', path: '/appointments?date={tomorrow}', maxAgeMs: HOUR },
   // Patients seen recently — the ones most likely to walk back in.
   { collection: 'patients', path: '/patients?limit=200', maxAgeMs: HOUR },
+  // Doctors. Without this the booking sheet has no names, so a booking
+  // cannot even be composed offline.
+  { collection: 'users', path: '/users', maxAgeMs: 6 * HOUR },
   // Reference data. Changes rarely; cheap to hold.
   { collection: 'visit-types', path: '/visit-types', maxAgeMs: 12 * HOUR },
   { collection: 'services', path: '/billing/services', maxAgeMs: 12 * HOUR },
@@ -142,7 +145,25 @@ export async function syncWorkingSet(
  * collection holding them. Order matters: the first match wins, so more
  * specific patterns come first.
  */
-const CACHEABLE: Array<{ re: RegExp; collection: string; single?: boolean }> = [
+const CACHEABLE: Array<{
+  re: RegExp;
+  collection: string;
+  single?: boolean;
+  /**
+   * Resolve the single document by matching a field against the captured
+   * group instead of by `_id`. Needed for lookups keyed by something other
+   * than the record's own id, e.g. `/encounters/by-appointment/:appointmentId`
+   * — without this, triage cannot find the encounter it already created
+   * offline and would create a second one.
+   */
+  matchField?: string;
+}> = [
+  {
+    re: /^\/encounters\/by-appointment\/([a-f0-9]{24})(?:\?|$)/i,
+    collection: 'encounters',
+    single: true,
+    matchField: 'appointmentId',
+  },
   { re: /^\/patients\/([a-f0-9]{24})(?:\?|$)/i, collection: 'patients', single: true },
   { re: /^\/patients(?:\?|$)/, collection: 'patients' },
   { re: /^\/appointments\/([a-f0-9]{24})(?:\?|$)/i, collection: 'appointments', single: true },
@@ -155,12 +176,23 @@ const CACHEABLE: Array<{ re: RegExp; collection: string; single?: boolean }> = [
   { re: /^\/medicines(?:\?|$)/, collection: 'medicines' },
 ];
 
-export type CacheMatch = { collection: string; id?: string };
+export type CacheMatch = {
+  collection: string;
+  id?: string;
+  /** Set when the id above names a field other than `_id` to match on. */
+  matchField?: string;
+};
 
 export function matchCacheable(path: string): CacheMatch | null {
   for (const rule of CACHEABLE) {
     const m = rule.re.exec(path);
-    if (m) return { collection: rule.collection, id: rule.single ? m[1] : undefined };
+    if (m) {
+      return {
+        collection: rule.collection,
+        id: rule.single ? m[1] : undefined,
+        matchField: rule.matchField,
+      };
+    }
   }
   return null;
 }
@@ -197,6 +229,12 @@ export async function readFromCache(
   try {
     if (match.id) {
       const rows = await listRecords(clinicId, match.collection);
+      if (match.matchField) {
+        const field = match.matchField;
+        return rows.find(
+          (r) => String((r.doc as Record<string, unknown>)?.[field] ?? '') === match.id,
+        )?.doc;
+      }
       return rows.find((r) => r.id === match.id)?.doc;
     }
     const rows = await listRecords(clinicId, match.collection);
@@ -218,4 +256,186 @@ export async function lastSyncedAt(
   path: string,
 ): Promise<number | undefined> {
   return await getMeta<number>(SYNCED_AT(collection, path));
+}
+
+/**
+ * Merge a patch into one cached document.
+ *
+ * Queueing a request is not enough on its own: an action like check-in
+ * changes state the *server* computes, so the cached record would still read
+ * `BOOKED` and the UI would refuse to offer the next step. Offline, the
+ * client has to apply the effect locally as well as queue the cause.
+ *
+ * Swallows failures — a cache write must never break a save that already
+ * succeeded in being queued.
+ */
+export async function patchCachedRecord(
+  clinicId: string,
+  collection: string,
+  id: string,
+  patch: Record<string, unknown>,
+): Promise<void> {
+  try {
+    const rows = await listRecords(clinicId, collection);
+    const row = rows.find((r) => r.id === id);
+    if (!row) return;
+    await putRecords(clinicId, collection, [
+      { ...(row.doc as Record<string, unknown>), ...patch },
+    ]);
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Next token number for a doctor's queue on a given day, derived from what
+ * this device has cached (including appointments it queued earlier in the
+ * same outage).
+ *
+ * **Relies on Phase 0 being single-writer.** One device works offline at a
+ * time, so the highest token it knows about is the highest that exists. The
+ * server honours the number we send (see `resolveQueueNumber`) so the token
+ * on the patient's slip survives the sync, and the unique queue index is the
+ * backstop if the assumption is ever violated.
+ *
+ * Deliberately NOT a lease: queue numbers restart daily and are read aloud in
+ * the waiting room, so the gaps a leased block leaves behind would be glaring
+ * — "Token 21" with three people waiting.
+ */
+export async function nextLocalQueueNumber(
+  clinicId: string,
+  doctorId: string,
+  queueDate: string,
+): Promise<number> {
+  try {
+    const rows = await listRecords(clinicId, 'appointments');
+    let highest = 0;
+    for (const row of rows) {
+      const doc = row.doc as Record<string, unknown>;
+      if (doc?.type !== 'QUEUE') continue;
+      if (String(doc?.queueDate ?? '') !== queueDate) continue;
+      const docDoctor = doc?.doctorId as { _id?: string } | string | undefined;
+      const docDoctorId =
+        typeof docDoctor === 'string' ? docDoctor : (docDoctor?._id ?? '');
+      if (String(docDoctorId) !== doctorId) continue;
+      const n = Number(doc?.queueNumber ?? 0);
+      if (Number.isFinite(n) && n > highest) highest = n;
+    }
+    return highest + 1;
+  } catch {
+    // No cache to reason from. Returning 1 would risk colliding with a token
+    // already issued today, so let the server assign instead.
+    return 0;
+  }
+}
+
+// ------------------------------------------------- response cache (B2/B6)
+
+/**
+ * Some GETs cannot go in the record cache because the response is not a set
+ * of documents with ids — availability slots are computed per doctor per day,
+ * not stored. Others are cheap lists where the exact query matters.
+ *
+ * These are cached verbatim, keyed by the full path, so offline they return
+ * precisely what the same request returned when it last succeeded.
+ */
+const RESPONSE_CACHEABLE: RegExp[] = [
+  // Doctor list — without it the booking sheet has no names to show.
+  /^\/users(?:\?|$)/,
+  // Computed availability. Query-dependent (doctor + date), so a
+  // path-keyed cache is the only thing that can answer it correctly.
+  /^\/appointments\/slots(?:\?|$)/,
+  // Per-doctor visit types, including price — needed to book and to bill.
+  /^\/visit-types(?:\?|$)/,
+];
+
+export function isResponseCacheable(path: string): boolean {
+  return RESPONSE_CACHEABLE.some((re) => re.test(path));
+}
+
+/**
+ * Query parameter order is an accident of however the caller built the
+ * string, so the raw path is a fragile cache key: `?a=1&b=2` and `?b=2&a=1`
+ * are the same request but would miss each other. Sorting makes the key
+ * depend on meaning rather than spelling.
+ */
+function normalizePath(path: string): string {
+  const [base, query] = path.split('?');
+  if (!query) return base;
+  const params = Array.from(new URLSearchParams(query).entries()).sort(
+    ([a], [b]) => a.localeCompare(b),
+  );
+  return `${base}?${params.map(([k, v]) => `${k}=${v}`).join('&')}`;
+}
+
+const RESP_KEY = (clinicId: string, path: string) =>
+  `resp:${clinicId}:${normalizePath(path)}`;
+
+export async function cacheResponseBody(
+  clinicId: string,
+  path: string,
+  body: unknown,
+): Promise<void> {
+  try {
+    await setMeta(RESP_KEY(clinicId, path), { body, cachedAt: Date.now() });
+  } catch {
+    // ignore
+  }
+}
+
+export async function readResponseBody(
+  clinicId: string,
+  path: string,
+): Promise<unknown | undefined> {
+  try {
+    const row = await getMeta<{ body: unknown; cachedAt: number }>(
+      RESP_KEY(clinicId, path),
+    );
+    return row?.body;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Warm the availability slots for each doctor, for today and tomorrow.
+ *
+ * Slots are computed server-side from the doctor's weekly rules and
+ * overrides, so there is nothing in the record cache that can reconstruct
+ * them. Prefetching the combinations the front desk is actually likely to
+ * book means the slot picker still works once the connection goes.
+ *
+ * Bounded deliberately: doctors in the working set × 2 days. Anything wider
+ * would spend a lot of requests on slots nobody opens.
+ */
+export async function prefetchSlots(
+  ctx: DevContext,
+  fetchJson: (path: string) => Promise<unknown>,
+): Promise<number> {
+  if (!ctx.clinicId || !ctx.branchId) return 0;
+  let warmed = 0;
+  try {
+    const doctors = await listRecords(ctx.clinicId, 'users');
+    const days = [todayInTz(ctx.timezone), todayInTz(ctx.timezone, 1)];
+    for (const row of doctors) {
+      const doc = row.doc as { _id?: string; roles?: Array<{ name?: string }> };
+      const isDoctor = (doc.roles ?? []).some(
+        (r) => (r?.name ?? '').toLowerCase() === 'doctor',
+      );
+      if (!isDoctor || !doc._id) continue;
+      for (const date of days) {
+        const path = `/appointments/slots?doctorId=${doc._id}&branchId=${ctx.branchId}&date=${date}`;
+        try {
+          const body = await fetchJson(path);
+          await cacheResponseBody(ctx.clinicId, path, body);
+          warmed++;
+        } catch {
+          // One doctor's slots failing must not stop the rest.
+        }
+      }
+    }
+  } catch {
+    // No cached doctors yet; the next sync will try again.
+  }
+  return warmed;
 }
