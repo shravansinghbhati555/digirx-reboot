@@ -97,7 +97,16 @@ export async function apiPostQueued<T>(
   ctx: DevContext,
   path: string,
   body: Record<string, unknown>,
-  opts: { label?: string } = {},
+  opts: {
+    label?: string;
+    /**
+     * Extra fields to add only if the write actually gets queued. Used for
+     * leased sequence numbers: drawing one spends it permanently, so it must
+     * not happen on a request that reached the server and had a number minted
+     * for it anyway.
+     */
+    enrichOnQueue?: () => Promise<Record<string, unknown>>;
+  } = {},
 ): Promise<QueuedResult<T>> {
   const withId = { ...body, _id: (body._id as string) ?? newObjectId() };
   try {
@@ -105,6 +114,8 @@ export async function apiPostQueued<T>(
     return { data, queued: false };
   } catch (err) {
     if (!isOfflineError(err)) throw err;
+    const extra = opts.enrichOnQueue ? await opts.enrichOnQueue() : {};
+    Object.assign(withId, extra);
     await enqueue({
       clinicId: ctx.clinicId,
       method: 'POST',
@@ -130,6 +141,8 @@ export async function apiPatchQueued<T>(
 ): Promise<QueuedResult<T>> {
   try {
     const data = await apiPatch<T>(ctx, path, body);
+    const match = matchCacheable(path);
+    if (match) void cacheResponse(ctx.clinicId, match, data);
     return { data, queued: false };
   } catch (err) {
     if (!isOfflineError(err)) throw err;
@@ -140,7 +153,23 @@ export async function apiPatchQueued<T>(
       body,
       label: opts.label,
     });
-    return { data: body as T, queued: true };
+
+    // Merge the change into the cached copy. Without this the edit survives
+    // in the queue but not on screen: navigating away and back would re-read
+    // the stale cached record and the doctor would see their vitals gone —
+    // indistinguishable from data loss, even though nothing was lost.
+    const match = matchCacheable(path);
+    let merged: unknown = body;
+    if (match?.id) {
+      const existing = (await readFromCache(ctx.clinicId, match)) as
+        | Record<string, unknown>
+        | undefined;
+      if (existing) {
+        merged = { ...existing, ...body };
+        await cacheResponse(ctx.clinicId, match, merged);
+      }
+    }
+    return { data: merged as T, queued: true };
   }
 }
 

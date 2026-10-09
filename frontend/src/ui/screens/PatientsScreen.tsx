@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { apiDelete, apiGet, apiPatch, apiPostMultipart, apiPostQueued } from '../../app/api';
 import { useApp } from '../../app/AppContext';
+import { drawNumber } from '../../offline/leases';
 import { useIsMobile } from '../../app/useIsMobile';
 import { Perm, usePerm } from '../../app/permissions';
 import { isValidEmail } from '../../app/validators';
@@ -596,25 +597,45 @@ function NewPatientModal({ onClose, onCreated }: { onClose: () => void; onCreate
       if (form.email.trim()) body.emails = [form.email.trim()];
       // Survives the server being unreachable: the `_id` is minted here, the
       // write goes on the queue, and replay reconciles it later.
+      // `mrnSeq` is drawn only if this actually queues — a drawn number is
+      // spent whether or not it gets used, so we must not burn one on a
+      // request that reached the server and had an MRN minted for it anyway.
+      // The server renders the final MRN from this sequence, so what the
+      // front desk reads out offline is what the record ends up with.
+      let drawnMrn: string | null = null;
       const { data: res, queued } = await apiPostQueued<any>(ctx, '/patients', body, {
         label: `Patient — ${fullName}`,
+        enrichOnQueue: async () => {
+          const drawn = await drawNumber(ctx.clinicId, 'MRN');
+          if (!drawn.ok) return {};
+          drawnMrn = drawn.value;
+          return { mrnSeq: drawn.seq };
+        },
       });
 
       if (queued) {
         // Offline, the response is the record we just built rather than the
         // server's `{ duplicateCandidate, created }` envelope.
         //
-        // Two things genuinely cannot happen here, and pretending otherwise
-        // would be worse than saying so:
-        //  - duplicate detection is a server-side query, so a double
-        //    registration can only be caught on sync;
-        //  - the MRN comes from a server counter, so this patient has none
-        //    until then (the number lease in C4 is what fixes that).
+        // Duplicate detection genuinely cannot run here — it is a server-side
+        // query — so a double registration can only be caught on sync.
         //
-        // Face enrollment and document upload both need the network too, so
-        // we skip step 2 rather than offering buttons that will fail.
-        onCreated(res as Patient);
-        toast('Saved on this device. It will sync when you reconnect.', 'success');
+        // The MRN comes from this device's leased block (C2/C4). If no block
+        // is available the patient is still registered; the server assigns an
+        // MRN when the create replays.
+        const offlinePatient = drawnMrn
+          ? { ...(res as Record<string, unknown>), mrn: drawnMrn }
+          : (res as Record<string, unknown>);
+
+        // Face enrollment and document upload both need the network, so we
+        // skip step 2 rather than offering buttons that will fail.
+        onCreated(offlinePatient as Patient);
+        toast(
+          drawnMrn
+            ? `Saved on this device as ${drawnMrn}. It will sync when you reconnect.`
+            : 'Saved on this device. A patient number will be assigned when you reconnect.',
+          'success',
+        );
         onClose();
         return;
       }

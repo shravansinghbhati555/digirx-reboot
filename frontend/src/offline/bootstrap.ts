@@ -11,6 +11,7 @@ import { subscribeConnectivity, isOnline } from './connectivity';
 import { recoverInflight } from './queue';
 import { replayQueue } from './replay';
 import { syncWorkingSet } from './working-set';
+import { ensureAllLeases, reportLeaseUsage } from './leases';
 import type { DevContext } from '../app/context';
 
 /**
@@ -45,7 +46,13 @@ let periodic: number | undefined;
 export function startOfflineSync(
   getCtx: () => DevContext,
   fetchJson: (ctx: DevContext, path: string) => Promise<unknown>,
+  postJson: (ctx: DevContext, path: string, body: unknown) => Promise<unknown>,
 ): () => void {
+  const leaseApi = {
+    post: <T,>(path: string, body: unknown) =>
+      postJson(getCtx(), path, body) as Promise<T>,
+  };
+
   const run = async (opts: { force?: boolean } = {}) => {
     const ctx = getCtx();
     if (!ctx.clinicId || !isOnline()) return;
@@ -54,6 +61,11 @@ export function startOfflineSync(
       // refreshing the cache, and syncing a working set that does not yet
       // include the morning's own entries would look like they were lost.
       await replayQueue(ctx);
+      // Tell the server which leased numbers we actually spent, then top the
+      // blocks back up. Done after replay so a block emptied during an outage
+      // is reported before we ask for its replacement.
+      await reportLeaseUsage(ctx, leaseApi);
+      await ensureAllLeases(ctx, leaseApi);
       await syncWorkingSet(ctx, (p) => fetchJson(ctx, p), opts);
     } catch {
       // Background work never surfaces as an app error; the queue and the

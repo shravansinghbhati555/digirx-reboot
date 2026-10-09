@@ -356,6 +356,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return startOfflineSync(
       () => ctxRef.current,
       (c, path) => apiGet<unknown>(c, path),
+      (c, path, body) => apiPost<unknown>(c, path, body),
     );
     // Restart only when the identity of the session changes, not on every
     // token refresh — otherwise the interval resets constantly.

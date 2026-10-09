@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { apiGet, apiPatch, apiPost } from '../../app/api';
+import { apiGet, apiPatchQueued, apiPost } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { useIsMobile } from '../../app/useIsMobile';
 import { Avatar, Spinner, StatusPill, useToast } from '../shared/primitives';
@@ -838,19 +838,28 @@ function EncounterEditor({
     }
     setSavingDraft(true); setError(null);
     try {
-      const [updated] = await Promise.all([
-        apiPatch<Encounter>(ctx, `/encounters/${encounter._id}`, {
-          chiefComplaint: complaint || undefined,
-          diagnosis: diagnosis || undefined,
-          notes: notes || undefined,
-          vitals: Object.keys(vitals).some(k => !!vitals[k]) ? mapVitalsToBe(vitals) : undefined,
-          followUpAt: followUp ? new Date(followUp).toISOString() : undefined,
+      const encounterPatch: Record<string, unknown> = {
+        chiefComplaint: complaint || undefined,
+        diagnosis: diagnosis || undefined,
+        notes: notes || undefined,
+        vitals: Object.keys(vitals).some(k => !!vitals[k]) ? mapVitalsToBe(vitals) : undefined,
+        followUpAt: followUp ? new Date(followUp).toISOString() : undefined,
+      };
+      const [encounterSave] = await Promise.all([
+        // Queued rather than plain PATCH so a consultation recorded during an
+        // outage is kept instead of thrown back at the doctor as an error.
+        apiPatchQueued<Encounter>(ctx, `/encounters/${encounter._id}`, encounterPatch, {
+          label: `Consultation — ${patient?.fullName ?? 'patient'}`,
         }),
         // Persist medicine rows on every draft save so they survive navigation
         (async () => {
           const filled = rx.filter((r) => r.med.trim());
           if (filled.length > 0) {
-            const res = await apiPatch<{ _id: string; prescriptionNo?: string }>(
+            // Also queued — the medicine rows are part of the same save, and
+            // keeping the encounter while silently dropping the prescription
+            // would be worse than failing outright. Replay preserves order,
+            // so this lands after the encounter patch above.
+            const { data: res } = await apiPatchQueued<{ _id: string; prescriptionNo?: string }>(
               ctx,
               `/encounters/${encounter._id}/prescriptions`,
               {
@@ -873,8 +882,21 @@ function EncounterEditor({
           }
         })(),
       ]);
+      // Offline, the "response" is the patch merged over the cached record
+      // rather than a server-rendered Encounter. Merge over the one we hold
+      // so the screen never receives a partial object.
+      const updated = encounterSave.queued
+        ? ({ ...encounter, ...encounterPatch } as Encounter)
+        : encounterSave.data;
       onChanged(updated);
-      toast(signed ? 'Changes saved' : 'Draft saved', 'success');
+      toast(
+        encounterSave.queued
+          ? 'Saved on this device. It will sync when you reconnect.'
+          : signed
+            ? 'Changes saved'
+            : 'Draft saved',
+        'success',
+      );
       // When saving edits on an already-signed encounter, flip back to
       // the preview so the doctor sees the updated prescription (and
       // can print / share the new version) without manually clicking

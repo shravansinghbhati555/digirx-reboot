@@ -105,3 +105,18 @@ export {
 export { registerServiceWorker, startOfflineSync } from './bootstrap';
 
 export { describeAge, useOfflineStatus, type OfflineStatus } from './useOfflineStatus';
+
+export {
+  OFFLINE_COUNTERS,
+  drawNumber,
+  ensureAllLeases,
+  ensureLease,
+  getLease,
+  leaseHealth,
+  remaining as leaseRemaining,
+  renderNumber,
+  reportLeaseUsage,
+  type LeaseCounterName,
+  type LeaseHealth,
+  type StoredLease,
+} from './leases';
