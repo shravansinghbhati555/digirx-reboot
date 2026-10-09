@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
-import { Connection, Model, Types } from 'mongoose';
+import { ClientSession, Connection, Model, Types } from 'mongoose';
 import { CreateAppointmentDto } from './dto/create-appointment.dto';
 import { UpdateAppointmentDto } from './dto/update-appointment.dto';
 import {
@@ -339,13 +339,11 @@ export class AppointmentsService {
         try {
           let created: Appointment | null = null;
           await session.withTransaction(async () => {
-            const counter = await this.counterModel.findOneAndUpdate(
+            const queueNumber = await this.resolveQueueNumber(
               { clinicId, branchId, doctorId, queueDate },
-              { $inc: { lastNumber: 1 } },
-              { upsert: true, new: true, session },
+              dto.queueNumber,
+              session,
             );
-
-            const queueNumber = counter.lastNumber;
             created = await this.apptModel
               .create(
                 [
@@ -384,12 +382,10 @@ export class AppointmentsService {
         }
       }
 
-      const counter = await this.counterModel.findOneAndUpdate(
+      const queueNumber = await this.resolveQueueNumber(
         { clinicId, branchId, doctorId, queueDate },
-        { $inc: { lastNumber: 1 } },
-        { upsert: true, new: true },
+        dto.queueNumber,
       );
-      const queueNumber = counter.lastNumber;
       const createdQueue = await this.apptModel.create({
         ...clientIdFields(dto._id),
         clinicId,
@@ -829,6 +825,51 @@ export class AppointmentsService {
   }
 
   // --- internals ----------------------------------------------------------
+
+  /**
+   * The token number for a QUEUE appointment.
+   *
+   * Normally minted here by incrementing the per-(clinic, branch, doctor,
+   * day) counter. A client that booked while offline has already told the
+   * patient a number, so it sends that number and we honour it rather than
+   * renumbering the token on their slip.
+   *
+   * That is safe **only because Phase 0 is single-writer** — one device per
+   * clinic works offline at a time, so nothing else can have taken the same
+   * token. The unique index on (clinic, branch, doctor, date, number) is the
+   * backstop if that assumption is ever violated: the create fails and the
+   * write lands in the replay failure surface instead of silently
+   * double-booking a token. When multiple devices can be offline at once
+   * (Phase 2), this must become a lease like MRN and bill numbers.
+   *
+   * `$max` rather than `$inc` keeps the counter at or above the number we
+   * just honoured, so a later online booking cannot collide with it.
+   */
+  private async resolveQueueNumber(
+    scope: {
+      clinicId: Types.ObjectId;
+      branchId: Types.ObjectId;
+      doctorId: Types.ObjectId;
+      queueDate: string;
+    },
+    clientNumber: number | undefined,
+    session?: ClientSession,
+  ): Promise<number> {
+    if (clientNumber != null) {
+      await this.counterModel.findOneAndUpdate(
+        scope,
+        { $max: { lastNumber: clientNumber } },
+        { upsert: true, new: true, ...(session ? { session } : {}) },
+      );
+      return clientNumber;
+    }
+    const counter = await this.counterModel.findOneAndUpdate(
+      scope,
+      { $inc: { lastNumber: 1 } },
+      { upsert: true, new: true, ...(session ? { session } : {}) },
+    );
+    return counter.lastNumber;
+  }
 
   private async assertDoctorAtBranch(
     clinicId: Types.ObjectId,

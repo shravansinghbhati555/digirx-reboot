@@ -29,6 +29,7 @@ import { Patient } from '../patients/schemas/patient.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
 import { Branch } from '../tenancy/schemas/branch.schema';
 import { BillStatus } from './schemas/bill.schema';
+import { IssueBillDto } from './dto/issue-bill.dto';
 
 @Controller()
 export class BillingController {
@@ -81,11 +82,16 @@ export class BillingController {
 
   @Post('bills/:id/issue')
   @RequirePermissions(Permission.BillingWrite)
-  async issue(@Req() req: AppRequest, @Param('id') id: string) {
+  async issue(
+    @Req() req: AppRequest,
+    @Param('id') id: string,
+    @Body() dto: IssueBillDto = {},
+  ) {
     return await this.billing.issueBill(
       req.context!.clinicId,
       id,
       req.context!.actorUserId,
+      { billSeq: dto.billSeq, deviceId: req.context!.deviceId },
     );
   }
 

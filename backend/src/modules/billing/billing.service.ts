@@ -35,6 +35,8 @@ import { NotificationsService } from '../notifications/notifications.service';
 import { NotificationChannel } from '../notifications/schemas/notification-template.schema';
 import { renderTemplate } from '../notifications/template.utils';
 import { clientIdFields } from '../offline/client-id.util';
+import { NumberLeaseService } from '../offline/number-lease.service';
+import { LeaseCounter } from '../offline/schemas/number-lease.schema';
 
 const CURRENCY_RE = /^[A-Z]{3}$/;
 
@@ -80,6 +82,7 @@ export class BillingService {
     // auto-triggered by a payment.
     private readonly inventory: InventoryService,
     private readonly numbering: BillNumberingService,
+    private readonly leases: NumberLeaseService,
     private readonly pdf: PdfService,
     private readonly storage: StorageService,
     private readonly documents: DocumentsService,
@@ -376,18 +379,33 @@ export class BillingService {
     return bill;
   }
 
-  async issueBill(clinicId: Types.ObjectId, id: string, actorUserId?: Types.ObjectId) {
+  async issueBill(
+    clinicId: Types.ObjectId,
+    id: string,
+    actorUserId?: Types.ObjectId,
+    opts: { billSeq?: number; deviceId?: string } = {},
+  ) {
     const bill = await this.getBill(clinicId, id);
     if (bill.status !== BillStatus.Draft) {
       throw new BadRequestException('Only draft bills can be issued');
     }
 
     const issuedAt = new Date();
-    const billNo = await this.numbering.mint(
-      clinicId,
-      bill.branchId,
-      issuedAt,
-    );
+    // A bill issued offline was already handed to the patient with a number
+    // on it, and cash may have been taken against it, so we honour the
+    // sequence the device drew from its lease rather than renumbering the
+    // invoice on replay. `resolveLeasedNumber` proves it was genuinely
+    // leased to that device first.
+    const billNo =
+      opts.billSeq != null
+        ? await this.leases.resolveLeasedNumber({
+            clinicId,
+            branchId: bill.branchId,
+            deviceId: opts.deviceId ?? '',
+            counter: LeaseCounter.Bill,
+            seq: opts.billSeq,
+          })
+        : await this.numbering.mint(clinicId, bill.branchId, issuedAt);
 
     // Status-gated atomic update so two concurrent issue calls on the same
     // DRAFT bill don't both set a billNo. The "loser" sees a null match

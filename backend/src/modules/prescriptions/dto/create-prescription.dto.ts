@@ -57,6 +57,17 @@ export class CreatePrescriptionItemDto {
 }
 
 export class CreatePrescriptionDto extends ClientIdDto {
+  /**
+   * Sequence drawn from this device's PRESCRIPTION lease while offline.
+   * Only the raw number crosses the wire; the server renders the final
+   * `prescriptionNo` from it after proving the sequence was leased to this
+   * device, so a printed slip keeps the number the doctor saw.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  prescriptionSeq?: number;
+
   @IsArray()
   @IsOptional()
   @ValidateNested({ each: true })

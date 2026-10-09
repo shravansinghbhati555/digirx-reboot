@@ -33,9 +33,13 @@ import { InventoryItem, InventoryItemSchema } from '../inventory/schemas/invento
 // to FIFO-dispense each line. Dependency is one-way (inventory doesn't
 // import billing) so no forwardRef needed.
 import { InventoryModule } from '../inventory/inventory.module';
+import { OfflineModule } from '../offline/offline.module';
 
 @Module({
   imports: [
+    // Lets a bill issued offline keep the number its device drew from a
+    // lease — cash may already have been receipted against it.
+    OfflineModule,
     MongooseModule.forFeature([
       { name: Bill.name, schema: BillSchema },
       { name: BillCounter.name, schema: BillCounterSchema },

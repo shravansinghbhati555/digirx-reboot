@@ -72,6 +72,7 @@ export class PrescriptionsController {
       req.context!.clinicId,
       encounterId,
       dto,
+      req.context!.deviceId,
     );
   }
 

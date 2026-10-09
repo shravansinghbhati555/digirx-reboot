@@ -28,6 +28,8 @@ import { DocumentCategory, DocumentOwnerType, DocumentStatus } from '../document
 import { Branch, legacyAddressLine } from '../tenancy/schemas/branch.schema';
 import { Encounter, EncounterStatus } from '../encounters/schemas/encounter.schema';
 import { clientIdFields } from '../offline/client-id.util';
+import { NumberLeaseService } from '../offline/number-lease.service';
+import { LeaseCounter } from '../offline/schemas/number-lease.schema';
 
 const DEFAULT_RX_SHARE_EXPIRY_SECONDS = 7 * 24 * 60 * 60;
 
@@ -56,6 +58,7 @@ export class PrescriptionsService {
     private readonly medicines: MedicinesService,
     private readonly notifications: NotificationsService,
     private readonly numbering: PrescriptionNumberingService,
+    private readonly leases: NumberLeaseService,
     private readonly pdfService: PdfService,
     private readonly storage: StorageService,
     private readonly documents: DocumentsService,
@@ -83,6 +86,7 @@ export class PrescriptionsService {
     clinicId: Types.ObjectId,
     encounterId: string,
     dto: CreatePrescriptionDto,
+    deviceId?: string,
   ) {
     const enc = await this.encounters.getById(clinicId, encounterId);
     const items = await this.mapItems(clinicId, dto);
@@ -96,7 +100,7 @@ export class PrescriptionsService {
       // Back-fill prescriptionNo for legacy rows that pre-date the
       // numbering work — once stamped, never re-mint.
       if (!existing.prescriptionNo) {
-        existing.prescriptionNo = await this.numbering.mint(clinicId);
+        existing.prescriptionNo = await this.resolveNumber(clinicId, dto, deviceId);
       }
       return existing.save();
     }
@@ -105,7 +109,7 @@ export class PrescriptionsService {
     // the document. If the create fails we'll have burned a sequence
     // value — that's intentional, gaps are preferable to duplicates
     // (auditors flag duplicates, not gaps).
-    const prescriptionNo = await this.numbering.mint(clinicId);
+    const prescriptionNo = await this.resolveNumber(clinicId, dto, deviceId);
     const rx = await this.rxModel.create({
       ...clientIdFields(dto._id),
       clinicId,
@@ -141,6 +145,31 @@ export class PrescriptionsService {
     return await this.rxModel
       .findOne({ clinicId, prescriptionNo: trimmed.toUpperCase() })
       .exec();
+  }
+
+  /**
+   * The readable prescription number.
+   *
+   * A slip written offline was already printed or read out with a number
+   * drawn from this device's lease, so we honour that sequence instead of
+   * minting a new one — otherwise the paper and the record would disagree.
+   * `resolveLeasedNumber` proves the sequence was genuinely leased to this
+   * device before trusting it.
+   */
+  private async resolveNumber(
+    clinicId: Types.ObjectId,
+    dto: CreatePrescriptionDto,
+    deviceId?: string,
+  ): Promise<string> {
+    if (dto.prescriptionSeq != null) {
+      return await this.leases.resolveLeasedNumber({
+        clinicId,
+        deviceId: deviceId ?? '',
+        counter: LeaseCounter.Prescription,
+        seq: dto.prescriptionSeq,
+      });
+    }
+    return await this.numbering.mint(clinicId);
   }
 
   async createForEncounter(

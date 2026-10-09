@@ -21,9 +21,13 @@ import { User, UserSchema } from '../authz/schemas/user.schema';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
 import { Encounter, EncounterSchema } from '../encounters/schemas/encounter.schema';
+import { OfflineModule } from '../offline/offline.module';
 
 @Module({
   imports: [
+    // Lets a prescription written offline keep the number its device
+    // already drew from a lease.
+    OfflineModule,
     MongooseModule.forFeature([
       { name: Prescription.name, schema: PrescriptionSchema },
       { name: PrescriptionCounter.name, schema: PrescriptionCounterSchema },

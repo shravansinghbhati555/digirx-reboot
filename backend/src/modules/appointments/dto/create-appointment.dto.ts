@@ -1,4 +1,4 @@
-import { IsEnum, IsISO8601, IsMongoId, IsNumber, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
+import { IsEnum, IsInt, IsISO8601, IsMongoId, IsNumber, IsOptional, IsString, Matches, MaxLength, Min, MinLength } from 'class-validator';
 import {
   AppointmentSource,
   AppointmentType,
@@ -31,6 +31,19 @@ export class CreateAppointmentDto extends ClientIdDto {
   @IsOptional()
   @Matches(/^\d{4}-\d{2}-\d{2}$/, { message: 'queueDate must be YYYY-MM-DD' })
   queueDate?: string;
+
+  /**
+   * Token number chosen by a client that booked while offline.
+   *
+   * Sent so the number already given to the patient is the one the record
+   * keeps. Honoured only under the single-writer assumption of Phase 0 — see
+   * `AppointmentsService.resolveQueueNumber`. The unique queue index is the
+   * backstop against a duplicate.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  queueNumber?: number;
 
   @IsOptional()
   @IsEnum(AppointmentSource)
