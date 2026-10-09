@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
+import { DateTime } from 'luxon';
 import {
   LeaseCounter,
   LeaseStatus,
@@ -15,7 +16,8 @@ import { MrnCounter } from '../patients/schemas/mrn-counter.schema';
 import { PrescriptionCounter } from '../prescriptions/schemas/prescription-counter.schema';
 import { BillCounter } from '../billing/schemas/bill-counter.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
-import { computeFiscalYear } from '../billing/bill-numbering.service';
+import { computeFiscalYear, deriveBranchCode } from '../billing/bill-numbering.service';
+import { Branch } from '../tenancy/schemas/branch.schema';
 import { mergeClinicSettings } from '../tenancy/clinic-settings.types';
 
 /** Block sizes. Deliberately modest: an unused block is a permanent gap. */
@@ -45,8 +47,17 @@ export type LeaseView = {
   usedThrough: number;
   remaining: number;
   expiresAt: Date;
-  /** Everything the client needs to render a number without calling us. */
+  /** The clinic's raw format string, for display/debugging. */
   format: string;
+  /**
+   * The same format with **every token except `{seq}` already resolved** —
+   * e.g. `INV-MAIN-2026-{seq:08}`.
+   *
+   * The client only has to substitute the sequence number, so it cannot drift
+   * from the server on branch codes, fiscal years or clinic codes. Those are
+   * derived here, once, by the same helpers the online path uses.
+   */
+  numberTemplate: string;
 };
 
 @Injectable()
@@ -63,6 +74,7 @@ export class NumberLeaseService {
     @InjectModel(BillCounter.name)
     private readonly billCounterModel: Model<BillCounter>,
     @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
+    @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
   ) {}
 
   /**
@@ -109,7 +121,7 @@ export class NumberLeaseService {
     });
     if (existing && existing.expiresAt > new Date()) {
       if (existing.usedThrough < existing.blockEnd) {
-        return this.toView(existing, await this.formatFor(clinicId, counter));
+        return await this.viewOf(existing);
       }
       // Fully used — retire it so the allocation below can proceed.
       existing.status = LeaseStatus.Exhausted;
@@ -143,7 +155,7 @@ export class NumberLeaseService {
     this.logger.log(
       `Leased ${counter} ${blockStart}-${blockEnd} to device ${deviceId} (clinic ${clinicId.toHexString()})`,
     );
-    return this.toView(lease, await this.formatFor(clinicId, counter));
+    return await this.viewOf(lease);
   }
 
   /** Active leases held by one device. */
@@ -158,7 +170,7 @@ export class NumberLeaseService {
     });
     const out: LeaseView[] = [];
     for (const row of rows) {
-      out.push(this.toView(row, await this.formatFor(clinicId, row.counter)));
+      out.push(await this.viewOf(row));
     }
     return out;
   }
@@ -183,7 +195,7 @@ export class NumberLeaseService {
       if (lease.usedThrough >= lease.blockEnd) lease.status = LeaseStatus.Exhausted;
       await lease.save();
     }
-    return this.toView(lease, await this.formatFor(clinicId, lease.counter));
+    return await this.viewOf(lease);
   }
 
   /**
@@ -200,6 +212,53 @@ export class NumberLeaseService {
     if (!lease) throw new NotFoundException('Lease not found');
     lease.status = LeaseStatus.Released;
     await lease.save();
+  }
+
+  /**
+   * Confirm a sequence number was genuinely leased to this device, and return
+   * the resolved template so the caller renders it exactly as the online path
+   * would.
+   *
+   * Accepts leases in any state except never-issued: a block that is now
+   * exhausted or released was still legitimately held when the offline write
+   * was made, and refusing it on replay would reject work that was correct
+   * when it happened. Uniqueness is still guaranteed by the allocation — no
+   * other device or online mint can have been given this number.
+   */
+  async resolveLeasedNumber(input: {
+    clinicId: Types.ObjectId;
+    branchId?: Types.ObjectId;
+    deviceId: string;
+    counter: LeaseCounter;
+    seq: number;
+  }): Promise<string> {
+    const { clinicId, deviceId, counter, seq } = input;
+    if (!deviceId) {
+      throw new BadRequestException('x-device-id is required to use a leased number');
+    }
+    const lease = await this.leaseModel.findOne({
+      clinicId,
+      deviceId,
+      counter,
+      blockStart: { $lte: seq },
+      blockEnd: { $gte: seq },
+    });
+    if (!lease) {
+      throw new BadRequestException(
+        `Sequence ${seq} was not leased to this device for ${counter}`,
+      );
+    }
+    const format = await this.formatFor(clinicId, counter);
+    const template = await this.buildTemplate(
+      clinicId,
+      lease.branchId,
+      counter,
+      lease.fiscalYear,
+      format,
+    );
+    return template.replace(/\{seq(?::(\d+))?\}/g, (_m, w?: string) =>
+      String(seq).padStart(w ? Number(w) : 1, '0'),
+    );
   }
 
   // ------------------------------------------------------------- internals
@@ -273,7 +332,24 @@ export class NumberLeaseService {
     return settings.billing.billNoFormat;
   }
 
-  private toView(lease: NumberLease & { _id?: unknown }, format: string): LeaseView {
+  /** Build the client-facing view, resolving format and template together. */
+  private async viewOf(lease: NumberLease & { _id?: unknown }): Promise<LeaseView> {
+    const format = await this.formatFor(lease.clinicId, lease.counter);
+    const template = await this.buildTemplate(
+      lease.clinicId,
+      lease.branchId,
+      lease.counter,
+      lease.fiscalYear,
+      format,
+    );
+    return this.toView(lease, format, template);
+  }
+
+  private toView(
+    lease: NumberLease & { _id?: unknown },
+    format: string,
+    numberTemplate?: string,
+  ): LeaseView {
     return {
       id: String((lease as { _id: unknown })._id),
       counter: lease.counter,
@@ -285,6 +361,41 @@ export class NumberLeaseService {
       remaining: Math.max(0, lease.blockEnd - lease.usedThrough),
       expiresAt: lease.expiresAt,
       format,
+      numberTemplate: numberTemplate ?? format,
     };
+  }
+
+  /**
+   * Resolve every token except `{seq}`, so an offline client renders exactly
+   * what this server would have. Mirrors `formatMrn` / `formatBillNo` by
+   * reusing their inputs rather than reimplementing them.
+   */
+  private async buildTemplate(
+    clinicId: Types.ObjectId,
+    branchId: Types.ObjectId | undefined,
+    counter: LeaseCounter,
+    fiscalYear: string | undefined,
+    format: string,
+  ): Promise<string> {
+    const clinic = await this.clinicModel.findById(clinicId);
+    const tz = clinic?.timezone || 'UTC';
+    const local = DateTime.fromJSDate(new Date(), { zone: 'utc' }).setZone(tz);
+    const clinicCode = clinicId.toHexString().slice(0, 4).toUpperCase();
+
+    let branchCode = '';
+    if (branchId) {
+      const branch = await this.branchModel.findOne({ _id: branchId, clinicId });
+      if (branch) branchCode = deriveBranchCode(branch);
+    }
+
+    return format
+      .replace(/\{fiscalYear\}/g, fiscalYear ?? '')
+      .replace(/\{YYYY\}/g, String(counter === LeaseCounter.Mrn ? new Date().getUTCFullYear() : local.year))
+      .replace(
+        /\{YY\}/g,
+        String((counter === LeaseCounter.Mrn ? new Date().getUTCFullYear() : local.year) % 100).padStart(2, '0'),
+      )
+      .replace(/\{branchCode\}/g, branchCode)
+      .replace(/\{clinicCode\}/g, clinicCode);
   }
 }

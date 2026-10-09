@@ -12,6 +12,7 @@ import {
 } from '../prescriptions/schemas/prescription-counter.schema';
 import { BillCounter, BillCounterSchema } from '../billing/schemas/bill-counter.schema';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
+import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
 
 /**
  * Everything the offline-first work owns. See README.md in this folder for
@@ -37,6 +38,7 @@ import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
       { name: PrescriptionCounter.name, schema: PrescriptionCounterSchema },
       { name: BillCounter.name, schema: BillCounterSchema },
       { name: Clinic.name, schema: ClinicSchema },
+      { name: Branch.name, schema: BranchSchema },
     ]),
   ],
   controllers: [NumberLeaseController],

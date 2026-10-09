@@ -1,9 +1,21 @@
-import { ArrayNotEmpty, IsArray, IsEmail, IsEnum, IsISO8601, IsMongoId, IsOptional, IsString, MaxLength, MinLength, Matches } from 'class-validator';
+import { ArrayNotEmpty, IsArray, IsEmail, IsEnum, IsInt, IsISO8601, IsMongoId, IsOptional, IsString, MaxLength, Min, MinLength, Matches } from 'class-validator';
 // import { IsArray, IsEmail, IsEnum, IsISO8601, IsMongoId, IsOptional, IsString, Matches, MaxLength, MinLength } from 'class-validator';
 import { PatientGender } from '../schemas/patient.schema';
 import { ClientIdDto } from '../../offline/dto/client-id.dto';
 
 export class CreatePatientDto extends ClientIdDto {
+  /**
+   * Sequence number drawn from this device's MRN lease while offline.
+   *
+   * Only the raw number crosses the wire — the server renders the final MRN
+   * from it, so an offline client cannot drift from the clinic's configured
+   * format. Validated against the device's lease before it is used.
+   */
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  mrnSeq?: number;
+
   @IsString()
   @MinLength(1)
   @MaxLength(200)

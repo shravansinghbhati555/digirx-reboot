@@ -29,6 +29,7 @@ import {
   PrescriptionSchema,
 } from '../prescriptions/schemas/prescription.schema';
 import { StorageModule } from '../storage/storage.module';
+import { OfflineModule } from '../offline/offline.module';
 
 @Module({
   imports: [
@@ -50,6 +51,9 @@ import { StorageModule } from '../storage/storage.module';
     ]),
     // For presigning the profile-image URL on GET /patients/:id.
     StorageModule,
+    // Lets an offline-registered patient keep the MRN its device already
+    // drew from a lease, instead of being renumbered on replay.
+    OfflineModule,
   ],
   controllers: [PatientsController],
   providers: [PatientsService],

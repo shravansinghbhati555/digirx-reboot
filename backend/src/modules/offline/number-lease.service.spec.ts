@@ -30,14 +30,19 @@ function makeService(overrides: Record<string, any> = {}) {
     }),
   };
 
+  const branchModel: any = {
+    findOne: jest.fn().mockResolvedValue({ code: 'MAIN', name: 'Main Branch' }),
+  };
+
   const service = new NumberLeaseService(
     overrides.leaseModel ?? leaseModel,
     (overrides.mrn ?? mrn) as any,
     (overrides.rx ?? rx) as any,
     (overrides.bill ?? bill) as any,
     overrides.clinicModel ?? clinicModel,
+    overrides.branchModel ?? branchModel,
   );
-  return { service, leaseModel, mrn, rx, bill, clinicModel };
+  return { service, leaseModel, mrn, rx, bill, clinicModel, branchModel };
 }
 
 describe('NumberLeaseService.issue', () => {
@@ -127,6 +132,7 @@ describe('NumberLeaseService.issue', () => {
   it('returns the existing lease instead of burning a second block', async () => {
     const existing = {
       _id: new Types.ObjectId(),
+      clinicId,
       counter: LeaseCounter.Mrn,
       blockStart: 1,
       blockEnd: 50,
@@ -156,6 +162,7 @@ describe('NumberLeaseService.issue', () => {
   it('allocates a fresh block when the existing lease is used up', async () => {
     const existing = {
       _id: new Types.ObjectId(),
+      clinicId,
       counter: LeaseCounter.Mrn,
       blockStart: 1,
       blockEnd: 50,
@@ -180,6 +187,7 @@ describe('NumberLeaseService.issue', () => {
   it('retires an expired lease rather than handing it back', async () => {
     const existing = {
       _id: new Types.ObjectId(),
+      clinicId,
       counter: LeaseCounter.Mrn,
       blockStart: 1,
       blockEnd: 50,
@@ -206,6 +214,7 @@ describe('NumberLeaseService.reportUsage', () => {
   function leaseDoc(usedThrough: number) {
     return {
       _id: new Types.ObjectId(),
+      clinicId,
       counter: LeaseCounter.Mrn,
       blockStart: 1,
       blockEnd: 50,
@@ -255,5 +264,31 @@ describe('NumberLeaseService.reportUsage', () => {
     await expect(
       service.reportUsage(clinicId, DEVICE, String(new Types.ObjectId()), 1),
     ).rejects.toBeInstanceOf(NotFoundException);
+  });
+});
+
+describe('numberTemplate', () => {
+  it('resolves every token except {seq} so the client cannot drift', async () => {
+    const clinicModel: any = {
+      findById: jest.fn().mockResolvedValue({
+        timezone: 'Asia/Kolkata',
+        settings: { billing: { billNoFormat: 'INV-{branchCode}-{fiscalYear}-{seq:08}' } },
+      }),
+    };
+    const { service } = makeService({ clinicModel });
+
+    const lease = await service.issue({
+      clinicId,
+      branchId,
+      deviceId: DEVICE,
+      counter: LeaseCounter.Bill,
+      size: 10,
+    });
+
+    expect(lease.numberTemplate).toMatch(/^INV-MAIN-[\d-]+-\{seq:08\}$/);
+    // The sequence placeholder is the ONLY thing left for the client to fill.
+    expect(lease.numberTemplate).toContain('{seq:08}');
+    expect(lease.numberTemplate).not.toContain('{branchCode}');
+    expect(lease.numberTemplate).not.toContain('{fiscalYear}');
   });
 });

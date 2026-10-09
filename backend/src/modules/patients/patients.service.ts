@@ -25,6 +25,8 @@ import { Prescription } from '../prescriptions/schemas/prescription.schema';
 import { Clinic } from '../tenancy/schemas/clinic.schema';
 import { mergeClinicSettings } from '../tenancy/clinic-settings.types';
 import { StorageService } from '../storage/storage.service';
+import { NumberLeaseService } from '../offline/number-lease.service';
+import { LeaseCounter } from '../offline/schemas/number-lease.schema';
 import { clientIdFields } from '../offline/client-id.util';
 
 function dedupeTags(tags: string[] | undefined): string[] {
@@ -66,12 +68,13 @@ export class PatientsService {
     @InjectModel(Prescription.name)
     private readonly rxModel: Model<Prescription>,
     private readonly storage: StorageService,
+    private readonly leases: NumberLeaseService,
   ) { }
 
   async create(
     clinicId: Types.ObjectId,
     dto: CreatePatientDto,
-    opts: { force?: boolean } = {},
+    opts: { force?: boolean; deviceId?: string } = {},
   ): Promise<PatientCreateResult> {
     const fullName = (dto.fullName ?? '').trim();
     if (!fullName) {
@@ -125,7 +128,21 @@ export class PatientsService {
 
     // Mint an MRN and persist a PatientIdentifier row of type=MRN. The MRN is
     // also cached on the patient document for fast list rendering.
-    const mrn = await this.mintMrn(clinicId);
+    //
+    // When the client registered this patient offline it already drew a
+    // number from its lease and told the front desk what it was, so we honour
+    // that sequence instead of minting a new one — otherwise the number on
+    // the paperwork would not match the record. `resolveLeasedNumber` proves
+    // the sequence really was leased to that device before trusting it.
+    const mrn =
+      dto.mrnSeq != null
+        ? await this.leases.resolveLeasedNumber({
+            clinicId,
+            deviceId: opts.deviceId ?? '',
+            counter: LeaseCounter.Mrn,
+            seq: dto.mrnSeq,
+          })
+        : await this.mintMrn(clinicId);
     try {
       await this.identifierModel.create({
         clinicId,

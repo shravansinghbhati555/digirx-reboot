@@ -31,6 +31,7 @@ export class PatientsController {
     const clinicId = req.context!.clinicId;
     return await this.patients.create(clinicId, dto, {
       force: force === 'true' || force === '1',
+      deviceId: req.context!.deviceId,
     });
   }
 
