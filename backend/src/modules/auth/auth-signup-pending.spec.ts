@@ -38,6 +38,9 @@ describe('AuthService.signup', () => {
     const branchModel = { create: jest.fn().mockResolvedValue({ _id: branchId, name: 'Main' }) } as never;
     const sessionModel = { create: sessionCreate } as never;
     const jwt = { signAsync: jest.fn().mockResolvedValue('access-token') } as never;
+    const sendRegistrationEmails = jest
+      .fn()
+      .mockResolvedValue({ applicantNotified: true, teamNotified: true });
 
     const service = new AuthService(
       userModel,
@@ -46,8 +49,9 @@ describe('AuthService.signup', () => {
       branchModel,
       sessionModel,
       jwt,
+      { sendRegistrationEmails } as never,
     );
-    return { service, clinicCreate, clinicUpdateOne, sessionCreate };
+    return { service, clinicCreate, clinicUpdateOne, sessionCreate, sendRegistrationEmails };
   };
 
   const input = {
@@ -99,6 +103,21 @@ describe('AuthService.signup', () => {
           requestedByEmail: 'laura@westside.example',
         }),
       },
+    );
+  });
+
+  it('emails the applicant and the platform inbox about the new registration', async () => {
+    const { service, sendRegistrationEmails } = build();
+
+    await service.signup(input);
+
+    expect(sendRegistrationEmails).toHaveBeenCalledWith(
+      expect.objectContaining({
+        clinicId: clinicId.toHexString(),
+        clinicName: 'Westside Clinic',
+        adminName: 'Dr. Laura Bennett',
+        adminEmail: 'laura@westside.example',
+      }),
     );
   });
 });

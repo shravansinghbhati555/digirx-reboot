@@ -5,6 +5,7 @@ import { Clinic, ClinicStatus } from '../tenancy/schemas/clinic.schema';
 import { Branch } from '../tenancy/schemas/branch.schema';
 import { User } from '../authz/schemas/user.schema';
 import { Session } from '../auth/schemas/session.schema';
+import { ClinicMailService } from '../notifications/clinic-mail.service';
 
 /**
  * Cross-tenant clinic administration for the DigiRx platform team.
@@ -21,11 +22,24 @@ export class PlatformService {
     @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(Session.name) private readonly sessionModel: Model<Session>,
+    private readonly clinicMail: ClinicMailService,
   ) {}
+
+  /**
+   * Matches customer tenants only.
+   *
+   * The DigiRx team's own workspace lives in `clinics` because its admins
+   * need a clinic to belong to, but it is not a customer: showing it in the
+   * queue invites an operator to suspend the workspace they are signed in
+   * through. `$ne: true` rather than `false` so the rows written before this
+   * flag existed still match.
+   */
+  private static readonly CUSTOMER_CLINICS = { isPlatformClinic: { $ne: true } };
 
   /** Counts for the queue's tab badges. */
   async summary() {
     const rows = await this.clinicModel.aggregate<{ _id: string | null; count: number }>([
+      { $match: PlatformService.CUSTOMER_CLINICS },
       { $group: { _id: '$status', count: { $sum: 1 } } },
     ]);
 
@@ -47,7 +61,7 @@ export class PlatformService {
 
   async list(input: { status?: string; query?: string; limit?: number }) {
     const limit = Math.min(Math.max(input.limit ?? 50, 1), 200);
-    const filter: Record<string, unknown> = {};
+    const filter: Record<string, unknown> = { ...PlatformService.CUSTOMER_CLINICS };
 
     if (input.status && input.status !== 'ALL') {
       const status = this.parseStatus(input.status);
@@ -102,9 +116,32 @@ export class PlatformService {
     };
   }
 
-  /** Approve a pending clinic so its staff can sign in. */
+  /**
+   * Approve a pending clinic so its staff can sign in, and tell them.
+   *
+   * The prior status is read first so an admin clicking Approve twice — or
+   * approving an already-active clinic from the ALL tab — doesn't send the
+   * "you're live" mail again. The mail is best-effort: `ClinicMailService`
+   * swallows its own failures, so approval never depends on the mailer.
+   */
   async approve(clinicId: string, actorUserId: Types.ObjectId) {
-    return this.setStatus(clinicId, ClinicStatus.Active, actorUserId);
+    const { result, before } = await this.setStatus(
+      clinicId,
+      ClinicStatus.Active,
+      actorUserId,
+    );
+
+    const wasActive = (before.status ?? ClinicStatus.Active) === ClinicStatus.Active;
+    if (!wasActive) {
+      await this.clinicMail.sendClinicActivatedEmail({
+        clinicId: result.clinicId,
+        clinicName: result.name,
+        adminName: before.requestedByName ?? undefined,
+        adminEmail: before.requestedByEmail ?? undefined,
+      });
+    }
+
+    return result;
   }
 
   /**
@@ -112,18 +149,36 @@ export class PlatformService {
    * that was active and is now rejected must not keep a live tab working.
    */
   async reject(clinicId: string, actorUserId: Types.ObjectId, reason?: string) {
-    const out = await this.setStatus(clinicId, ClinicStatus.Rejected, actorUserId, reason);
-    await this.revokeSessions(out._id);
-    return out;
+    const { result } = await this.setStatus(
+      clinicId,
+      ClinicStatus.Rejected,
+      actorUserId,
+      reason,
+    );
+    await this.revokeSessions(result._id);
+    return result;
   }
 
   /** Cut off an active clinic without deleting anything. */
   async suspend(clinicId: string, actorUserId: Types.ObjectId, reason?: string) {
-    const out = await this.setStatus(clinicId, ClinicStatus.Suspended, actorUserId, reason);
-    await this.revokeSessions(out._id);
-    return out;
+    const { result } = await this.setStatus(
+      clinicId,
+      ClinicStatus.Suspended,
+      actorUserId,
+      reason,
+    );
+    await this.revokeSessions(result._id);
+    return result;
   }
 
+  /**
+   * The one place a clinic's status changes.
+   *
+   * Reads the row first for two reasons: to refuse the platform's own
+   * workspace, and to hand callers the previous status so `approve` can tell
+   * a real activation from a repeat click. `result` is what the API returns;
+   * `before` never leaves the service.
+   */
   private async setStatus(
     clinicId: string,
     status: ClinicStatus,
@@ -132,6 +187,26 @@ export class PlatformService {
   ) {
     if (!Types.ObjectId.isValid(clinicId)) {
       throw new BadRequestException('Invalid clinic id');
+    }
+
+    const before = await this.clinicModel
+      .findById(new Types.ObjectId(clinicId))
+      .select({
+        status: 1,
+        isPlatformClinic: 1,
+        requestedByName: 1,
+        requestedByEmail: 1,
+      })
+      .lean();
+
+    if (!before) throw new NotFoundException('Clinic not found');
+    if (before.isPlatformClinic) {
+      // Hidden from the queue, so this is either a stale tab or a crafted
+      // request. Either way it must not go through: suspending the platform
+      // workspace locks its own admins out of the console.
+      throw new BadRequestException(
+        'The DigiRx platform workspace is not a customer clinic — its status cannot be changed.',
+      );
     }
 
     const clinic = await this.clinicModel.findByIdAndUpdate(
@@ -152,12 +227,15 @@ export class PlatformService {
     if (!clinic) throw new NotFoundException('Clinic not found');
 
     return {
-      _id: clinic._id,
-      clinicId: clinic._id.toHexString(),
-      name: clinic.name,
-      status: clinic.status,
-      statusReason: clinic.statusReason ?? null,
-      statusChangedAt: clinic.statusChangedAt ?? null,
+      result: {
+        _id: clinic._id,
+        clinicId: clinic._id.toHexString(),
+        name: clinic.name,
+        status: clinic.status,
+        statusReason: clinic.statusReason ?? null,
+        statusChangedAt: clinic.statusChangedAt ?? null,
+      },
+      before,
     };
   }
 

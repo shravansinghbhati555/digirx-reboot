@@ -43,6 +43,15 @@ export class Clinic {
   @Prop({ enum: ClinicStatus, default: ClinicStatus.Active, index: true })
   status?: ClinicStatus;
 
+  // Marks the DigiRx team's own workspace rather than a customer tenant. It
+  // lives in this collection because the platform admins need a clinic to
+  // belong to, but it is not a clinic: the approval queue hides it, and its
+  // status cannot be changed through the API. Without that, an operator can
+  // suspend the workspace they are signed in through and lock themselves out
+  // of the console they would need to undo it.
+  @Prop({ type: Boolean, default: false, index: true })
+  isPlatformClinic?: boolean;
+
   // Who signed the clinic up. Kept so the approval queue can show the
   // requesting admin without a second lookup path.
   @Prop({ type: Types.ObjectId })
