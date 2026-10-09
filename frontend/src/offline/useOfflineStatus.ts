@@ -18,6 +18,7 @@
 import { useEffect, useState } from 'react';
 import { CONNECTIVITY_CHANGED_EVENT, isOnline } from './connectivity';
 import { counts, type QueueCounts } from './queue';
+import { storageHealth, type StorageHealth } from './db';
 import { REPLAY_PROGRESS_EVENT } from './replay';
 import { readOfflineSession } from './session-store';
 import type { OfflineSession } from './session';
@@ -36,12 +37,21 @@ export type OfflineStatus = {
    *  server. Almost always a wrong API URL, a CORS allowlist gap, or a
    *  backend that is not running. */
   likelyMisconfigured: boolean;
+  storage: StorageHealth;
+  /**
+   * Work is queued on storage the browser has not promised to keep. The
+   * queue is the only copy of that work, so this is worth saying out loud
+   * rather than discovering after an eviction.
+   */
+  durabilityAtRisk: boolean;
 };
 
 const EMPTY_COUNTS: QueueCounts = { pending: 0, failed: 0, done: 0, total: 0 };
+const EMPTY_STORAGE: StorageHealth = { persistent: false, nearlyFull: false };
 
 export function useOfflineStatus(clinicId?: string): OfflineStatus {
   const [queue, setQueue] = useState<QueueCounts>(EMPTY_COUNTS);
+  const [storage, setStorage] = useState<StorageHealth>(EMPTY_STORAGE);
   const [session, setSession] = useState<OfflineSession>(() => readOfflineSession());
   const [online, setOnline] = useState<boolean>(() => isOnline());
   const [browserOnline, setBrowserOnline] = useState<boolean>(
@@ -57,6 +67,11 @@ export function useOfflineStatus(clinicId?: string): OfflineStatus {
       setSession(readOfflineSession());
       // The queue lives in IndexedDB, so this is async; ignore a late
       // resolution after unmount.
+      void storageHealth()
+        .then((h) => {
+          if (!cancelled) setStorage(h);
+        })
+        .catch(() => undefined);
       void counts(clinicId)
         .then((c) => {
           if (!cancelled) setQueue(c);
@@ -92,6 +107,9 @@ export function useOfflineStatus(clinicId?: string): OfflineStatus {
     queue,
     lastContactAt: session.verifiedAt,
     likelyMisconfigured: !online && browserOnline && session.verifiedAt == null,
+    storage,
+    durabilityAtRisk:
+      queue.pending > 0 && (!storage.persistent || storage.nearlyFull),
   };
 }
 

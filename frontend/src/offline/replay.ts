@@ -158,10 +158,47 @@ async function send(
 
 let draining = false;
 
+/** Name of the cross-tab lock. Scoped per clinic so two clinics on one
+ *  machine do not block each other. */
+const LOCK_NAME = (clinicId: string) => `digirx.replay.${clinicId}`;
+
+/**
+ * Run `fn` holding the cross-tab replay lock, or skip it entirely if another
+ * tab already holds it.
+ *
+ * The in-process `draining` flag only guards *this* tab. Two open tabs each
+ * had their own copy, so both drained the same queue at once: every entry
+ * sent twice, with nothing but the server's idempotency to stop it becoming
+ * duplicate records. That is relying on luck rather than design.
+ *
+ * `ifAvailable` means the second tab gives up immediately instead of queuing
+ * behind the first — it has nothing useful to do, and the tab holding the
+ * lock is already draining the same entries.
+ *
+ * Falls back to the in-process flag where Web Locks is unavailable (Safari
+ * before 15.4, non-secure contexts), which is no worse than before.
+ */
+async function withReplayLock<T>(
+  clinicId: string,
+  fn: () => Promise<T>,
+  skipped: T,
+): Promise<T> {
+  const locks = typeof navigator !== 'undefined' ? navigator.locks : undefined;
+  if (!locks?.request) return await fn();
+
+  let result = skipped;
+  await locks.request(LOCK_NAME(clinicId), { ifAvailable: true }, async (lock) => {
+    // A null lock means another tab holds it; leave the work to them.
+    if (!lock) return;
+    result = await fn();
+  });
+  return result;
+}
+
 /**
  * Drain the queue. Safe to call often — concurrent calls collapse into the
- * one already running, so a reconnect event and a timer tick cannot
- * double-send.
+ * one already running, in this tab and across tabs, so a reconnect event and
+ * a timer tick cannot double-send.
  */
 export async function replayQueue(ctx: DevContext): Promise<ReplayOutcome> {
   const outcome: ReplayOutcome = {
@@ -176,6 +213,15 @@ export async function replayQueue(ctx: DevContext): Promise<ReplayOutcome> {
     return outcome;
   }
 
+  return await withReplayLock(
+    ctx.clinicId,
+    () => drain(ctx, outcome),
+    outcome,
+  );
+}
+
+/** The drain itself. Only ever called while holding the replay lock. */
+async function drain(ctx: DevContext, outcome: ReplayOutcome): Promise<ReplayOutcome> {
   draining = true;
   try {
     await recoverInflight();

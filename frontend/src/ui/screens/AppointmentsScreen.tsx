@@ -1262,6 +1262,8 @@ function TriageModal({
           {},
           {
             label: `Check-in — ${patientName || 'patient'}`,
+            // An action, not a create — the endpoint takes no body.
+            mintId: false,
             // The status change is computed server-side, so queueing alone
             // would leave the cached appointment reading BOOKED and the
             // "Start consultation" action hidden — the flow would dead-end
@@ -1303,6 +1305,12 @@ function TriageModal({
             label: `Consultation — ${patientName || 'patient'}`,
             // Server default; the chart gates on it.
             localRecord: { status: 'DRAFT' },
+            // Starting a consultation moves the appointment on.
+            optimistic: {
+              collection: 'appointments',
+              id: appt._id,
+              patch: { status: 'IN_PROGRESS' },
+            },
           },
         );
         encId = newEnc._id;

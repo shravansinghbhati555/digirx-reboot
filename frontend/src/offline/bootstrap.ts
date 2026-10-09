@@ -9,6 +9,7 @@
  */
 import { subscribeConnectivity, isOnline } from './connectivity';
 import { recoverInflight } from './queue';
+import { requestPersistentStorage } from './db';
 import { replayQueue } from './replay';
 import { prefetchSlots, syncWorkingSet } from './working-set';
 import { ensureAllLeases, reportLeaseUsage } from './leases';
@@ -78,6 +79,9 @@ export function startOfflineSync(
 
   if (!started) {
     started = true;
+    // Ask the browser not to evict us. The queue is the only copy of work
+    // done offline, so "best effort" storage is not good enough for it.
+    void requestPersistentStorage();
     // An entry left `inflight` means a tab died mid-request. Re-sending is
     // safe because replay treats CLIENT_ID_EXISTS as success.
     void recoverInflight();

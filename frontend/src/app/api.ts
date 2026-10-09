@@ -93,6 +93,10 @@ export async function apiDelete<T>(ctx: DevContext, path: string): Promise<T> {
   return await apiFetch<T>(ctx, path, { method: 'DELETE' });
 }
 
+function toArray<T>(v: T | T[] | undefined): T[] {
+  return v === undefined ? [] : Array.isArray(v) ? v : [v];
+}
+
 export type QueuedResult<T> = {
   data: T;
   /** True when the server was unreachable and this is waiting in the queue. */
@@ -134,7 +138,15 @@ export async function apiPostQueued<T>(
      * `BOOKED`, and the UI refuses to offer the next step in the flow even
      * though the work was saved.
      */
-    optimistic?: { collection: string; id: string; patch: Record<string, unknown> };
+    /**
+     * Local effects to apply when the write is queued. An array because one
+     * action can change more than one record: signing an encounter also moves
+     * its appointment to DONE, and missing that left completed patients
+     * sitting in the waiting list.
+     */
+    optimistic?:
+      | { collection: string; id: string; patch: Record<string, unknown> }
+      | Array<{ collection: string; id: string; patch: Record<string, unknown> }>;
     /**
      * Fields the **server** would have filled in on create, merged into the
      * local record but never sent.
@@ -149,9 +161,23 @@ export async function apiPostQueued<T>(
      * 400 on replay.
      */
     localRecord?: Record<string, unknown>;
+    /**
+     * Whether to mint a client-side `_id` into the body. Default true.
+     *
+     * Set false for **action** endpoints — check-in, sign, issue, payments —
+     * which do not create a document of their own. Sending `_id` to those is
+     * at best a wasted id, and at worst fatal: the global ValidationPipe runs
+     * with `forbidNonWhitelisted`, so any DTO that does not declare `_id`
+     * rejects the whole request with a 400. That is a permanent failure, and
+     * a permanent failure halts the entire queue.
+     */
+    mintId?: boolean;
   } = {},
 ): Promise<QueuedResult<T>> {
-  const withId = { ...body, _id: (body._id as string) ?? newObjectId() };
+  const withId =
+    opts.mintId === false
+      ? { ...body }
+      : { ...body, _id: (body._id as string) ?? newObjectId() };
   try {
     const data = await apiPost<T>(ctx, path, withId);
     return { data, queued: false };
@@ -164,7 +190,7 @@ export async function apiPostQueued<T>(
       method: 'POST',
       path,
       body: withId,
-      clientId: withId._id as string,
+      clientId: withId._id as string | undefined,
       label: opts.label,
     });
     // Make it readable immediately — a patient registered offline has to show
@@ -175,14 +201,9 @@ export async function apiPostQueued<T>(
     const match = matchCacheable(path);
     if (match) void cacheResponse(ctx.clinicId, match, [localDoc]);
 
-    // Apply the action's local effect so the flow can continue offline.
-    if (opts.optimistic) {
-      await patchCachedRecord(
-        ctx.clinicId,
-        opts.optimistic.collection,
-        opts.optimistic.id,
-        opts.optimistic.patch,
-      );
+    // Apply the action's local effects so the flow can continue offline.
+    for (const effect of toArray(opts.optimistic)) {
+      await patchCachedRecord(ctx.clinicId, effect.collection, effect.id, effect.patch);
     }
     return { data: localDoc as T, queued: true };
   }

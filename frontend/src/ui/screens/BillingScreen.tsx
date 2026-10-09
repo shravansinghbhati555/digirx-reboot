@@ -503,6 +503,9 @@ function BillDetail({
         {},
         {
           label: `Issue bill — ${bill.billNo ?? bill._id.slice(-6)}`,
+          // IssueBillDto declares only `billSeq`; an `_id` would be rejected
+          // by forbidNonWhitelisted and permanently block the queue.
+          mintId: false,
           enrichOnQueue: async () => {
             const drawn = await drawNumber(ctx.clinicId, 'BILL');
             if (!drawn.ok) return {};
@@ -921,7 +924,12 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
         {
           method, amount: backendAmount, providerRef: reference.trim() || undefined, idempotencyKey,
         },
-        { label: `Payment — ${formatMoney(backendAmount, bill.currency)}` },
+        {
+          label: `Payment — ${formatMoney(backendAmount, bill.currency)}`,
+          // CreatePaymentDto does not accept `_id` — replay already keys on
+          // idempotencyKey, which is the correct mechanism here.
+          mintId: false,
+        },
       );
       toast(
         payQueued
@@ -1193,6 +1201,7 @@ function CreateBillSheet({
         {},
         {
           label: 'Issue bill',
+          mintId: false,
           enrichOnQueue: async () => {
             const drawn = await drawNumber(ctx.clinicId, 'BILL');
             if (!drawn.ok) return {};

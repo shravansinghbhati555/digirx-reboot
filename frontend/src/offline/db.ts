@@ -207,3 +207,56 @@ export async function isStorageAvailable(): Promise<boolean> {
     return false;
   }
 }
+
+// ------------------------------------------------------------- durability
+
+/**
+ * Ask the browser to make this origin's storage persistent.
+ *
+ * By default IndexedDB is "best effort": under storage pressure the browser
+ * may evict the whole origin without warning. That is survivable for the
+ * record cache, which is re-fetchable — but the write queue is the **only**
+ * copy of work done offline. Losing it loses a morning of consultations.
+ *
+ * Chrome grants this silently to installed PWAs and engaged sites; Firefox
+ * prompts; Safari ignores it. There is no way to force it, so the answer is
+ * also reported so the UI can warn when durability was refused.
+ */
+export async function requestPersistentStorage(): Promise<boolean> {
+  try {
+    if (typeof navigator === 'undefined' || !navigator.storage?.persist) return false;
+    if (await navigator.storage.persisted?.()) return true;
+    return await navigator.storage.persist();
+  } catch {
+    return false;
+  }
+}
+
+export type StorageHealth = {
+  /** The browser has promised not to evict this origin. */
+  persistent: boolean;
+  usageBytes?: number;
+  quotaBytes?: number;
+  /** Fraction of quota used, 0–1, when the browser reports it. */
+  usedFraction?: number;
+  /** Close enough to the quota that writes could start failing. */
+  nearlyFull: boolean;
+};
+
+export async function storageHealth(): Promise<StorageHealth> {
+  const out: StorageHealth = { persistent: false, nearlyFull: false };
+  try {
+    if (typeof navigator === 'undefined' || !navigator.storage) return out;
+    out.persistent = (await navigator.storage.persisted?.()) ?? false;
+    const est = await navigator.storage.estimate?.();
+    if (est?.usage != null && est?.quota) {
+      out.usageBytes = est.usage;
+      out.quotaBytes = est.quota;
+      out.usedFraction = est.usage / est.quota;
+      out.nearlyFull = out.usedFraction > 0.9;
+    }
+  } catch {
+    // Reporting is best-effort; never let it break startup.
+  }
+  return out;
+}

@@ -17,6 +17,9 @@ type Encounter = {
   doctorId: string;
   branchId: string;
   status: 'DRAFT' | 'SIGNED';
+  /** Set when the consultation came from a booked appointment. Populated by
+   *  some endpoints, a raw id by others. */
+  appointmentId?: string | { _id?: string };
   chiefComplaint?: string;
   notes?: string;
   diagnosis?: string;
@@ -262,7 +265,15 @@ export function EncounterScreen() {
             patientId: typeof appt.patientId === 'object' ? appt.patientId._id : appt.patientId,
             appointmentId: selectedAppointmentId,
             visitedAt: new Date().toISOString(),
-          }, { label: 'Consultation', localRecord: { status: 'DRAFT' } })).data;
+          }, {
+            label: 'Consultation',
+            localRecord: { status: 'DRAFT' },
+            // Mirrors EncountersService.create: a CHECKED_IN appointment
+            // becomes IN_PROGRESS when its consultation starts.
+            optimistic: selectedAppointmentId
+              ? { collection: 'appointments', id: selectedAppointmentId, patch: { status: 'IN_PROGRESS' } }
+              : undefined,
+          })).data;
           if (cancelled) return;
           setEncounter(created);
           setEncounterId(created._id);
@@ -434,7 +445,15 @@ export function EncounterScreen() {
         patientId: patientId.trim(),
         appointmentId: selectedAppointmentId || undefined,
         visitedAt: new Date().toISOString(),
-      }, { label: 'Consultation', localRecord: { status: 'DRAFT' } })).data;
+      }, {
+            label: 'Consultation',
+            localRecord: { status: 'DRAFT' },
+            // Mirrors EncountersService.create: a CHECKED_IN appointment
+            // becomes IN_PROGRESS when its consultation starts.
+            optimistic: selectedAppointmentId
+              ? { collection: 'appointments', id: selectedAppointmentId, patch: { status: 'IN_PROGRESS' } }
+              : undefined,
+          })).data;
       setEncounter(created);
       setEncounterId(created._id);
       const pid = typeof created.patientId === 'object' ? created.patientId._id : created.patientId;
@@ -954,13 +973,31 @@ function EncounterEditor({
         {},
         {
           label: `Sign — ${patient?.fullName ?? 'patient'}`,
+          // An action, not a create.
+          mintId: false,
           // Signing flips status server-side, so offline we apply the same
           // effect locally or the chart stays stuck on "draft".
-          optimistic: {
-            collection: 'encounters',
-            id: encounter._id,
-            patch: { status: 'SIGNED', signedAt: new Date().toISOString() },
-          },
+          // Signing moves the encounter to SIGNED **and** its appointment to
+          // DONE (EncountersService.sign). Patch both, or a completed patient
+          // stays in the waiting list until the queue drains.
+          optimistic: [
+            {
+              collection: 'encounters',
+              id: encounter._id,
+              patch: { status: 'SIGNED', signedAt: new Date().toISOString() },
+            },
+            ...(encounter.appointmentId
+              ? [{
+                  collection: 'appointments',
+                  id: String(
+                    typeof encounter.appointmentId === 'string'
+                      ? encounter.appointmentId
+                      : (encounter.appointmentId as { _id?: string })?._id ?? '',
+                  ),
+                  patch: { status: 'DONE' },
+                }]
+              : []),
+          ],
         },
       );
       onChanged(

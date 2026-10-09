@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { SyncIssuesModal } from './SyncIssuesModal';
 import { useApp } from '../../app/AppContext';
 import { describeAge, useOfflineStatus } from '../../offline/useOfflineStatus';
 
@@ -19,13 +20,15 @@ export function OfflineBanner() {
   const { ctx, loggedIn } = useApp();
   const status = useOfflineStatus(ctx.clinicId);
   const [expanded, setExpanded] = useState(false);
+  const [showIssues, setShowIssues] = useState(false);
 
   if (!loggedIn) return null;
 
-  const { online, browserOnline, session, queue, likelyMisconfigured } = status;
+  const { online, browserOnline, session, queue, likelyMisconfigured, storage, durabilityAtRisk } = status;
   const expiringSoon = session.status === 'expiring' || session.status === 'expired';
 
-  const worthShowing = !online || queue.pending > 0 || queue.failed > 0 || expiringSoon;
+  const worthShowing =
+    !online || queue.pending > 0 || queue.failed > 0 || expiringSoon || durabilityAtRisk;
   if (!worthShowing) return null;
 
   // Most severe condition wins the colour.
@@ -71,6 +74,23 @@ export function OfflineBanner() {
           }}
         />
         <span style={{ fontWeight: 600 }}>{headline}</span>
+        {(queue.pending > 0 || queue.failed > 0) && (
+          <button
+            onClick={() => setShowIssues(true)}
+            style={{
+              background: 'none',
+              border: '1px solid currentColor',
+              borderRadius: 7,
+              cursor: 'pointer',
+              color: 'inherit',
+              fontSize: 11,
+              fontWeight: 600,
+              padding: '2px 8px',
+            }}
+          >
+            {queue.failed > 0 ? 'Fix' : 'View'}
+          </button>
+        )}
         <button
           onClick={() => setExpanded((v) => !v)}
           style={{
@@ -108,6 +128,14 @@ export function OfflineBanner() {
           <dt>Waiting to sync</dt>
           <dd style={{ margin: 0 }}>{queue.pending}</dd>
 
+          <dt>Local storage</dt>
+          <dd style={{ margin: 0 }}>
+            {storage.persistent ? 'protected' : 'not protected'}
+            {storage.usedFraction != null
+              ? ` · ${Math.round(storage.usedFraction * 100)}% used`
+              : ''}
+          </dd>
+
           {queue.failed > 0 && (
             <>
               <dt>Failed</dt>
@@ -126,6 +154,17 @@ export function OfflineBanner() {
             </>
           )}
 
+          {durabilityAtRisk && (
+            <>
+              <dt>Warning</dt>
+              <dd style={{ margin: 0 }}>
+                {storage.nearlyFull
+                  ? 'This device is nearly out of storage. Reconnect and sync soon — new work may fail to save.'
+                  : 'The browser has not guaranteed this device’s storage, so unsynced work could be cleared if space runs low. Reconnect and sync when you can.'}
+              </dd>
+            </>
+          )}
+
           {likelyMisconfigured && (
             <>
               <dt>Note</dt>
@@ -139,6 +178,7 @@ export function OfflineBanner() {
           )}
         </dl>
       )}
+      {showIssues && <SyncIssuesModal onClose={() => setShowIssues(false)} />}
     </div>
   );
 }
