@@ -292,3 +292,80 @@ describe('numberTemplate', () => {
     expect(lease.numberTemplate).not.toContain('{fiscalYear}');
   });
 });
+
+describe('validUntil (C7)', () => {
+  const at = (iso: string) => new Date(iso);
+
+  function withFormat(billNoFormat: string, fiscalYearStartMonth = 4) {
+    return makeService({
+      clinicModel: {
+        findById: jest.fn().mockResolvedValue({
+          timezone: 'Asia/Kolkata',
+          settings: { billing: { billNoFormat, fiscalYearStartMonth } },
+        }),
+      },
+    });
+  }
+
+  it('ends a BILL block at the next fiscal-year start', async () => {
+    const { service } = withFormat('INV-{fiscalYear}-{seq:06}');
+    const v = await (service as any).validUntilFor(
+      { clinicId, counter: LeaseCounter.Bill, fiscalYear: '2026-27' },
+      'INV-{fiscalYear}-{seq:06}',
+      at('2026-10-12T06:00:00Z'),
+    );
+    // 1 April 2027 00:00 in Asia/Kolkata.
+    expect(v.toISOString()).toBe('2027-03-31T18:30:00.000Z');
+  });
+
+  it('ends at the calendar year when the format prints a year and that comes first', async () => {
+    const { service } = withFormat('INV-{YYYY}-{seq:06}');
+    const v = await (service as any).validUntilFor(
+      { clinicId, counter: LeaseCounter.Bill, fiscalYear: '2026-27' },
+      'INV-{YYYY}-{seq:06}',
+      at('2026-12-30T06:00:00Z'),
+    );
+    expect(v.toISOString()).toBe('2026-12-31T18:30:00.000Z');
+  });
+
+  it('is undefined for a format with no date-bound token', async () => {
+    const { service } = makeService();
+    const v = await (service as any).validUntilFor(
+      { clinicId, counter: LeaseCounter.Prescription },
+      'RX-{seq:06}',
+      at('2026-12-30T06:00:00Z'),
+    );
+    expect(v).toBeUndefined();
+  });
+
+  it('renders a replayed number with the year it was leased in, not the replay year', async () => {
+    const leaseModel: any = {
+      findOne: jest.fn().mockResolvedValue({
+        clinicId,
+        branchId,
+        deviceId: DEVICE,
+        counter: LeaseCounter.Bill,
+        fiscalYear: '2026-27',
+        blockStart: 401,
+        blockEnd: 500,
+        createdAt: at('2026-12-30T06:00:00Z'),
+      }),
+    };
+    const { service } = makeService({
+      leaseModel,
+      clinicModel: {
+        findById: jest.fn().mockResolvedValue({
+          timezone: 'Asia/Kolkata',
+          settings: { billing: { billNoFormat: 'INV-{YYYY}-{seq:06}' } },
+        }),
+      },
+    });
+    const no = await service.resolveLeasedNumber({
+      clinicId,
+      deviceId: DEVICE,
+      counter: LeaseCounter.Bill,
+      seq: 405,
+    });
+    expect(no).toBe('INV-2026-000405');
+  });
+});

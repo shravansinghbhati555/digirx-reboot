@@ -33,6 +33,7 @@ import { PrescriptionsModule } from './modules/prescriptions/prescriptions.modul
 import { MedicinesModule } from './modules/medicines/medicines.module';
 import { BillingModule } from './modules/billing/billing.module';
 import { CreditNotesModule } from './modules/credit-notes/credit-notes.module';
+import { CashDaysModule } from './modules/cash-days/cash-days.module';
 import { InventoryModule } from './modules/inventory/inventory.module';
 import { AnalyticsModule } from './modules/analytics/analytics.module';
 import { NotificationsModule } from './modules/notifications/notifications.module';
@@ -65,6 +66,8 @@ import { FxModule } from './modules/fx/fx.module';
             'req.headers["x-user-id"]',
             'req.body.password',
             'req.body.newPassword',
+            // A tablet's unlock code opens its encrypted offline cache.
+            'req.body.recoveryCode',
           ],
           remove: true,
         },
@@ -102,6 +105,7 @@ import { FxModule } from './modules/fx/fx.module';
     MedicinesModule,
     BillingModule,
     CreditNotesModule,
+    CashDaysModule,
     InventoryModule,
     AnalyticsModule,
     PdfModule,

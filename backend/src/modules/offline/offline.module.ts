@@ -13,6 +13,9 @@ import {
 import { BillCounter, BillCounterSchema } from '../billing/schemas/bill-counter.schema';
 import { Clinic, ClinicSchema } from '../tenancy/schemas/clinic.schema';
 import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
+import { OfflineDevice, OfflineDeviceSchema } from './schemas/offline-device.schema';
+import { OfflineDeviceController } from './offline-device.controller';
+import { OfflineDeviceService } from './offline-device.service';
 
 /**
  * Everything the offline-first work owns. See README.md in this folder for
@@ -24,6 +27,7 @@ import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
  *   A4 ✓ device identity (`x-device-id` → RequestContext → AuditLog)
  *   C1 ✓ number leases — schema, allocation service, endpoints
  *   C3   `issueBill` accepting a pre-minted leased number
+ *   P6 ✓ device registry holding each tablet's unlock code
  *   —    sync/outbox endpoints from Phase 3 onward
  *
  * The counter models are imported read-write because issuing a lease has to
@@ -39,11 +43,13 @@ import { Branch, BranchSchema } from '../tenancy/schemas/branch.schema';
       { name: BillCounter.name, schema: BillCounterSchema },
       { name: Clinic.name, schema: ClinicSchema },
       { name: Branch.name, schema: BranchSchema },
+      { name: OfflineDevice.name, schema: OfflineDeviceSchema },
     ]),
   ],
-  controllers: [NumberLeaseController],
+  controllers: [NumberLeaseController, OfflineDeviceController],
   providers: [
     NumberLeaseService,
+    OfflineDeviceService,
     {
       provide: APP_FILTER,
       useClass: ClientIdConflictFilter,

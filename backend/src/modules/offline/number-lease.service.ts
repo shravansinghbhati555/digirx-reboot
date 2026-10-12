@@ -35,7 +35,7 @@ const MAX_BLOCK_SIZE = 500;
  * holding numbers. Kept in step with `VITE_OFFLINE_GRACE_HOURS` on the client
  * — if that grows, this should too.
  */
-const LEASE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+const LEASE_TTL_MS = 14 * 24 * 60 * 60 * 1000;
 
 export type LeaseView = {
   id: string;
@@ -58,6 +58,15 @@ export type LeaseView = {
    * derived here, once, by the same helpers the online path uses.
    */
   numberTemplate: string;
+  /**
+   * Instant after which `numberTemplate` no longer describes a number the
+   * server would mint — the next calendar year when the format carries
+   * `{YYYY}`/`{YY}`, the next fiscal year for a BILL block. The client stops
+   * drawing from the block at this point (the record is saved with a pending
+   * number instead), so a printed slip never disagrees with the synced record.
+   * Undefined when the template has no date-bound token.
+   */
+  validUntil?: Date;
 };
 
 @Injectable()
@@ -249,12 +258,17 @@ export class NumberLeaseService {
       );
     }
     const format = await this.formatFor(clinicId, counter);
+    // Date tokens resolve against when the block was leased, not when the
+    // record replays — a bill issued offline on 30 Dec and synced on 2 Jan
+    // must keep the year printed on its receipt. The client stops drawing at
+    // `validUntil`, so lease time and draw time always share a year.
     const template = await this.buildTemplate(
       clinicId,
       lease.branchId,
       counter,
       lease.fiscalYear,
       format,
+      leasedAt(lease),
     );
     return template.replace(/\{seq(?::(\d+))?\}/g, (_m, w?: string) =>
       String(seq).padStart(w ? Number(w) : 1, '0'),
@@ -335,20 +349,24 @@ export class NumberLeaseService {
   /** Build the client-facing view, resolving format and template together. */
   private async viewOf(lease: NumberLease & { _id?: unknown }): Promise<LeaseView> {
     const format = await this.formatFor(lease.clinicId, lease.counter);
+    const at = leasedAt(lease);
     const template = await this.buildTemplate(
       lease.clinicId,
       lease.branchId,
       lease.counter,
       lease.fiscalYear,
       format,
+      at,
     );
-    return this.toView(lease, format, template);
+    const validUntil = await this.validUntilFor(lease, format, at);
+    return this.toView(lease, format, template, validUntil);
   }
 
   private toView(
     lease: NumberLease & { _id?: unknown },
     format: string,
     numberTemplate?: string,
+    validUntil?: Date,
   ): LeaseView {
     return {
       id: String((lease as { _id: unknown })._id),
@@ -362,7 +380,46 @@ export class NumberLeaseService {
       expiresAt: lease.expiresAt,
       format,
       numberTemplate: numberTemplate ?? format,
+      ...(validUntil ? { validUntil } : {}),
     };
+  }
+
+  /**
+   * The first instant at which the block's resolved template goes stale:
+   * the next year boundary when the format prints a year, and the next
+   * fiscal-year start for a BILL block (whose counter is FY-scoped). Ticket
+   * C7 — the client refuses to draw past this rather than pre-leasing the
+   * next year.
+   */
+  private async validUntilFor(
+    lease: Pick<NumberLease, 'clinicId' | 'counter' | 'fiscalYear'>,
+    format: string,
+    at: Date,
+  ): Promise<Date | undefined> {
+    const clinic = await this.clinicModel.findById(lease.clinicId);
+    const tz = clinic?.timezone || 'UTC';
+    const local = DateTime.fromJSDate(at, { zone: 'utc' }).setZone(tz);
+    const bounds: Date[] = [];
+
+    if (/\{YYYY\}|\{YY\}/.test(format)) {
+      // MRN years are UTC (see buildTemplate); everything else is clinic-local.
+      bounds.push(
+        lease.counter === LeaseCounter.Mrn
+          ? new Date(Date.UTC(at.getUTCFullYear() + 1, 0, 1))
+          : DateTime.fromObject({ year: local.year + 1, month: 1, day: 1 }, { zone: tz }).toJSDate(),
+      );
+    }
+
+    if (lease.counter === LeaseCounter.Bill && lease.fiscalYear) {
+      const startMonth = mergeClinicSettings(clinic?.settings).billing.fiscalYearStartMonth;
+      const fyStartYear = local.month >= startMonth ? local.year : local.year - 1;
+      bounds.push(
+        DateTime.fromObject({ year: fyStartYear + 1, month: startMonth, day: 1 }, { zone: tz }).toJSDate(),
+      );
+    }
+
+    if (!bounds.length) return undefined;
+    return new Date(Math.min(...bounds.map((d) => d.getTime())));
   }
 
   /**
@@ -376,10 +433,11 @@ export class NumberLeaseService {
     counter: LeaseCounter,
     fiscalYear: string | undefined,
     format: string,
+    at: Date,
   ): Promise<string> {
     const clinic = await this.clinicModel.findById(clinicId);
     const tz = clinic?.timezone || 'UTC';
-    const local = DateTime.fromJSDate(new Date(), { zone: 'utc' }).setZone(tz);
+    const local = DateTime.fromJSDate(at, { zone: 'utc' }).setZone(tz);
     const clinicCode = clinicId.toHexString().slice(0, 4).toUpperCase();
 
     let branchCode = '';
@@ -390,12 +448,22 @@ export class NumberLeaseService {
 
     return format
       .replace(/\{fiscalYear\}/g, fiscalYear ?? '')
-      .replace(/\{YYYY\}/g, String(counter === LeaseCounter.Mrn ? new Date().getUTCFullYear() : local.year))
+      .replace(/\{YYYY\}/g, String(counter === LeaseCounter.Mrn ? at.getUTCFullYear() : local.year))
       .replace(
         /\{YY\}/g,
-        String((counter === LeaseCounter.Mrn ? new Date().getUTCFullYear() : local.year) % 100).padStart(2, '0'),
+        String((counter === LeaseCounter.Mrn ? at.getUTCFullYear() : local.year) % 100).padStart(2, '0'),
       )
       .replace(/\{branchCode\}/g, branchCode)
       .replace(/\{clinicCode\}/g, clinicCode);
   }
+}
+
+/**
+ * When a block was leased. `createdAt` comes from `timestamps: true`; a
+ * just-created document that has not round-tripped yet falls back to now.
+ */
+function leasedAt(lease: object): Date {
+  const created = (lease as { createdAt?: Date | string }).createdAt;
+  const d = created ? new Date(created) : new Date();
+  return Number.isNaN(d.getTime()) ? new Date() : d;
 }

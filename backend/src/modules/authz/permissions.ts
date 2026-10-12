@@ -85,4 +85,14 @@ export enum Permission {
   // time gesture; some clinics will want one without the other.
   FaceEnroll = 'face:enroll',
   FaceRecognize = 'face:recognize',
+
+  // Offline devices. Viewing a tablet's unlock code is what lets an admin
+  // talk a doctor through a forgotten PIN during an outage, and it opens
+  // that tablet's encrypted cache — so it is its own grant, not clinic:write.
+  DeviceManage = 'device:manage',
+
+  // Day-end cash. Counting the drawer rides on billing:write (whoever takes
+  // the cash counts it); signing a day off — and accepting a mismatch — is a
+  // separate grant held by the Super Admin and Manager.
+  CashApprove = 'cash:approve',
 }

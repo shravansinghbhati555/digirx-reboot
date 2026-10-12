@@ -209,6 +209,8 @@ export class AuthService {
           Permission.SettingsAvailabilityRead,
           Permission.SettingsNotificationsRead,
           Permission.SettingsAuditRead,
+          // Signs off the day-end cash count alongside the Super Admin.
+          Permission.CashApprove,
         ],
       },
       // Patient-facing reception: registers patients, books appointments,
