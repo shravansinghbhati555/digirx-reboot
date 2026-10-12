@@ -16,6 +16,7 @@
  */
 import { getDeviceId } from './device';
 import { STORE_QUEUE, openDb } from './db';
+import { seal, unseal } from './vault';
 
 export type QueueStatus =
   /** Waiting to be sent. */
@@ -76,9 +77,14 @@ function req<T>(r: IDBRequest<T>): Promise<T> {
   });
 }
 
-/** Append a mutation. Returns the stored entry, including its `seq`. */
+/**
+ * Append a mutation. Returns the stored entry, including its `seq`.
+ *
+ * `body` and `label` are sealed (P6) — the label carries the patient's name.
+ * Everything replay and the counters reason about (status, path, seq) stays
+ * in the clear, so counting the queue never needs the PIN.
+ */
 export async function enqueue(entry: NewQueueEntry): Promise<QueueEntry> {
-  const store = await tx('readwrite');
   const row = {
     ...entry,
     deviceId: getDeviceId(),
@@ -86,17 +92,34 @@ export async function enqueue(entry: NewQueueEntry): Promise<QueueEntry> {
     attempts: 0,
     createdAt: Date.now(),
   };
-  const seq = (await req(store.add(row as unknown as QueueEntry))) as unknown as number;
+  // Seal before opening the transaction: awaiting crypto inside it would let
+  // IndexedDB auto-commit the still-empty transaction.
+  const stored = { ...row, body: await seal(row.body), label: await seal(row.label) };
+  const store = await tx('readwrite');
+  const seq = (await req(store.add(stored as unknown as QueueEntry))) as unknown as number;
   await done(store);
   return { ...row, seq } as QueueEntry;
 }
 
-/** Every entry, oldest first. */
-export async function listAll(clinicId?: string): Promise<QueueEntry[]> {
+async function listRaw(clinicId?: string): Promise<QueueEntry[]> {
   const store = await tx('readonly');
   const all = await req<QueueEntry[]>(store.getAll());
   await done(store);
   return clinicId ? all.filter((e) => e.clinicId === clinicId) : all;
+}
+
+/** Every entry, oldest first, decrypted. Needs the vault open. */
+export async function listAll(clinicId?: string): Promise<QueueEntry[]> {
+  const raw = await listRaw(clinicId);
+  const out: QueueEntry[] = [];
+  for (const e of raw) {
+    out.push({
+      ...e,
+      body: await unseal(e.body),
+      label: await unseal<string | undefined>(e.label),
+    });
+  }
+  return out;
 }
 
 /** Entries still owed to the server, oldest first. */
@@ -117,8 +140,9 @@ export type QueueCounts = {
   total: number;
 };
 
+/** Counts only — reads status, never the sealed fields, so works while locked. */
 export async function counts(clinicId?: string): Promise<QueueCounts> {
-  const all = await listAll(clinicId);
+  const all = await listRaw(clinicId);
   return {
     pending: all.filter((e) => e.status === 'pending' || e.status === 'inflight').length,
     failed: all.filter((e) => e.status === 'failed').length,

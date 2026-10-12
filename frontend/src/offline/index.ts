@@ -46,17 +46,39 @@ export {
   MAX_PIN_LENGTH,
   MIN_PIN_LENGTH,
   PinError,
-  clearPin,
-  deriveKey,
+  changePin,
   hasPin,
+  idleLockMs,
   isLocked,
   lock,
+  lockHard,
   msUntilIdleLock,
+  recoverWithCode,
   setPin,
   touchActivity,
+  validatePin,
   verifyPin,
+  type RecoveryResult,
   type VerifyResult,
 } from './pin';
+
+export {
+  VAULT_CHANGED_EVENT,
+  VaultLockedError,
+  hasVault,
+  isVaultLockedError,
+  isVaultOpen,
+  normalizeRecoveryCode,
+} from './vault';
+
+export {
+  canResetDevice,
+  hasPendingRecoveryUpload,
+  recoverDevice,
+  resetDevice,
+  setupDevicePin,
+  uploadPendingRecovery,
+} from './device-lock';
 
 export { isObjectId, newObjectId, objectIdTimestamp } from './ids';
 

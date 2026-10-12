@@ -14,6 +14,8 @@ import { Icon, type IconName } from '../shared/Icon';
 import { Skeleton } from '../shared/Skeleton';
 import { useShake } from '../shared/useShake';
 import { Counter } from '../shared/Counter';
+import { printProvisionalReceipt } from '../shared/provisionalReceipt';
+import { CashDaySheet } from './CashDaySheet';
 
 type BillItem = {
   description?: string;
@@ -45,7 +47,22 @@ type Bill = {
   appointmentId?: string;
   notes?: string;
   inventoryDispensedAt?: string;
+  /**
+   * Local only — never sent, never from the server. Set when a bill was
+   * issued offline after this device ran out of leased invoice numbers: the
+   * bill is ISSUED (so cash can be taken) and the server assigns the number
+   * when the issue replays. The next sync overwrites the cached record and
+   * the flag disappears with it.
+   */
+  billNoPending?: boolean;
 };
+
+/** What to show where a bill number goes. */
+function billLabel(b: Pick<Bill, 'billNo' | 'billNoPending' | '_id'>, fallback: 'full' | 'short' = 'short'): string {
+  if (b.billNo) return b.billNo;
+  if (b.billNoPending) return 'Number pending';
+  return fallback === 'full' ? b._id : b._id.slice(-6).toUpperCase();
+}
 
 type Payment = {
   _id: string;
@@ -121,6 +138,8 @@ export function BillingScreen() {
   const [selected, setSelected] = useState<BillRow | null>(null);
   const [editingBill, setEditingBill] = useState<Bill | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [showCashDay, setShowCashDay] = useState(false);
+  const canSeeCash = has(Perm.BillingWrite) || has(Perm.CashApprove);
   const [lookupId, setLookupId] = useState('');
   // Pagination — initial load grabs 500 (the BE's hard cap). When the
   // response actually hits 500, we surface a "Load older" button that
@@ -252,6 +271,12 @@ export function BillingScreen() {
             <input value={lookupId} onChange={(e) => setLookupId(e.target.value)} placeholder="Bill no lookup (e.g. MAIN/2026-27/000005)"
               style={{ height: 36, padding: '0 16px', background: 'var(--surface-muted)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 12, color: 'var(--text)', outline: 'none', minWidth: 280, fontFamily: 'monospace' }} />
           </div>
+          {canSeeCash && (
+            <button onClick={() => setShowCashDay(true)}
+              style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, padding: '0 14px', background: 'var(--surface)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 10, fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>
+              <Icon name="banknote" size={14} /> Day-end cash
+            </button>
+          )}
           <button onClick={() => canCreateBill && setShowCreate(true)}
             disabled={!canCreateBill}
             style={{ display: 'flex', alignItems: 'center', gap: 8, height: 36, padding: '0 18px', background: 'var(--brand-600)', color: 'var(--brand-text)', border: 'none', borderRadius: 10, fontSize: 12, fontWeight: 700, cursor: canCreateBill ? 'pointer' : 'not-allowed', opacity: canCreateBill ? 1 : 0.5, boxShadow: '0 4px 12px rgba(37,99,235,0.2)' }}>
@@ -293,7 +318,7 @@ export function BillingScreen() {
                   <tr key={b._id} onClick={() => loadBill(b._id)}
                     className="row-hover"
                     style={{ borderBottom: '1px solid var(--border)', cursor: 'pointer', background: selected?._id === b._id ? 'var(--brand-50)' : 'transparent' }}>
-                    <td style={{ padding: '14px 20px', fontSize: 12, color: 'var(--text-subtle)', fontFamily: 'monospace', fontWeight: 600 }}>{b.billNo ?? b._id.slice(-6).toUpperCase()}</td>
+                    <td style={{ padding: '14px 20px', fontSize: 12, color: 'var(--text-subtle)', fontFamily: 'monospace', fontWeight: 600 }}>{billLabel(b as Bill)}</td>
                     <td style={{ padding: '14px 20px' }}>
                       <KindChip kind={b.kind} />
                     </td>
@@ -367,6 +392,8 @@ export function BillingScreen() {
           </div>
         </>
       )}
+
+      {showCashDay && <CashDaySheet onClose={() => setShowCashDay(false)} />}
 
       {showCreate && (
         <CreateBillSheet
@@ -497,33 +524,40 @@ function BillDetail({
       // keeps. Without it the bill could not reach ISSUED, and no payment
       // could be taken against it.
       let drawnBillNo: string | null = null;
+      // Filled in by `enrichOnQueue`, which runs before the optimistic patch
+      // is applied — so the cached bill carries the number (or the pending
+      // flag) and still shows it after navigating away and back.
+      const issuePatch: Record<string, unknown> = { status: 'ISSUED', issuedAt: new Date().toISOString() };
       const { data: updated, queued } = await apiPostQueued<Bill>(
         ctx,
         `/bills/${bill._id}/issue`,
         {},
         {
-          label: `Issue bill — ${bill.billNo ?? bill._id.slice(-6)}`,
+          label: `Issue bill — ${billLabel(bill)}`,
           // IssueBillDto declares only `billSeq`; an `_id` would be rejected
           // by forbidNonWhitelisted and permanently block the queue.
           mintId: false,
           enrichOnQueue: async () => {
             const drawn = await drawNumber(ctx.clinicId, 'BILL');
-            if (!drawn.ok) return {};
+            if (!drawn.ok) {
+              // Out of leased numbers (or past the fiscal-year boundary). The
+              // issue still queues without `billSeq`, and the server mints the
+              // number when it replays — the clinic keeps taking cash against
+              // a provisional receipt meanwhile.
+              issuePatch.billNoPending = true;
+              return {};
+            }
             drawnBillNo = drawn.value;
+            issuePatch.billNo = drawn.value;
             return { billSeq: drawn.seq };
           },
-          optimistic: {
-            collection: 'bills',
-            id: bill._id,
-            patch: { status: 'ISSUED', issuedAt: new Date().toISOString() },
-          },
+          optimistic: { collection: 'bills', id: bill._id, patch: issuePatch },
         },
       );
       if (queued) {
         if (!drawnBillNo) {
-          // No lease, no number — and an unnumbered bill cannot take cash.
-          // Better to refuse than to issue something that cannot be receipted.
-          toast('No invoice numbers left on this device. Reconnect to issue this bill.', 'error');
+          onChanged({ ...bill, status: 'ISSUED', billNoPending: true } as Bill);
+          toast('Issued on this device. The invoice number will be assigned when you reconnect — give the patient a provisional receipt.', 'success');
           return;
         }
         onChanged({ ...bill, status: 'ISSUED', billNo: drawnBillNo } as Bill);
@@ -537,6 +571,29 @@ function BillDetail({
     } finally {
       setBusy(false);
     }
+  }
+
+  function printReceipt() {
+    const opened = printProvisionalReceipt({
+      clinicName: ctx.branding?.displayName || ctx.clinicName || 'Clinic',
+      branchName: ctx.branchName,
+      patientName,
+      billId: bill._id,
+      billNo: bill.billNo,
+      currency: bill.currency,
+      items: (bill.items ?? []).map((it) => ({
+        label: it.description ?? it.customName ?? 'Item',
+        quantity: it.quantity,
+        amount: it.amount ?? it.quantity * it.unitPrice,
+      })),
+      subtotal: bill.subtotal,
+      discount: bill.discount,
+      tax: bill.tax,
+      total: bill.total,
+      payments: (payments ?? []).map((p) => ({ method: p.method, amount: p.amount, paidAt: p.paidAt })),
+      formatMoney: (n, c) => formatMoney(n, c),
+    });
+    if (!opened) toast('Allow pop-ups to print the receipt', 'error');
   }
 
   async function downloadPdf() {
@@ -619,7 +676,7 @@ function BillDetail({
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontFamily: 'monospace', fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
             <span key={billNoFreshKey} style={{ display: 'inline-block', animation: billNoFreshKey > 0 ? 'slideInRight 240ms var(--ease-out)' : undefined }}>
-              {bill.billNo ?? bill._id}
+              {billLabel(bill, 'full')}
             </span>
           </div>
           <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>{patientName ?? '—'} · {bill.currency}</div>
@@ -657,6 +714,12 @@ function BillDetail({
               title={canVoid ? 'Void this bill' : 'Refund or cancel credit notes first'}
               style={{ height: 36, padding: '0 14px', background: 'none', color: canVoid ? 'var(--danger-500)' : 'var(--text-subtle)', border: `1px solid ${canVoid ? 'var(--danger-500)' : 'var(--border)'}`, borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: canVoid ? 'pointer' : 'not-allowed', display: 'flex', alignItems: 'center', gap: 6, opacity: canVoid ? 1 : 0.6 }}>
               <Icon name="xCircle" size={13} /> Void
+            </button>
+          )}
+          {(isIssued || isPaid) && (bill.billNoPending || !isOnline()) && (
+            <button onClick={printReceipt} title="Print a provisional receipt — the invoice PDF needs a connection"
+              style={{ height: 36, padding: '0 14px', background: 'none', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 9, fontSize: 12, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <Icon name="receipt" size={13} /> Provisional receipt
             </button>
           )}
           <button onClick={downloadPdf} disabled={downloadingPdf} title="PDF" style={{ width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: '1px solid var(--border)', borderRadius: 9, cursor: downloadingPdf ? 'wait' : 'pointer', color: 'var(--text-muted)', opacity: downloadingPdf ? 0.6 : 1 }}>
@@ -929,6 +992,10 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
           // CreatePaymentDto does not accept `_id` — replay already keys on
           // idempotencyKey, which is the correct mechanism here.
           mintId: false,
+          // Without this the server stamps the payment when it *replays*, so
+          // cash taken on Monday and synced on Wednesday lands in Wednesday's
+          // drawer and both days' cash counts come out wrong.
+          enrichOnQueue: async () => ({ paidAt: new Date().toISOString() }),
         },
       );
       toast(
@@ -955,7 +1022,7 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
         <div style={{ padding: '20px 20px 16px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>Record payment</div>
-            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>{bill.billNo ?? bill._id.slice(-6)} · Balance {formatMoney(balance, bill.currency)}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>{billLabel(bill)} · Balance {formatMoney(balance, bill.currency)}</div>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}><Icon name="x" size={18} /></button>
         </div>
@@ -1195,6 +1262,7 @@ function CreateBillSheet({
       if (!draft) throw new Error('Could not create draft');
       // Same leased-number path as the detail-view issue button.
       let draftBillNo: string | null = null;
+      const issuePatch: Record<string, unknown> = { status: 'ISSUED', issuedAt: new Date().toISOString() };
       const { data: issued, queued: issueQueued } = await apiPostQueued<Bill>(
         ctx,
         `/bills/${draft._id}/issue`,
@@ -1204,19 +1272,32 @@ function CreateBillSheet({
           mintId: false,
           enrichOnQueue: async () => {
             const drawn = await drawNumber(ctx.clinicId, 'BILL');
-            if (!drawn.ok) return {};
+            if (!drawn.ok) {
+              issuePatch.billNoPending = true;
+              return {};
+            }
             draftBillNo = drawn.value;
+            issuePatch.billNo = drawn.value;
             return { billSeq: drawn.seq };
           },
-          optimistic: {
-            collection: 'bills',
-            id: draft._id,
-            patch: { status: 'ISSUED', issuedAt: new Date().toISOString() },
-          },
+          optimistic: { collection: 'bills', id: draft._id, patch: issuePatch },
         },
       );
-      if (issueQueued && !draftBillNo) {
-        toast('No invoice numbers left on this device. Reconnect to issue this bill.', 'error');
+      if (issueQueued) {
+        // The queued response is the request body, not a bill — hand the
+        // caller the draft with the local issue applied.
+        const local = {
+          ...draft,
+          status: 'ISSUED',
+          ...(draftBillNo ? { billNo: draftBillNo } : { billNoPending: true }),
+        } as Bill;
+        toast(
+          draftBillNo
+            ? `Bill ${draftBillNo} issued on this device. It will sync when you reconnect.`
+            : 'Bill issued on this device. The invoice number will be assigned when you reconnect.',
+          'success',
+        );
+        onCreated(local);
         return;
       }
       toast(`Bill ${issued.billNo ?? ''} issued`, 'success');
@@ -1500,7 +1581,7 @@ function CreateCreditNoteSheet({ bill, creditableRoom, onClose, onSuccess }: { b
           <div>
             <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>Issue credit note</div>
             <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>
-              {bill.billNo ?? bill._id.slice(-6)} · Room: {formatMoney(creditableRoom, bill.currency)}
+              {billLabel(bill)} · Room: {formatMoney(creditableRoom, bill.currency)}
             </div>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}><Icon name="x" size={18} /></button>
@@ -1769,7 +1850,7 @@ function VoidBillSheet({ bill, onClose, onSuccess }: { bill: Bill; onClose: () =
         <div style={{ padding: '18px 20px 14px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
           <div>
             <div style={{ fontFamily: "'Manrope',sans-serif", fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>Void Bill</div>
-            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>{bill.billNo ?? bill._id.slice(-6)}</div>
+            <div style={{ fontSize: 12, color: 'var(--text-subtle)', marginTop: 1 }}>{billLabel(bill)}</div>
           </div>
           <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-subtle)', display: 'flex', padding: 6 }}><Icon name="x" size={18} /></button>
         </div>

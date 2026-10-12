@@ -1,12 +1,13 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-import { apiGet, apiPost, AUTH_EXPIRED_EVENT } from './api';
+import { apiGet, apiPost, apiPut, AUTH_EXPIRED_EVENT } from './api';
 import { clearContext, isLoggedIn, loadContext, saveContext, type DevContext } from './context';
 import { SCREEN_PATHS, pathToScreen } from './screen-paths';
 import { subscribeConnectivity } from '../offline/connectivity';
 import type { OfflineSession } from '../offline/session';
 import { readOfflineSession } from '../offline/session-store';
 import { startOfflineSync } from '../offline/bootstrap';
+import { lockHard } from '../offline/pin';
 
 // Top-level screens. `branches` and `audit` were here previously but they
 // live as tabs inside SettingsScreen, never as standalone shells —
@@ -316,6 +317,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
       // ignore
     }
     clearContext();
+    // The PIN belongs to the tablet, not the user, so it survives sign-out —
+    // but the key leaves memory, and whoever signs in next must enter it.
+    lockHard();
     const fresh = loadContext();
     setCtxState(fresh);
     setMeData(null);
@@ -357,6 +361,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
       () => ctxRef.current,
       (c, path) => apiGet<unknown>(c, path),
       (c, path, body) => apiPost<unknown>(c, path, body),
+      (c, path, body) => apiPut<unknown>(c, path, body),
     );
     // Restart only when the identity of the session changes, not on every
     // token refresh — otherwise the interval resets constantly.

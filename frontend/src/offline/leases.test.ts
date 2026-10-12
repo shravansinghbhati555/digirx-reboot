@@ -85,9 +85,20 @@ describe('drawNumber', () => {
     expect(await drawNumber(CLINIC, 'MRN')).toEqual({ ok: false, reason: 'exhausted' });
   });
 
-  it('refuses an expired block rather than risking a collision', async () => {
+  it('keeps drawing from an expired block — a long outage must not stop registration', async () => {
     await store(lease({ expiresAt: new Date(Date.now() - 1000).toISOString() }));
-    expect(await drawNumber(CLINIC, 'MRN')).toEqual({ ok: false, reason: 'expired' });
+    expect(await drawNumber(CLINIC, 'MRN')).toEqual({ ok: true, seq: 101, value: 'MRN-000101' });
+  });
+
+  it('stops at the year boundary so a printed number never disagrees with the server', async () => {
+    await store(lease({ validUntil: new Date(Date.now() - 1000).toISOString() }));
+    expect(await drawNumber(CLINIC, 'MRN')).toEqual({ ok: false, reason: 'stale' });
+  });
+
+  it('draws normally before the year boundary', async () => {
+    await store(lease({ validUntil: new Date(Date.now() + 60_000).toISOString() }));
+    const drawn = await drawNumber(CLINIC, 'MRN');
+    expect(drawn.ok).toBe(true);
   });
 
   it('refuses when the device holds no lease at all', async () => {

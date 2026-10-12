@@ -128,6 +128,13 @@ const PERMISSION_GROUPS: PermGroup[] = [
       { perm: Perm.FaceRecognize, label: 'Identify a patient by face scan' },
     ],
   },
+  {
+    title: 'Offline & cash',
+    rows: [
+      { perm: Perm.DeviceManage, label: 'View tablet unlock codes' },
+      { perm: Perm.CashApprove, label: 'Approve day-end cash count' },
+    ],
+  },
 ];
 
 const ALL_PERMS: PermName[] = PERMISSION_GROUPS.flatMap((g) =>

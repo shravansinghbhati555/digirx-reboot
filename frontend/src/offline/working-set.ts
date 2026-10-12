@@ -26,8 +26,8 @@ import type { DevContext } from '../app/context';
 
 export type WorkingSetEntry = {
   collection: string;
-  /** API path to pull, relative to the base URL. `{today}` / `{tomorrow}` are
-   *  substituted with clinic-local dates. */
+  /** API path to pull, relative to the base URL. `{today}`, `{tomorrow}` and
+   *  `{today+N}` are substituted with clinic-local dates. */
   path: string;
   /** How stale a cached copy may be before a refresh is attempted, in ms. */
   maxAgeMs: number;
@@ -38,16 +38,26 @@ export type WorkingSetEntry = {
 const HOUR = 60 * 60 * 1000;
 
 /**
- * The manifest. Sized for a single clinic day plus reference data.
- *
- * NOTE: this is tuned for an outage measured in hours-to-days, which is the
- * assumption open question 2 in the plan has not yet settled. If real outages
- * run a week, the appointment window and patient slice both need widening.
+ * How many days of appointments to hold, today included. Outages typically
+ * run ~2 days but can reach 5–7 (open question 2 in the plan), and a 7-day
+ * outage spans eight calendar days only if it starts late — seven covers the
+ * realistic worst case without pulling a month of bookings.
+ */
+export const APPOINTMENT_DAYS = 7;
+
+/**
+ * The manifest. Today's work, a week of upcoming bookings, and reference data.
  */
 export const WORKING_SET: WorkingSetEntry[] = [
   // The day's work. Widest window we can justify caching eagerly.
   { collection: 'appointments', path: '/appointments?date={today}', maxAgeMs: 5 * 60_000 },
   { collection: 'appointments', path: '/appointments?date={tomorrow}', maxAgeMs: HOUR },
+  // The rest of the week. Rarely opened, so refreshed lazily.
+  ...Array.from({ length: APPOINTMENT_DAYS - 2 }, (_, i) => ({
+    collection: 'appointments',
+    path: `/appointments?date={today+${i + 2}}`,
+    maxAgeMs: 6 * HOUR,
+  })),
   // Patients seen recently — the ones most likely to walk back in.
   { collection: 'patients', path: '/patients?limit=200', maxAgeMs: HOUR },
   // Doctors. Without this the booking sheet has no names, so a booking
@@ -74,7 +84,8 @@ function todayInTz(tz: string | undefined, offsetDays = 0): string {
 export function resolvePath(path: string, ctx: DevContext): string {
   return path
     .replace('{today}', todayInTz(ctx.timezone))
-    .replace('{tomorrow}', todayInTz(ctx.timezone, 1));
+    .replace('{tomorrow}', todayInTz(ctx.timezone, 1))
+    .replace(/\{today\+(\d+)\}/, (_m, n: string) => todayInTz(ctx.timezone, Number(n)));
 }
 
 /** Pull the documents out of whatever envelope the endpoint uses. */
@@ -292,8 +303,10 @@ export async function patchCachedRecord(
  * this device has cached (including appointments it queued earlier in the
  * same outage).
  *
- * **Relies on Phase 0 being single-writer.** One device works offline at a
- * time, so the highest token it knows about is the highest that exists. The
+ * **Relies on one writer per doctor.** Each doctor's queue is booked from one
+ * device while offline (two tablets serving different doctors is fine — tokens
+ * are per doctor per day), so the highest token it knows about is the highest
+ * that exists. The
  * server honours the number we send (see `resolveQueueNumber`) so the token
  * on the patient's slip survives the sync, and the unique queue index is the
  * backstop if the assumption is ever violated.
@@ -347,6 +360,9 @@ const RESPONSE_CACHEABLE: RegExp[] = [
   /^\/appointments\/slots(?:\?|$)/,
   // Per-doctor visit types, including price — needed to book and to bill.
   /^\/visit-types(?:\?|$)/,
+  // Day-end cash summary (C6): the server's expected figure as of the last
+  // successful fetch, which the device adds its unsynced cash to offline.
+  /^\/cash-days(?:\?|$)/,
 ];
 
 export function isResponseCacheable(path: string): boolean {

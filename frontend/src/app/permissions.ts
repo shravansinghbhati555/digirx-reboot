@@ -55,6 +55,10 @@ export const Perm = {
   // ability to permanently store new templates, or vice versa.
   FaceEnroll: 'face:enroll',
   FaceRecognize: 'face:recognize',
+  // View each offline tablet's unlock code (forgotten-PIN recovery).
+  DeviceManage: 'device:manage',
+  // Sign off the day-end cash count.
+  CashApprove: 'cash:approve',
 } as const;
 
 export type PermName = typeof Perm[keyof typeof Perm];

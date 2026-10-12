@@ -7,6 +7,7 @@ import { Perm, type PermName } from '../../app/permissions';
 import { isValidIndianMobile, normalizeIndianMobile } from '../../app/validators';
 import { Checkbox, Dropdown, EmptyState, Field, Spinner, labelStyle, useToast, setDetectedCurrency } from '../shared/primitives';
 import { Icon, type IconName } from '../shared/Icon';
+import { DevicesTab } from './DevicesTab';
 // InventoryScreen used to be embedded under a Settings → Inventory tab,
 // but inventory now has its own top-level sidebar entry. The tab was
 // removed at the user's request to avoid two navigation paths to the
@@ -172,7 +173,7 @@ function currencyForTimezone(tz: string): string | null {
   return null;
 }
 
-type SettingsTab = 'clinic' | 'branches' | 'availability' | 'notif_cfg' | 'audit' | 'about';
+type SettingsTab = 'clinic' | 'branches' | 'availability' | 'notif_cfg' | 'audit' | 'devices' | 'about';
 
 // `perm` of `null` = visible to any signed-in user.
 type NavItem = { id: SettingsTab; label: string; icon: IconName; perm: PermName | null };
@@ -190,6 +191,9 @@ const NAV: NavItem[] = [
   { id: 'availability', label: 'Availability', icon: 'clock', perm: Perm.SettingsAvailabilityRead },
   { id: 'notif_cfg', label: 'Quiet hours', icon: 'bell', perm: Perm.SettingsNotificationsRead },
   { id: 'audit', label: 'Audit log', icon: 'scroll', perm: Perm.SettingsAuditRead },
+  // Tablet unlock codes. Gated on the data permission itself — there is no
+  // read-only view of this tab worth granting separately.
+  { id: 'devices', label: 'Devices', icon: 'smartphone', perm: Perm.DeviceManage },
   { id: 'about', label: 'About', icon: 'info', perm: null },
 ];
 
@@ -262,6 +266,7 @@ export function SettingsScreen() {
           {activeAllowed && tab === 'availability' && <AvailabilityTab />}
           {activeAllowed && tab === 'notif_cfg' && <NotifConfigTab />}
           {activeAllowed && tab === 'audit' && <AuditTab />}
+          {activeAllowed && tab === 'devices' && <DevicesTab />}
           {activeAllowed && tab === 'about' && <AboutTab />}
         </div>
       </div>

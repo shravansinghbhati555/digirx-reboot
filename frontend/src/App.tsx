@@ -3,6 +3,7 @@ import { AppProvider, useApp } from './app/AppContext';
 import { canAccessScreen, isScreenAllowedForRoles } from './app/permissions';
 import { ToastProvider } from './ui/shared/primitives';
 import { AppShell } from './ui/AppShell';
+import { DeviceLockGate } from './ui/shared/DeviceLock';
 import { LoginScreen } from './ui/screens/LoginScreen';
 import { DashboardScreen } from './ui/screens/DashboardScreen';
 import { PatientsScreen } from './ui/screens/PatientsScreen';
@@ -59,6 +60,7 @@ function AuthedShell() {
   if (!loggedIn) return <Navigate to="/login" replace />;
 
   return (
+    <DeviceLockGate>
     <AppShell>
       <Routes>
         <Route path="/" element={<Guarded screenKey="dashboard"><DashboardScreen /></Guarded>} />
@@ -81,6 +83,7 @@ function AuthedShell() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </AppShell>
+    </DeviceLockGate>
   );
 }
 

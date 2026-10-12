@@ -1,146 +1,71 @@
 /**
- * Local device PIN.
+ * Device PIN — ticket A4.
  *
- * ## What this is, and what it is NOT
+ * One PIN per tablet, required on every device. It does two jobs:
  *
- * This is a **UI gate**, not encryption at rest. Cached clinical data lives in
- * localStorage and (from B1) IndexedDB, both readable by anyone who can open
- * DevTools on an unlocked OS account. A PIN prompt does not change that.
+ *   1. **Unlocks the encrypted offline store** (P6). The PIN is never stored;
+ *      it unwraps the device data key in `vault.ts`, and a wrong PIN simply
+ *      fails to. See that file for the key layout and the admin unlock code.
+ *   2. **Gates the UI.** Every fresh launch needs it (the key does not survive
+ *      a reload), and so does a device left idle for `VITE_OFFLINE_IDLE_LOCK_MINUTES`
+ *      (default 15). The idle lock is a UI gate only — the key stays in memory
+ *      so the background sync keeps working while the screen is locked.
  *
- * It is still worth having: it stops the realistic case — a tablet left on a
- * reception desk, picked up by the next person in the room — which is the
- * threat a clinic actually faces. It does not stop a determined attacker with
- * physical possession.
- *
- * Real at-rest protection needs one of:
- *   - OS/disk encryption on the device (the practical answer, and required
- *     from Phase 2 when a clinic box holds the whole database), or
- *   - encrypting the cached store under a PIN-derived key, which B1 should do
- *     when it defines the IndexedDB schema. `deriveKey` below exists so that
- *     work has a starting point rather than a rewrite.
- *
- * Do not describe this feature to a clinic as "your data is encrypted".
+ * This file owns the lockout/backoff and idle-timer state; `vault.ts` owns the
+ * cryptography.
  */
+import {
+  changeVaultPin,
+  closeVault,
+  createVault,
+  hasVault,
+  isVaultOpen,
+  openWithPin,
+  resetPinWithRecoveryCode,
+} from './vault';
 
-const PIN_KEY = 'digirx.devicePin.v1';
 const LOCK_KEY = 'digirx.deviceLock.v1';
 
 /**
- * OWASP's PBKDF2-HMAC-SHA256 guidance. A PIN has very little entropy, so the
- * KDF is the only thing standing between a leaked hash and a trivial offline
- * brute force. Costs roughly a second on a low-end tablet, which is fine for
- * an unlock that happens once per session.
+ * Digits only, so tablets show a number pad. Six is the floor: four digits is
+ * 10k combinations — not enough even behind a slow KDF.
  */
-const PBKDF2_ITERATIONS = 310_000;
-const SALT_BYTES = 16;
-const KEY_BITS = 256;
-
-/** Minimum length. Four digits is 10k combinations — not enough even with a
- *  slow KDF, so we require six. */
 export const MIN_PIN_LENGTH = 6;
-export const MAX_PIN_LENGTH = 64;
-
-type StoredPin = {
-  saltB64: string;
-  hashB64: string;
-  iterations: number;
-  createdAt: number;
-};
+export const MAX_PIN_LENGTH = 12;
 
 type LockState = {
   /** Consecutive failed attempts since the last success. */
   failures: number;
   /** Epoch ms until which unlocking is refused. */
   blockedUntil: number;
-  /** Epoch ms of the last successful unlock — drives the idle timer. */
+  /** Epoch ms of the last unlock or activity — drives the idle timer. */
   unlockedAt: number | null;
 };
 
 const DEFAULT_LOCK: LockState = { failures: 0, blockedUntil: 0, unlockedAt: null };
 
-function idleLockMs(): number {
+export function idleLockMs(): number {
   const raw = (import.meta.env as Record<string, string | undefined>)
     .VITE_OFFLINE_IDLE_LOCK_MINUTES;
   const parsed = raw ? Number(raw) : NaN;
-  const minutes = Number.isFinite(parsed) && parsed > 0 ? parsed : 5;
+  const minutes = Number.isFinite(parsed) && parsed > 0 ? parsed : 15;
   return minutes * 60 * 1000;
 }
 
-// ---------------------------------------------------------------- storage
-
-function readJson<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? ({ ...fallback, ...(JSON.parse(raw) as T) } as T) : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeJson(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch {
-    // ignore
-  }
-}
-
 function readLock(): LockState {
-  return readJson<LockState>(LOCK_KEY, DEFAULT_LOCK);
+  try {
+    const raw = localStorage.getItem(LOCK_KEY);
+    return raw ? { ...DEFAULT_LOCK, ...(JSON.parse(raw) as LockState) } : DEFAULT_LOCK;
+  } catch {
+    return DEFAULT_LOCK;
+  }
 }
 
 function writeLock(next: LockState): void {
-  writeJson(LOCK_KEY, next);
-}
-
-// ---------------------------------------------------------------- crypto
-
-function toB64(buf: ArrayBuffer): string {
-  return btoa(String.fromCharCode(...new Uint8Array(buf)));
-}
-
-function fromB64(s: string): Uint8Array {
-  return Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
-}
-
-/**
- * Derive raw key bits from a PIN. Exposed so B1 can encrypt the cached store
- * under the same secret instead of inventing a second one.
- */
-export async function deriveKey(
-  pin: string,
-  salt: Uint8Array,
-  iterations: number = PBKDF2_ITERATIONS,
-): Promise<ArrayBuffer> {
-  const material = await crypto.subtle.importKey(
-    'raw',
-    new TextEncoder().encode(pin),
-    'PBKDF2',
-    false,
-    ['deriveBits'],
-  );
-  return await crypto.subtle.deriveBits(
-    { name: 'PBKDF2', salt: salt as unknown as BufferSource, iterations, hash: 'SHA-256' },
-    material,
-    KEY_BITS,
-  );
-}
-
-/** Constant-time-ish comparison. Avoids leaking a prefix match via timing. */
-function equalB64(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
-
-// ---------------------------------------------------------------- public
-
-export function hasPin(): boolean {
   try {
-    return Boolean(localStorage.getItem(PIN_KEY));
+    localStorage.setItem(LOCK_KEY, JSON.stringify(next));
   } catch {
-    return false;
+    // ignore
   }
 }
 
@@ -152,39 +77,37 @@ export class PinError extends Error {
   }
 }
 
-export async function setPin(pin: string): Promise<void> {
+/** Throws a `PinError` describing what is wrong with a proposed PIN. */
+export function validatePin(pin: string): void {
+  if (!/^\d+$/.test(pin)) throw new PinError('PIN must contain digits only.');
   if (pin.length < MIN_PIN_LENGTH) {
-    throw new PinError(`PIN must be at least ${MIN_PIN_LENGTH} characters.`);
+    throw new PinError(`PIN must be at least ${MIN_PIN_LENGTH} digits.`);
   }
   if (pin.length > MAX_PIN_LENGTH) {
-    throw new PinError(`PIN must be at most ${MAX_PIN_LENGTH} characters.`);
+    throw new PinError(`PIN must be at most ${MAX_PIN_LENGTH} digits.`);
   }
-  const salt = crypto.getRandomValues(new Uint8Array(SALT_BYTES));
-  const bits = await deriveKey(pin, salt);
-  const stored: StoredPin = {
-    saltB64: toB64(salt.buffer as ArrayBuffer),
-    hashB64: toB64(bits),
-    iterations: PBKDF2_ITERATIONS,
-    createdAt: Date.now(),
-  };
-  writeJson(PIN_KEY, stored);
-  // Setting a PIN counts as proving you hold it.
-  writeLock({ failures: 0, blockedUntil: 0, unlockedAt: Date.now() });
+}
+
+export function hasPin(): boolean {
+  return hasVault();
 }
 
 /**
- * Remove the PIN. Requires the current one — otherwise anybody holding the
- * device could simply turn the lock off.
+ * First-time setup. Returns the clinic admin unlock code, which the caller
+ * must show once and queue for upload.
  */
-export async function clearPin(currentPin: string): Promise<void> {
-  const ok = await verifyPin(currentPin);
-  if (!ok.ok) throw new PinError(ok.reason);
-  try {
-    localStorage.removeItem(PIN_KEY);
-  } catch {
-    // ignore
-  }
-  writeLock(DEFAULT_LOCK);
+export async function setPin(pin: string): Promise<{ recoveryCode: string }> {
+  validatePin(pin);
+  if (hasVault()) throw new PinError('A PIN is already set on this device.');
+  const out = await createVault(pin);
+  writeLock({ failures: 0, blockedUntil: 0, unlockedAt: Date.now() });
+  return out;
+}
+
+export async function changePin(currentPin: string, newPin: string): Promise<void> {
+  validatePin(newPin);
+  const ok = await changeVaultPin(currentPin, newPin);
+  if (!ok) throw new PinError('Current PIN is incorrect.');
 }
 
 export type VerifyResult =
@@ -193,9 +116,9 @@ export type VerifyResult =
 
 /**
  * Backoff after repeated failures. Deliberately **not** a data wipe: the
- * device may be holding a morning of unsynced consultations, and destroying
- * them because someone fat-fingered a PIN would be a far worse outcome than a
- * delay. Caps out rather than escalating forever.
+ * device may be holding days of unsynced consultations, and destroying them
+ * because someone fat-fingered a PIN would be far worse than a delay. Caps
+ * out rather than escalating forever.
  */
 function blockDurationMs(failures: number): number {
   if (failures < 5) return 0;
@@ -203,10 +126,7 @@ function blockDurationMs(failures: number): number {
   return Math.min(30_000 * 2 ** (step - 1), 15 * 60_000);
 }
 
-export async function verifyPin(pin: string, now: number = Date.now()): Promise<VerifyResult> {
-  const stored = readJson<StoredPin | null>(PIN_KEY, null as unknown as StoredPin);
-  if (!stored?.hashB64) return { ok: false, reason: 'No PIN is set on this device.' };
-
+function blocked(now: number): Failure | null {
   const lock = readLock();
   if (lock.blockedUntil > now) {
     return {
@@ -215,36 +135,79 @@ export async function verifyPin(pin: string, now: number = Date.now()): Promise<
       blockedForMs: lock.blockedUntil - now,
     };
   }
+  return null;
+}
 
-  const bits = await deriveKey(pin, fromB64(stored.saltB64), stored.iterations);
-  if (equalB64(toB64(bits), stored.hashB64)) {
-    writeLock({ failures: 0, blockedUntil: 0, unlockedAt: now });
-    return { ok: true };
-  }
+type Failure = { ok: false; reason: string; blockedForMs?: number };
 
+function recordFailure(now: number, message: string): Failure {
+  const lock = readLock();
   const failures = lock.failures + 1;
   const blockMs = blockDurationMs(failures);
   writeLock({ failures, blockedUntil: blockMs ? now + blockMs : 0, unlockedAt: null });
   return {
     ok: false,
-    reason: blockMs
-      ? 'Incorrect PIN. Too many attempts — try again shortly.'
-      : 'Incorrect PIN.',
+    reason: blockMs ? `${message} Too many attempts — try again shortly.` : message,
     blockedForMs: blockMs || undefined,
   };
 }
 
+export async function verifyPin(pin: string, now: number = Date.now()): Promise<VerifyResult> {
+  if (!hasVault()) return { ok: false, reason: 'No PIN is set on this device.' };
+  const refused = blocked(now);
+  if (refused) return refused;
+
+  if (await openWithPin(pin)) {
+    writeLock({ failures: 0, blockedUntil: 0, unlockedAt: now });
+    return { ok: true };
+  }
+  return recordFailure(now, 'Incorrect PIN.');
+}
+
+export type RecoveryResult =
+  | { ok: true; recoveryCode: string }
+  | { ok: false; reason: string; blockedForMs?: number };
+
+/**
+ * Forgotten PIN: the clinic admin reads out the unlock code, the user picks a
+ * new PIN. Shares the PIN's backoff — the code is the stronger secret, but
+ * there is no reason to let it be guessed faster.
+ */
+export async function recoverWithCode(
+  code: string,
+  newPin: string,
+  now: number = Date.now(),
+): Promise<RecoveryResult> {
+  validatePin(newPin);
+  const refused = blocked(now);
+  if (refused) return refused;
+  const out = await resetPinWithRecoveryCode(code, newPin);
+  if (out) {
+    writeLock({ failures: 0, blockedUntil: 0, unlockedAt: now });
+    return { ok: true, recoveryCode: out.recoveryCode };
+  }
+  return recordFailure(now, 'That unlock code is not right for this device.');
+}
+
 /** True when the UI should be showing the unlock prompt. */
 export function isLocked(now: number = Date.now()): boolean {
-  if (!hasPin()) return false;
+  if (!hasVault()) return false;
+  // A fresh launch has no key in memory: always locked, whatever the timer says.
+  if (!isVaultOpen()) return true;
   const { unlockedAt } = readLock();
   if (unlockedAt == null) return true;
   return now - unlockedAt >= idleLockMs();
 }
 
-/** Lock immediately — manual "Lock device" action, or on tab hide. */
+/** Lock the screen now. Keeps the key so background sync continues. */
 export function lock(): void {
   writeLock({ ...readLock(), unlockedAt: null });
+}
+
+/** Lock and drop the key — used on sign-out. */
+export function lockHard(): void {
+  lock();
+  closeVault();
 }
 
 /** Push the idle timer out. Called on real user activity, throttled. */
@@ -252,13 +215,23 @@ export function touchActivity(now: number = Date.now()): void {
   const lockState = readLock();
   if (lockState.unlockedAt == null) return; // already locked; don't revive it
   if (now - lockState.unlockedAt < 30_000) return; // throttle writes
+  if (now - lockState.unlockedAt >= idleLockMs()) return; // idled out; needs the PIN
   writeLock({ ...lockState, unlockedAt: now });
 }
 
 /** Milliseconds until the idle lock engages, or null when no PIN is set. */
 export function msUntilIdleLock(now: number = Date.now()): number | null {
-  if (!hasPin()) return null;
+  if (!hasVault()) return null;
   const { unlockedAt } = readLock();
-  if (unlockedAt == null) return 0;
+  if (unlockedAt == null || !isVaultOpen()) return 0;
   return Math.max(0, unlockedAt + idleLockMs() - now);
+}
+
+/** Forget lockout/idle state. Only for a device reset. */
+export function resetLockState(): void {
+  try {
+    localStorage.removeItem(LOCK_KEY);
+  } catch {
+    // ignore
+  }
 }

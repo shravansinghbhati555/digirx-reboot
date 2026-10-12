@@ -19,15 +19,16 @@
 
 /**
  * How long a device may work offline after the last server-confirmed
- * request. Configurable because the right value depends on how long a
- * realistic outage runs — open question 2 in the implementation plan. The
- * 72-hour default is a placeholder chosen to cover a long weekend; revisit it
- * once we know the target clinics' connectivity cadence.
+ * request. Outages typically run ~2 days but can reach 5–7 (open question 2),
+ * so the hard cap is 14 days. That is safe to make this long only because the
+ * device PIN is mandatory: every launch and every 15 idle minutes need it, so
+ * the day-to-day check is the PIN, and this is just the outer bound after
+ * which a lost or stolen tablet stops working.
  */
-export const OFFLINE_GRACE_MS = hoursFromEnv('VITE_OFFLINE_GRACE_HOURS', 72);
+export const OFFLINE_GRACE_MS = hoursFromEnv('VITE_OFFLINE_GRACE_HOURS', 14 * 24);
 
 /** How long before expiry the UI should start warning. */
-export const OFFLINE_WARN_MS = hoursFromEnv('VITE_OFFLINE_WARN_HOURS', 8);
+export const OFFLINE_WARN_MS = hoursFromEnv('VITE_OFFLINE_WARN_HOURS', 24);
 
 function hoursFromEnv(key: string, fallbackHours: number): number {
   const raw = (import.meta.env as Record<string, string | undefined>)[key];

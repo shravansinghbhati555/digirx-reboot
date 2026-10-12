@@ -3,6 +3,7 @@ import { apiPatch } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { Avatar, Spinner, StatusPill, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
+import { DeviceSecurityCard } from '../shared/DeviceLock';
 
 // All IANA zones when the browser supports it; otherwise a small curated set.
 function allTimezones(): string[] {
@@ -116,6 +117,8 @@ export function ProfileScreen() {
             </div>
           </div>
         </div>
+
+        <DeviceSecurityCard />
       </div>
     </div>
   );

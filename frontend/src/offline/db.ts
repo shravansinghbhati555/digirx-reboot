@@ -13,7 +13,16 @@
  * Written against raw IndexedDB rather than a wrapper library: the sandbox has
  * no package manager available, and the surface we need is small enough that a
  * dependency would not earn its place.
+ *
+ * ## Encryption (P6)
+ *
+ * Record bodies (`doc`) and meta values are sealed with the device data key
+ * from `vault.ts`; keys and index fields stay in the clear so lookups work.
+ * Crypto is async and an IndexedDB transaction auto-commits as soon as it has
+ * nothing pending, so every seal/unseal happens **outside** a transaction —
+ * never await crypto between opening one and finishing with it.
  */
+import { seal, unseal } from './vault';
 
 const DB_NAME = 'digirx-offline';
 const DB_VERSION = 1;
@@ -110,21 +119,25 @@ export async function putRecords(
   now: number = Date.now(),
 ): Promise<number> {
   if (!docs.length) return 0;
-  const db = await openDb();
-  const tx = db.transaction(STORE_RECORDS, 'readwrite');
-  const store = tx.objectStore(STORE_RECORDS);
-  let written = 0;
+  const entries: CachedRecord[] = [];
   for (const doc of docs) {
     const id = String(doc?._id ?? doc?.id ?? '');
     if (!id) continue;
-    const entry: CachedRecord = {
+    entries.push({
       key: recordKey(clinicId, collection, id),
       clinicId,
       collection,
       id,
-      doc,
+      doc: await seal(doc),
       cachedAt: now,
-    };
+    });
+  }
+  if (!entries.length) return 0;
+  const db = await openDb();
+  const tx = db.transaction(STORE_RECORDS, 'readwrite');
+  const store = tx.objectStore(STORE_RECORDS);
+  let written = 0;
+  for (const entry of entries) {
     store.put(entry);
     written++;
   }
@@ -140,18 +153,22 @@ export async function getRecord(
   collection: string,
   id: string,
 ): Promise<CachedRecord | undefined> {
-  return await withStore(STORE_RECORDS, 'readonly', (s) =>
+  const row = await withStore<CachedRecord | undefined>(STORE_RECORDS, 'readonly', (s) =>
     promisify(s.get(recordKey(clinicId, collection, id))),
   );
+  return row ? { ...row, doc: await unseal(row.doc) } : undefined;
 }
 
 export async function listRecords(
   clinicId: string,
   collection: string,
 ): Promise<CachedRecord[]> {
-  return await withStore(STORE_RECORDS, 'readonly', (s) =>
+  const rows = await withStore<CachedRecord[]>(STORE_RECORDS, 'readonly', (s) =>
     promisify(s.index('byCollection').getAll(IDBKeyRange.only([clinicId, collection]))),
   );
+  const out: CachedRecord[] = [];
+  for (const row of rows) out.push({ ...row, doc: await unseal(row.doc) });
+  return out;
 }
 
 export async function clearCollection(clinicId: string, collection: string): Promise<void> {
@@ -191,11 +208,77 @@ export async function getMeta<T>(key: string): Promise<T | undefined> {
     'readonly',
     (s) => promisify(s.get(key)),
   );
-  return row?.value;
+  return row ? await unseal<T>(row.value) : undefined;
 }
 
 export async function setMeta<T>(key: string, value: T): Promise<void> {
-  await withStore(STORE_META, 'readwrite', (s) => promisify(s.put({ key, value })));
+  const sealed = await seal(value);
+  await withStore(STORE_META, 'readwrite', (s) => promisify(s.put({ key, value: sealed })));
+}
+
+export async function deleteMeta(key: string): Promise<void> {
+  await withStore(STORE_META, 'readwrite', (s) => promisify(s.delete(key)));
+}
+
+// ------------------------------------------------------------ encryption
+
+async function readAll<T>(store: string): Promise<T[]> {
+  return await withStore<T[]>(store, 'readonly', (s) => promisify(s.getAll()));
+}
+
+async function putAll(store: string, rows: unknown[]): Promise<void> {
+  if (!rows.length) return;
+  const db = await openDb();
+  const tx = db.transaction(store, 'readwrite');
+  const s = tx.objectStore(store);
+  for (const row of rows) s.put(row);
+  await new Promise<void>((resolve, reject) => {
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error ?? new Error('putAll failed'));
+  });
+}
+
+/**
+ * Encrypt, in place, anything written in plaintext before the PIN was set —
+ * the short window between signing in and setting up the device. Called once,
+ * right after the vault is created. Values already sealed are left alone, so
+ * re-running is harmless.
+ */
+export async function sealExistingRows(): Promise<void> {
+  const records = await readAll<CachedRecord>(STORE_RECORDS);
+  const sealedRecords: CachedRecord[] = [];
+  for (const r of records) {
+    sealedRecords.push({ ...r, doc: await seal(await unseal(r.doc)) });
+  }
+  await putAll(STORE_RECORDS, sealedRecords);
+
+  const meta = await readAll<{ key: string; value: unknown }>(STORE_META);
+  const sealedMeta: Array<{ key: string; value: unknown }> = [];
+  for (const m of meta) sealedMeta.push({ key: m.key, value: await seal(await unseal(m.value)) });
+  await putAll(STORE_META, sealedMeta);
+
+  const queue = await readAll<Record<string, unknown>>(STORE_QUEUE);
+  const sealedQueue: Array<Record<string, unknown>> = [];
+  for (const q of queue) {
+    sealedQueue.push({
+      ...q,
+      body: await seal(await unseal(q.body)),
+      label: await seal(await unseal(q.label)),
+    });
+  }
+  await putAll(STORE_QUEUE, sealedQueue);
+}
+
+/**
+ * Wipe every offline store. Only for an explicit device reset, when the PIN
+ * and unlock code are both lost and nothing is waiting to sync — the caller
+ * must check that first. Without the key the encrypted rows are unreadable
+ * anyway; this just stops them taking up space.
+ */
+export async function wipeOfflineStores(): Promise<void> {
+  for (const store of [STORE_RECORDS, STORE_QUEUE, STORE_META]) {
+    await withStore(store, 'readwrite', (s) => promisify(s.clear()));
+  }
 }
 
 /** True when IndexedDB is usable at all — private windows can refuse it. */

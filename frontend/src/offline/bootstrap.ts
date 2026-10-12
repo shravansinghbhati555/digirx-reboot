@@ -13,6 +13,9 @@ import { requestPersistentStorage } from './db';
 import { replayQueue } from './replay';
 import { prefetchSlots, syncWorkingSet } from './working-set';
 import { ensureAllLeases, reportLeaseUsage } from './leases';
+import { VAULT_CHANGED_EVENT, isVaultOpen } from './vault';
+import { localDate } from './cash';
+import { isDeviceSetupInProgress, uploadPendingRecovery } from './device-lock';
 import type { DevContext } from '../app/context';
 
 /**
@@ -48,6 +51,7 @@ export function startOfflineSync(
   getCtx: () => DevContext,
   fetchJson: (ctx: DevContext, path: string) => Promise<unknown>,
   postJson: (ctx: DevContext, path: string, body: unknown) => Promise<unknown>,
+  putJson: (ctx: DevContext, path: string, body: unknown) => Promise<unknown>,
 ): () => void {
   const leaseApi = {
     post: <T,>(path: string, body: unknown) =>
@@ -57,7 +61,14 @@ export function startOfflineSync(
   const run = async (opts: { force?: boolean } = {}) => {
     const ctx = getCtx();
     if (!ctx.clinicId || !isOnline()) return;
+    // Everything below reads or writes the encrypted store. Before the PIN is
+    // entered (or set) there is no key, so wait — the vault-changed event
+    // below re-runs this the moment the device unlocks.
+    if (!isVaultOpen() || isDeviceSetupInProgress()) return;
     try {
+      // The admin's copy of the unlock code. First, because until it lands a
+      // forgotten PIN on this device has no recovery path.
+      await uploadPendingRecovery((p, body) => putJson(ctx, p, body));
       // Queue first. Getting local work to the server matters more than
       // refreshing the cache, and syncing a working set that does not yet
       // include the morning's own entries would look like they were lost.
@@ -71,6 +82,12 @@ export function startOfflineSync(
       // Slot availability is computed, not stored, so it has to be warmed
       // per doctor per day — otherwise the booking sheet has no times.
       await prefetchSlots(ctx, (p) => fetchJson(ctx, p));
+      // Today's server-side cash figure (C6), so the day-end count still has
+      // a baseline if the connection drops later in the day.
+      if (ctx.branchId) {
+        const today = localDate(Date.now(), ctx.clinicTimezone ?? ctx.timezone);
+        await fetchJson(ctx, `/cash-days?date=${today}`).catch(() => undefined);
+      }
     } catch {
       // Background work never surfaces as an app error; the queue and the
       // sync markers both survive to the next attempt.
@@ -96,10 +113,15 @@ export function startOfflineSync(
     if (document.visibilityState === 'visible') void run();
   };
   document.addEventListener('visibilitychange', onVisible);
+  const onVault = () => {
+    if (isVaultOpen()) void run({ force: true });
+  };
+  window.addEventListener(VAULT_CHANGED_EVENT, onVault);
 
   return () => {
     stopConnectivity();
     if (periodic) window.clearInterval(periodic);
     document.removeEventListener('visibilitychange', onVisible);
+    window.removeEventListener(VAULT_CHANGED_EVENT, onVault);
   };
 }

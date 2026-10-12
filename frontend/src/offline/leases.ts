@@ -36,6 +36,12 @@ export type StoredLease = {
   numberTemplate: string;
   /** ISO string — the server's expiry for this block. */
   expiresAt: string;
+  /**
+   * ISO string — when the template's year or fiscal year rolls over (C7).
+   * Past this the block would print a number the server will not agree with,
+   * so drawing stops and the record gets a pending number instead.
+   */
+  validUntil?: string;
   /** Highest value already reported to the server, to avoid redundant calls. */
   reportedThrough: number;
 };
@@ -61,9 +67,20 @@ export function remaining(lease: StoredLease | undefined): number {
   return Math.max(0, lease.blockEnd - lease.cursor + 1);
 }
 
-/** True when a block has expired and must not be drawn from. */
+/**
+ * True when the server's lease window has passed. Online this triggers a
+ * refill; offline it does **not** stop drawing — the numbers in the block are
+ * still reserved for this device (`resolveLeasedNumber` ignores expiry), and
+ * an outage that outlasts the lease must not stop the clinic registering
+ * patients.
+ */
 export function isExpired(lease: StoredLease, now: number = Date.now()): boolean {
   return new Date(lease.expiresAt).getTime() <= now;
+}
+
+/** True once the block's year or fiscal year has rolled over (C7). */
+export function isStale(lease: StoredLease, now: number = Date.now()): boolean {
+  return lease.validUntil != null && new Date(lease.validUntil).getTime() <= now;
 }
 
 /** Render a sequence number through the server-supplied template. */
@@ -75,7 +92,7 @@ export function renderNumber(template: string, seq: number): string {
 
 export type DrawResult =
   | { ok: true; seq: number; value: string }
-  | { ok: false; reason: 'none' | 'exhausted' | 'expired' };
+  | { ok: false; reason: 'none' | 'exhausted' | 'stale' };
 
 /**
  * Take the next number. Persists the advanced cursor **before** returning, so
@@ -87,7 +104,7 @@ export async function drawNumber(
 ): Promise<DrawResult> {
   const lease = await getLease(clinicId, counter);
   if (!lease) return { ok: false, reason: 'none' };
-  if (isExpired(lease)) return { ok: false, reason: 'expired' };
+  if (isStale(lease)) return { ok: false, reason: 'stale' };
   if (lease.cursor > lease.blockEnd) return { ok: false, reason: 'exhausted' };
 
   const seq = lease.cursor;
@@ -109,6 +126,7 @@ type ServerLease = {
   usedThrough: number;
   expiresAt: string;
   numberTemplate: string;
+  validUntil?: string;
 };
 
 function adopt(server: ServerLease, previous?: StoredLease): StoredLease {
@@ -127,6 +145,7 @@ function adopt(server: ServerLease, previous?: StoredLease): StoredLease {
         : server.blockStart,
     numberTemplate: server.numberTemplate,
     expiresAt: server.expiresAt,
+    validUntil: server.validUntil,
     reportedThrough: server.usedThrough,
   };
 }
@@ -146,7 +165,10 @@ export async function ensureLease(
   if (!isOnline()) return existing;
 
   const needsTopUp =
-    !existing || isExpired(existing) || remaining(existing) <= LOW_WATER;
+    !existing ||
+    isExpired(existing) ||
+    isStale(existing) ||
+    remaining(existing) <= LOW_WATER;
   if (!needsTopUp) return existing;
 
   try {
@@ -203,6 +225,8 @@ export type LeaseHealth = {
   counter: LeaseCounterName;
   remaining: number;
   expired: boolean;
+  /** Past the year/FY boundary — new records get a pending number. */
+  stale: boolean;
   /** True when this counter cannot currently be used offline. */
   unavailable: boolean;
 };
@@ -213,12 +237,14 @@ export async function leaseHealth(clinicId: string): Promise<LeaseHealth[]> {
   for (const counter of OFFLINE_COUNTERS) {
     const lease = await getLease(clinicId, counter);
     const expired = lease ? isExpired(lease) : false;
+    const stale = lease ? isStale(lease) : false;
     const left = remaining(lease);
     out.push({
       counter,
       remaining: left,
       expired,
-      unavailable: !lease || expired || left === 0,
+      stale,
+      unavailable: !lease || stale || left === 0,
     });
   }
   return out;
