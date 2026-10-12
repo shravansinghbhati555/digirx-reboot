@@ -22,7 +22,7 @@
  * outlive a logout.
  */
 
-const VERSION = 'v2';
+const VERSION = 'v3';
 const SHELL_CACHE = `digirx-shell-${VERSION}`;
 
 const PRECACHE = ['/', '/index.html', '/favicon.svg', '/icons.svg', '/manifest.webmanifest'];
@@ -81,6 +81,15 @@ self.addEventListener('activate', (event) => {
   );
 });
 
+/**
+ * Cache lookups ignore `Vary`. Servers commonly send `Vary: Origin` on static
+ * files, and Vite's `<script type="module" crossorigin>` makes the page send
+ * an `Origin` header the install-time precache did not — so a Vary-respecting
+ * match missed every bundle, and the offline reload rendered a blank page.
+ * Safe here: bundles are content-hashed, so one URL is one body.
+ */
+const MATCH = { ignoreVary: true };
+
 /** Same-origin static assets we are willing to hold. */
 function isShellAsset(url) {
   if (url.origin !== self.location.origin) return false;
@@ -110,7 +119,7 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(() =>
           caches
-            .match('/index.html')
+            .match('/index.html', MATCH)
             .then((cached) => cached ?? new Response('Offline', { status: 503 })),
         ),
     );
@@ -122,7 +131,7 @@ self.addEventListener('fetch', (event) => {
   // Assets are content-hashed, so a cache hit is always correct for that URL.
   // Serve it immediately and refresh in the background.
   event.respondWith(
-    caches.match(req).then((cached) => {
+    caches.match(req, MATCH).then((cached) => {
       const network = fetch(req)
         .then((res) => {
           if (res && res.status === 200) {

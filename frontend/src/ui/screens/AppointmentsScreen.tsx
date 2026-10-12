@@ -2,6 +2,10 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiGet, apiPatch, apiPatchQueued, apiPost, apiPostQueued, apiPostMultipart } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { nextLocalQueueNumber } from '../../offline/working-set';
+import { billSettlement } from '../../offline/fees';
+import { putRecords } from '../../offline/db';
+import { newObjectId } from '../../offline/ids';
+import { recordCashPayment } from '../shared/offlineCash';
 import { isOnline, subscribeConnectivity } from '../../offline/connectivity';
 import { useIsMobile } from '../../app/useIsMobile';
 import { AVAILABILITY_CHANGED_EVENT } from '../../app/events';
@@ -1232,6 +1236,11 @@ function TriageModal({
   const isMobile = useIsMobile();
   const toast = useToast();
   const [busy, setBusy] = useState(false);
+  // Offline, the device enforces the server's pre-payment gate itself: an
+  // unpaid consultation fee blocks check-in, and the fee can be taken in cash
+  // right here. See `billSettlement`.
+  const [feeDue, setFeeDue] = useState<{ billId: string; outstanding: number; paid: number; total: number; currency: string } | null>(null);
+  const [feeBlocked, setFeeBlocked] = useState<string | null>(null);
   const [complaint, setComplaint] = useState('');
   const [vitals, setVitals] = useState<Record<string, string>>({
     bp: '', spo2: '', temp: '', pulse: '', rr: '', weight: '', height: ''
@@ -1246,9 +1255,53 @@ function TriageModal({
       : appt.patientId?._id ?? null;
   const canUploadDocs = has(Perm.DocumentWrite);
 
+  /**
+   * Offline only: is the consultation fee settled? Online the server answers
+   * this itself (and says so in its error). Returns false when check-in must
+   * wait, having set the state that explains why.
+   */
+  async function feeCleared(): Promise<boolean> {
+    if (isOnline() || appt.status !== 'BOOKED' || !appt.billId) return true;
+    const s = await billSettlement(ctx.clinicId, appt.billId);
+    if (!s.known) {
+      setFeeBlocked(
+        'This visit has a consultation bill that is not saved on this device, so the fee cannot be confirmed offline. Check the patient in once you are back online.',
+      );
+      return false;
+    }
+    if (s.outstanding > 0) {
+      setFeeDue({ billId: appt.billId, outstanding: s.outstanding, paid: s.paid, total: s.total, currency: s.currency });
+      return false;
+    }
+    return true;
+  }
+
+  async function collectFeeAndSave() {
+    if (!feeDue) return;
+    setBusy(true);
+    try {
+      // Queued before the check-in, so replay settles the bill first.
+      await recordCashPayment(ctx, {
+        billId: feeDue.billId,
+        amount: feeDue.outstanding,
+        total: feeDue.total,
+        alreadyPaid: feeDue.paid,
+        label: `Consultation fee — ${patientName || 'patient'}`,
+      });
+      setFeeDue(null);
+    } catch (e) {
+      toast(e instanceof Error ? e.message : 'Could not record the payment', 'error');
+      setBusy(false);
+      return;
+    }
+    setBusy(false);
+    await save();
+  }
+
   async function save() {
     setBusy(true);
     try {
+      if (!(await feeCleared())) return;
       // Triage is a four-step choreography against the server. Each step is
       // queued so the whole thing survives an outage — previously the very
       // first call failed and the vitals were lost.
@@ -1465,10 +1518,28 @@ function TriageModal({
         </div>
         </div>
 
+        {feeDue && (
+          <div style={{ marginTop: 16, padding: 12, borderRadius: 10, background: 'var(--warning-bg)', color: 'var(--warning-text)', fontSize: 13, lineHeight: 1.5 }}>
+            <strong>Consultation fee not paid.</strong> {feeDue.currency} {feeDue.outstanding.toLocaleString('en-IN')} is outstanding. Collect it before checking the patient in — only cash can be taken offline.
+          </div>
+        )}
+        {feeBlocked && (
+          <div style={{ marginTop: 16, padding: 12, borderRadius: 10, background: 'var(--danger-bg)', color: 'var(--danger-text)', fontSize: 13, lineHeight: 1.5 }}>
+            {feeBlocked}
+          </div>
+        )}
+
         <div style={{ display: 'flex', gap: 10, marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)', flexShrink: 0 }}>
-          <button onClick={save} disabled={busy} style={{ flex: 1, height: 44, background: 'var(--brand-500)', color: 'white', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          {feeDue && (
+            <button onClick={() => void collectFeeAndSave()} disabled={busy} style={{ flex: 1.4, height: 44, background: 'var(--brand-500)', color: 'white', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+              {busy ? <Spinner size={16} /> : <><Icon name="banknote" size={16} /> Collect {feeDue.currency} {feeDue.outstanding.toLocaleString('en-IN')} cash &amp; check in</>}
+            </button>
+          )}
+          {!feeDue && (
+          <button onClick={save} disabled={busy || !!feeBlocked} style={{ flex: 1, height: 44, background: 'var(--brand-500)', color: 'white', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
             {busy ? <Spinner size={16} /> : <><Icon name="check" size={16} /> Check In & Save</>}
           </button>
+          )}
           <button onClick={onClose} style={{ flex: 1, height: 44, background: 'none', border: '1px solid var(--border)', borderRadius: 10, fontWeight: 600, cursor: 'pointer', color: 'var(--text)' }}>
             Cancel
           </button>
@@ -2061,6 +2132,12 @@ function BookSheet({
           manualBillLabel: visitTypeId ? undefined : billLabel,
         };
       }
+      // Offline the auto-issued bill does not exist yet — the server creates
+      // it when this booking replays. Minting its id here lets the fee be
+      // taken now, against a bill the server will create with the same id,
+      // and lets check-in see that it is paid. Only sent when queued.
+      const hasFeeBill = Boolean(visitTypeId) || (amountNum > 0 && Boolean(billLabel));
+      const offlineBillId = newObjectId();
       const { data: created, queued: apptQueued } = await apiPostQueued<{
         _id: string;
         billId?: string;
@@ -2069,32 +2146,84 @@ function BookSheet({
         // The server stamps BOOKED on create. Without it the cached record
         // has no status and the appointment sheet hides check-in, cancel and
         // start-consultation — the flow would stop dead at booking.
-        localRecord: { status: 'BOOKED' },
+        //
+        // The server also populates `patientId` with the patient's name and
+        // MRN on read. Without the same shape locally, an offline booking
+        // shows as "—" with a "?" avatar in the waiting list, which reads
+        // `patientId.fullName`. Cache-only: the request still sends the id.
+        localRecord: {
+          status: 'BOOKED',
+          patientId: {
+            _id: selectedPatient._id,
+            fullName: selectedPatient.fullName,
+            ...(selectedPatient.mrn ? { mrn: selectedPatient.mrn } : {}),
+          },
+        },
         // A QUEUE booking has to tell the patient a token number immediately,
         // so offline we derive the next one locally and send it. The server
         // honours it rather than renumbering the slip on sync.
         enrichOnQueue: async () => {
-          if (body.type !== 'QUEUE') return {};
+          const extra: Record<string, unknown> = hasFeeBill ? { billId: offlineBillId } : {};
+          if (body.type !== 'QUEUE') return extra;
           const n = await nextLocalQueueNumber(
             ctx.clinicId,
             String(body.doctorId ?? ''),
             String(body.queueDate ?? ''),
           );
-          return n > 0 ? { queueNumber: n } : {};
+          return n > 0 ? { ...extra, queueNumber: n } : extra;
         },
       });
 
       if (apptQueued) {
-        // The auto-issued bill is created server-side from `visitTypeId` /
-        // `manualBillAmount`, so there is no bill to pay against yet. The
-        // appointment is safe; payment is collected from Billing once the
-        // bill exists. Saying so is better than silently dropping it.
-        toast(
-          amountNum > 0
-            ? 'Appointment saved on this device. Collect payment from Billing once it syncs.'
-            : 'Appointment saved on this device. It will sync when you reconnect.',
-          'success',
-        );
+        if (!hasFeeBill) {
+          toast('Appointment saved on this device. It will sync when you reconnect.', 'success');
+          onCreated();
+          return;
+        }
+        // The device's copy of the bill the server will create on replay —
+        // so Billing can show it and check-in can see whether it is paid.
+        const price = pickedVisitType?.price ?? amountNum;
+        const currency = pickedVisitType?.currency ?? ctx.currency ?? 'INR';
+        const now = new Date().toISOString();
+        await putRecords(ctx.clinicId, 'bills', [{
+          _id: offlineBillId,
+          status: 'ISSUED',
+          billNoPending: true,
+          kind: 'SERVICE',
+          currency,
+          items: [{ customName: billLabel, quantity: 1, unitPrice: price, amount: price }],
+          subtotal: price,
+          discount: 0,
+          tax: 0,
+          total: price,
+          patientId: selectedPatient._id,
+          branchId: ctx.branchId,
+          appointmentId: created._id,
+          issuedAt: now,
+          createdAt: now,
+        }]).catch(() => undefined);
+
+        if (payMethod !== 'CASH') {
+          toast('Appointment saved on this device. Only cash can be taken offline — collect the fee before check-in.', 'success');
+          onCreated();
+          return;
+        }
+        try {
+          await recordCashPayment(ctx, {
+            billId: offlineBillId,
+            amount: amountNum,
+            total: price,
+            idempotencyKey: payIdempKey,
+            providerRef: ref,
+            label: `Consultation fee — ${selectedPatient.fullName ?? 'patient'}`,
+          });
+          toast('Appointment and cash payment saved on this device. They will sync when you reconnect.', 'success');
+        } catch (payErr) {
+          toast(
+            `Appointment saved, but the payment could not be recorded: ${payErr instanceof Error ? payErr.message : String(payErr)}. Collect the fee before check-in.`,
+            'error',
+          );
+        }
         onCreated();
         return;
       }

@@ -328,7 +328,23 @@ export function EncounterScreen() {
       try {
         const appts = await apiGet<any[]>(ctx, `/appointments?${qs.toString()}`);
         if (cancelled) return;
-        setQueue(appts.filter((a) => a.status === 'CHECKED_IN' || a.status === 'IN_PROGRESS'));
+        const waiting = appts.filter((a) => a.status === 'CHECKED_IN' || a.status === 'IN_PROGRESS');
+        // The server populates `patientId`; a booking made offline holds only
+        // the id until it syncs. Resolve those from the patient cache so the
+        // row shows a name rather than "—".
+        const resolved = await Promise.all(
+          waiting.map(async (a) => {
+            if (typeof a.patientId !== 'string') return a;
+            try {
+              const p = await apiGet<Patient>(ctx, `/patients/${a.patientId}`);
+              return { ...a, patientId: { _id: p._id ?? a.patientId, fullName: p.fullName, mrn: p.mrn } };
+            } catch {
+              return a;
+            }
+          }),
+        );
+        if (cancelled) return;
+        setQueue(resolved);
       } catch {
         if (!cancelled && initial) setQueue([]);
       } finally {

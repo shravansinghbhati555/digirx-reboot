@@ -67,6 +67,12 @@ export const WORKING_SET: WorkingSetEntry[] = [
   { collection: 'visit-types', path: '/visit-types', maxAgeMs: 12 * HOUR },
   { collection: 'services', path: '/billing/services', maxAgeMs: 12 * HOUR },
   { collection: 'medicines', path: '/medicines', maxAgeMs: 12 * HOUR },
+  // Bills. Check-in is refused until the consultation fee is paid, so offline
+  // the device has to know each appointment's bill: today's, plus anything
+  // still unpaid from earlier days (a patient booked last week and arriving
+  // today).
+  { collection: 'bills', path: '/bills?date={today}&limit=200', maxAgeMs: 5 * 60_000 },
+  { collection: 'bills', path: '/bills?status=issued&limit=200', maxAgeMs: HOUR },
 ];
 
 const SYNCED_AT = (collection: string, path: string) => `ws.syncedAt:${collection}:${path}`;
@@ -161,6 +167,13 @@ const CACHEABLE: Array<{
   collection: string;
   single?: boolean;
   /**
+   * A list nested under a parent, e.g. `/bills/:id/payments`: the captured id
+   * scopes the list to records whose `scopeField` equals it.
+   */
+  scopeField?: string;
+  /** The list endpoint wraps its rows, e.g. `{ rows, count }` for `/bills`. */
+  envelope?: 'rows';
+  /**
    * Resolve the single document by matching a field against the captured
    * group instead of by `_id`. Needed for lookups keyed by something other
    * than the record's own id, e.g. `/encounters/by-appointment/:appointmentId`
@@ -182,6 +195,9 @@ const CACHEABLE: Array<{
   { re: /^\/encounters\/([a-f0-9]{24})(?:\?|$)/i, collection: 'encounters', single: true },
   { re: /^\/encounters(?:\?|$)/, collection: 'encounters' },
   { re: /^\/prescriptions\/([a-f0-9]{24})(?:\?|$)/i, collection: 'prescriptions', single: true },
+  { re: /^\/bills\/([a-f0-9]{24})\/payments(?:\?|$)/i, collection: 'payments', scopeField: 'billId' },
+  { re: /^\/bills\/([a-f0-9]{24})(?:\?|$)/i, collection: 'bills', single: true },
+  { re: /^\/bills(?:\?|$)/, collection: 'bills', envelope: 'rows' },
   { re: /^\/visit-types(?:\?|$)/, collection: 'visit-types' },
   { re: /^\/billing\/services(?:\?|$)/, collection: 'services' },
   { re: /^\/medicines(?:\?|$)/, collection: 'medicines' },
@@ -192,20 +208,115 @@ export type CacheMatch = {
   id?: string;
   /** Set when the id above names a field other than `_id` to match on. */
   matchField?: string;
+  /** Nested list: only records whose `field` equals `value`. */
+  scope?: { field: string; value: string };
+  envelope?: 'rows';
+  /** The request's query string — list reads apply it offline. */
+  query?: URLSearchParams;
 };
 
 export function matchCacheable(path: string): CacheMatch | null {
   for (const rule of CACHEABLE) {
     const m = rule.re.exec(path);
     if (m) {
+      const qIndex = path.indexOf('?');
       return {
         collection: rule.collection,
         id: rule.single ? m[1] : undefined,
         matchField: rule.matchField,
+        scope: rule.scopeField ? { field: rule.scopeField, value: m[1] } : undefined,
+        envelope: rule.envelope,
+        query: qIndex >= 0 ? new URLSearchParams(path.slice(qIndex + 1)) : undefined,
       };
     }
   }
   return null;
+}
+
+/** `_id` of a field that may be a plain id or a populated document. */
+function idOf(v: unknown): string {
+  if (v && typeof v === 'object') return String((v as { _id?: unknown })._id ?? '');
+  return v == null ? '' : String(v);
+}
+
+function dateIn(at: unknown, tz?: string): string | null {
+  if (!at) return null;
+  const d = new Date(at as string);
+  if (Number.isNaN(d.getTime())) return null;
+  try {
+    return new Intl.DateTimeFormat('en-CA', tz ? { timeZone: tz } : undefined).format(d);
+  } catch {
+    return new Intl.DateTimeFormat('en-CA').format(d);
+  }
+}
+
+const ID_FILTERS = ['branchId', 'doctorId', 'patientId', 'appointmentId', 'encounterId', 'billId'];
+
+/**
+ * Apply a list request's query to cached records, the way the server would.
+ *
+ * Without this an offline list returned **everything** cached for the
+ * collection: "today's appointments" included every other cached day, so a
+ * patient booked for last Thursday showed up in today's queue, was checked
+ * in, and the check-in failed on sync. Only the filters the app actually
+ * sends are understood; unknown parameters are ignored.
+ */
+export function applyQuery(
+  collection: string,
+  docs: Array<Record<string, unknown>>,
+  query: URLSearchParams | undefined,
+  tz?: string,
+): Array<Record<string, unknown>> {
+  if (!query) return docs;
+  const zone = query.get('tz') || tz;
+  let out = docs;
+
+  for (const field of ID_FILTERS) {
+    const want = query.get(field);
+    if (!want) continue;
+    // A record without the field is kept: an offline-created document may
+    // simply not carry it, and dropping it would hide local work.
+    out = out.filter((d) => d[field] === undefined || idOf(d[field]) === want);
+  }
+
+  const status = query.get('status');
+  if (status) {
+    const wanted = new Set(status.split(',').map((x) => x.trim().toUpperCase()));
+    out = out.filter((d) => wanted.has(String(d.status ?? '').toUpperCase()));
+  }
+
+  const kind = query.get('kind');
+  if (kind) out = out.filter((d) => d.kind === undefined || String(d.kind) === kind);
+
+  const date = query.get('date');
+  if (date) {
+    out = out.filter((d) => {
+      if (collection === 'appointments') {
+        if (d.queueDate) return d.queueDate === date;
+        return dateIn(d.startAt, zone) === date;
+      }
+      if (collection === 'bills') return dateIn(d.createdAt ?? d.issuedAt, zone) === date;
+      return true;
+    });
+  }
+
+  const search = (query.get('query') ?? query.get('q') ?? '').trim().toLowerCase();
+  if (search && collection === 'patients') {
+    const digits = search.replace(/\D/g, '');
+    out = out.filter((d) => {
+      if (String(d.fullName ?? '').toLowerCase().includes(search)) return true;
+      if (String(d.mrn ?? '').toLowerCase().includes(search)) return true;
+      if (digits.length >= 3) {
+        const phones = Array.isArray(d.phones) ? d.phones : [];
+        return phones.some((p) => String(p).replace(/\D/g, '').includes(digits));
+      }
+      return false;
+    });
+  }
+
+  const limit = Number(query.get('limit'));
+  if (Number.isFinite(limit) && limit > 0) out = out.slice(0, limit);
+  return out;
 }
 
 /**
@@ -219,9 +330,14 @@ export async function cacheResponse(
   body: unknown,
 ): Promise<void> {
   try {
-    const docs = match.id
+    let docs = match.id
       ? [body as Record<string, unknown>]
       : extractItems(body);
+    // Stamp the parent id on nested rows so the scoped read can find them.
+    if (match.scope) {
+      const { field, value } = match.scope;
+      docs = docs.map((d) => (d[field] === undefined ? { ...d, [field]: value } : d));
+    }
     if (docs.length) await putRecords(clinicId, match.collection, docs);
   } catch {
     // ignore
@@ -236,6 +352,7 @@ export async function cacheResponse(
 export async function readFromCache(
   clinicId: string,
   match: CacheMatch,
+  tz?: string,
 ): Promise<unknown | undefined> {
   try {
     if (match.id) {
@@ -249,9 +366,22 @@ export async function readFromCache(
       return rows.find((r) => r.id === match.id)?.doc;
     }
     const rows = await listRecords(clinicId, match.collection);
-    if (!rows.length) return undefined;
+    // Nothing cached at all is "unknown", not "empty" — the caller reports
+    // it as offline. A nested list (payments of one bill) is the exception:
+    // a bill with no cached payments has, as far as this device knows, none.
+    if (!rows.length && !match.scope) return undefined;
     // Newest first, matching what list endpoints generally return.
-    return rows.sort((a, b) => b.cachedAt - a.cachedAt).map((r) => r.doc);
+    let docs = rows
+      .sort((a, b) => b.cachedAt - a.cachedAt)
+      .map((r) => r.doc as Record<string, unknown>);
+    if (match.scope) {
+      const { field, value } = match.scope;
+      docs = docs.filter((d) => idOf(d[field]) === value);
+    }
+    docs = applyQuery(match.collection, docs, match.query, tz);
+    return match.envelope === 'rows'
+      ? { rows: docs, count: docs.length, branchId: match.query?.get('branchId') ?? null }
+      : docs;
   } catch {
     return undefined;
   }

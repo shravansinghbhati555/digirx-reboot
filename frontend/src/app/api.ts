@@ -45,7 +45,7 @@ export async function apiGet<T>(ctx: DevContext, path: string): Promise<T> {
       throw err;
     }
     if (!match) throw err;
-    const cached = await readFromCache(ctx.clinicId, match);
+    const cached = await readFromCache(ctx.clinicId, match, ctx.clinicTimezone ?? ctx.timezone);
     // Nothing cached is NOT an empty result. Returning [] here would render
     // as "this patient has no appointments" rather than "we cannot reach the
     // server", which is exactly the kind of quiet lie this phase exists to

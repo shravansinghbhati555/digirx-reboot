@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { apiGet, apiPost, apiPostQueued } from '../../app/api';
 import { useApp } from '../../app/AppContext';
 import { drawNumber } from '../../offline/leases';
+import { newObjectId } from '../../offline/ids';
+import { patchCachedRecord } from '../../offline/working-set';
 import { isOnline, subscribeConnectivity } from '../../offline/connectivity';
 import { useIsMobile } from '../../app/useIsMobile';
 import { Perm, usePerm } from '../../app/permissions';
@@ -981,6 +983,7 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
       // Replay is already idempotent here: the backend enforces a partial
       // unique index on (clinic, bill, idempotencyKey), so re-sending a
       // queued payment can never double-charge.
+      const paidAt = new Date().toISOString();
       const { queued: payQueued } = await apiPostQueued(
         ctx,
         `/bills/${bill._id}/payments`,
@@ -995,9 +998,15 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
           // Without this the server stamps the payment when it *replays*, so
           // cash taken on Monday and synced on Wednesday lands in Wednesday's
           // drawer and both days' cash counts come out wrong.
-          enrichOnQueue: async () => ({ paidAt: new Date().toISOString() }),
+          enrichOnQueue: async () => ({ paidAt }),
+          // Cache-only: a local id so the payment shows on the bill offline,
+          // and counts toward the check-in fee gate (`billSettlement`).
+          localRecord: { _id: newObjectId(), billId: bill._id, paidAt },
         },
       );
+      if (payQueued && Math.round(backendAmount * 100) >= Math.round(balance * 100)) {
+        await patchCachedRecord(ctx.clinicId, 'bills', bill._id, { status: 'PAID' });
+      }
       toast(
         payQueued
           ? `Cash of ${formatMoney(backendAmount, bill.currency)} recorded on this device.`
