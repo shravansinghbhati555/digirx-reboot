@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import type { AppRequest } from '../../common/types';
-import { parseObjectId } from '../../common/request-context';
+import { parseDeviceId, parseObjectId } from '../../common/request-context';
 import type { JwtClaims } from './auth.types';
 
 @Injectable()
@@ -30,6 +30,11 @@ export class JwtContextGuard implements CanActivate {
           ? parseObjectId(claims.branchId, 'branchId')
           : undefined,
         actorUserId: parseObjectId(claims.sub, 'sub'),
+        // Rebuilt from the token, so carry the device id over too. Dropping
+        // it here left every token-authenticated request without one: number
+        // leases and unlock-code uploads were refused with "Send x-device-id"
+        // and offline writes synced with no device attribution.
+        deviceId: parseDeviceId(req.header('x-device-id')),
       };
       return true;
     } catch {

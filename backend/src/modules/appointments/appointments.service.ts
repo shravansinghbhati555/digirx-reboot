@@ -251,6 +251,7 @@ export class AppointmentsService {
             visitTypeId: dto.visitTypeId,
             manualBillAmount: dto.manualBillAmount,
             manualBillLabel: dto.manualBillLabel,
+            billId: dto.billId,
             clinicId, branchId, doctorId, patientId, actorUserId,
           });
         } catch (e: any) {
@@ -300,6 +301,7 @@ export class AppointmentsService {
         visitTypeId: dto.visitTypeId,
         manualBillAmount: dto.manualBillAmount,
         manualBillLabel: dto.manualBillLabel,
+        billId: dto.billId,
         clinicId, branchId, doctorId, patientId, actorUserId,
       });
     }
@@ -372,6 +374,7 @@ export class AppointmentsService {
             visitTypeId: dto.visitTypeId,
             manualBillAmount: dto.manualBillAmount,
             manualBillLabel: dto.manualBillLabel,
+            billId: dto.billId,
             clinicId, branchId, doctorId, patientId, actorUserId,
           });
         } catch (e: any) {
@@ -406,6 +409,7 @@ export class AppointmentsService {
         visitTypeId: dto.visitTypeId,
         manualBillAmount: dto.manualBillAmount,
         manualBillLabel: dto.manualBillLabel,
+        billId: dto.billId,
         clinicId, branchId, doctorId, patientId, actorUserId,
       });
     }
@@ -432,6 +436,8 @@ export class AppointmentsService {
     visitTypeId?: string;
     manualBillAmount?: number;
     manualBillLabel?: string;
+    /** Client-minted id for the bill (offline booking). See the DTO. */
+    billId?: string;
     clinicId: Types.ObjectId;
     branchId: Types.ObjectId;
     doctorId: Types.ObjectId;
@@ -492,6 +498,7 @@ export class AppointmentsService {
     const apptDoc: any = input.appt;
     const apptId = apptDoc._id as Types.ObjectId;
     const bill = await this.billModel.create({
+      ...clientIdFields(input.billId),
       clinicId: input.clinicId,
       branchId: input.branchId,
       patientId: input.patientId,

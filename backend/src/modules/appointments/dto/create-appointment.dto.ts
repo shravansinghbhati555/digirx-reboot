@@ -75,4 +75,16 @@ export class CreateAppointmentDto extends ClientIdDto {
   @MinLength(1)
   @MaxLength(80)
   manualBillLabel?: string;
+
+  /**
+   * Client-minted `_id` for the auto-issued bill above. An offline booking
+   * sends it so the device can take the consultation fee immediately —
+   * queueing the payment against this id — and the check-in that follows
+   * passes the pre-payment gate on replay, because booking (which creates
+   * the bill), payment and check-in replay in that order. Ignored when no
+   * bill is auto-issued.
+   */
+  @IsOptional()
+  @IsMongoId()
+  billId?: string;
 }

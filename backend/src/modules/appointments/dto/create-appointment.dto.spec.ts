@@ -25,6 +25,26 @@ describe('CreateAppointmentDto', () => {
     });
   });
 
+  it('accepts a client-minted bill id for an offline booking', async () => {
+    await expectValid(CreateAppointmentDto, {
+      type: 'QUEUE',
+      branchId: ID,
+      doctorId: ID,
+      patientId: ID,
+      queueDate: '2026-05-01',
+      visitTypeId: ID,
+      billId: '507f1f77bcf86cd799439012',
+    });
+  });
+
+  it('rejects a bill id that is not an ObjectId', async () => {
+    await expectInvalid(
+      CreateAppointmentDto,
+      { type: 'QUEUE', branchId: ID, doctorId: ID, patientId: ID, queueDate: '2026-05-01', billId: 'bill-1' },
+      'billId',
+    );
+  });
+
   it('rejects an unknown type', async () => {
     await expectInvalid(
       CreateAppointmentDto,
