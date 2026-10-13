@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   forwardRef,
   Inject,
   Injectable,
@@ -36,6 +37,8 @@ import { NotificationChannel } from '../notifications/schemas/notification-templ
 import { renderTemplate } from '../notifications/template.utils';
 import { clientIdFields } from '../offline/client-id.util';
 import { NumberLeaseService } from '../offline/number-lease.service';
+import { AuthzService } from '../authz/authz.service';
+import { Permission } from '../authz/permissions';
 import { LeaseCounter } from '../offline/schemas/number-lease.schema';
 
 const CURRENCY_RE = /^[A-Z]{3}$/;
@@ -89,6 +92,8 @@ export class BillingService {
     // Global module — used to auto-deliver the invoice to the patient on
     // issue (WhatsApp + email).
     private readonly notifications: NotificationsService,
+    // Resolves the actor's permissions for the payment-collection rule.
+    private readonly authz: AuthzService,
     // forwardRef breaks the BillingModule ↔ CreditNotesModule cycle: each
     // depends on the other (this for void-blocking; CN service for the Bill
     // schema). Nest resolves it after both modules have initialized.
@@ -629,16 +634,85 @@ export class BillingService {
     return updated;
   }
 
+  /**
+   * Who may record a payment: billing:write, or — when the clinic setting
+   * `appointments.doctorsCanCollectPayment` is on — anyone who can book
+   * (appointment:write). Offline a doctor often works alone and is the only
+   * one there to take the fee; this lets that payment sync instead of 403ing.
+   */
+  async assertCanCollectPayment(
+    clinicId: Types.ObjectId,
+    actorUserId: Types.ObjectId | undefined,
+  ): Promise<void> {
+    const { have, doctorsCollect } = await this.feeAccess(clinicId, actorUserId);
+    if (have.has(Permission.BillingWrite) || doctorsCollect) return;
+    throw new ForbiddenException(`Missing permission: ${Permission.BillingWrite}`);
+  }
+
+  /**
+   * How much of billing this actor may read. `all` with billing:read;
+   * `fees` — consultation bills only (those tied to an appointment) — for
+   * appointment:write roles when doctors may collect. A doctor taking the fee
+   * needs to see whether it is paid, offline too, but not pharmacy bills.
+   */
+  async billReadScope(
+    clinicId: Types.ObjectId,
+    actorUserId: Types.ObjectId | undefined,
+  ): Promise<'all' | 'fees'> {
+    const { have, doctorsCollect } = await this.feeAccess(clinicId, actorUserId);
+    if (have.has(Permission.BillingRead)) return 'all';
+    if (doctorsCollect) return 'fees';
+    throw new ForbiddenException(`Missing permission: ${Permission.BillingRead}`);
+  }
+
+  /** A bill the actor may read under `scope`; 404 for one outside it. */
+  async getBillScoped(clinicId: Types.ObjectId, id: string, scope: 'all' | 'fees') {
+    const bill = await this.getBill(clinicId, id);
+    if (scope === 'fees' && !bill.appointmentId) {
+      throw new NotFoundException('Bill not found');
+    }
+    return bill;
+  }
+
+  private async feeAccess(
+    clinicId: Types.ObjectId,
+    actorUserId: Types.ObjectId | undefined,
+  ): Promise<{ have: Set<string>; doctorsCollect: boolean }> {
+    const actor = await this.authz.getActor({ clinicId, actorUserId });
+    const have = new Set<string>(actor.permissions);
+    let doctorsCollect = false;
+    if (have.has(Permission.AppointmentWrite)) {
+      const clinic = await this.clinicModel.findOne({ _id: clinicId }).lean();
+      doctorsCollect = mergeClinicSettings(clinic?.settings).appointments.doctorsCanCollectPayment;
+    }
+    return { have, doctorsCollect };
+  }
+
   async addPayment(
     clinicId: Types.ObjectId,
     actorUserId: Types.ObjectId | undefined,
     billId: string,
     dto: CreatePaymentDto,
+    deviceId?: string,
   ): Promise<{ payment: Payment; replayed: boolean }> {
     const bill = await this.getBill(clinicId, billId);
+    // A retry of a payment that already landed must be recognised before the
+    // status check: that payment may be what flipped the bill to PAID, and
+    // answering "only issued bills" would wedge an offline queue whose first
+    // attempt succeeded but lost its response.
+    if (dto.idempotencyKey) {
+      const existing = await this.paymentModel.findOne({
+        clinicId,
+        billId: bill._id,
+        idempotencyKey: dto.idempotencyKey,
+      });
+      if (existing) return { payment: existing, replayed: true };
+    }
     if (bill.status !== BillStatus.Issued)
       throw new BadRequestException(
-        'Payments can be added only to issued bills',
+        bill.status === BillStatus.Paid
+          ? 'This bill is already fully paid'
+          : 'Payments can be added only to issued bills',
       );
 
     const amount = Number(dto.amount);
@@ -662,6 +736,9 @@ export class BillingService {
         paidAt,
         receivedBy: actorUserId,
         idempotencyKey: dto.idempotencyKey,
+        ...(dto.collectedOffline
+          ? { collectedOffline: true, deviceId, syncedAt: new Date() }
+          : {}),
       });
     } catch (err: any) {
       if (err && err.code === 11000) {
@@ -840,10 +917,13 @@ export class BillingService {
       kind?: string;
       date?: string;
       limit?: number;
+      /** Only consultation bills (tied to an appointment) — see billReadScope. */
+      onlyAppointmentFees?: boolean;
     } = {},
   ) {
     const { branchId, patientId, status, kind, date, limit = 100 } = opts;
     const match: Record<string, unknown> = { clinicId };
+    if (opts.onlyAppointmentFees) match.appointmentId = { $ne: null };
     if (branchId) match.branchId = new Types.ObjectId(branchId);
     // Patient filter — without this, /bills?patientId=… returned every bill
     // in the clinic and the FE rendered them under whichever patient was

@@ -39,6 +39,18 @@ export class Payment {
 
   @Prop({ trim: true })
   idempotencyKey?: string;
+
+  /** Taken while the device was offline and synced later. `paidAt` is when
+   *  the cash changed hands; `syncedAt` is when it reached the server. */
+  @Prop({ type: Boolean, default: false })
+  collectedOffline?: boolean;
+
+  /** Device the offline payment was taken on (x-device-id). */
+  @Prop({ trim: true })
+  deviceId?: string;
+
+  @Prop({ type: Date })
+  syncedAt?: Date;
 }
 
 export const PaymentSchema = SchemaFactory.createForClass(Payment);

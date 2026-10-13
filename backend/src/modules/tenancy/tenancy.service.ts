@@ -200,6 +200,9 @@ export class TenancyService {
         slotMinutesDefault:
           patch.appointments?.slotMinutesDefault ??
           current.appointments.slotMinutesDefault,
+        doctorsCanCollectPayment:
+          patch.appointments?.doctorsCanCollectPayment ??
+          current.appointments.doctorsCanCollectPayment,
       },
       // Patients settings — currently just the MRN format. Patch isn't yet
       // wired into PatchClinicSettingsDto, so we always carry the current

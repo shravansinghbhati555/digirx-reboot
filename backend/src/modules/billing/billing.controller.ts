@@ -110,8 +110,10 @@ export class BillingController {
     );
   }
 
+  // billing:read, or consultation bills only for doctors allowed to collect
+  // the fee (billReadScope) — needed to check the fee is paid, offline too.
   @Get('bills')
-  @RequirePermissions(Permission.BillingRead)
+  @RequirePermissions()
   async listBills(
     @Req() req: AppRequest,
     @Query('branchId') branchId?: string,
@@ -122,6 +124,10 @@ export class BillingController {
     @Query('limit') limitRaw?: string,
   ) {
     const limit = Number(limitRaw ?? 100) || 100;
+    const scope = await this.billing.billReadScope(
+      req.context!.clinicId,
+      req.context!.actorUserId,
+    );
     return await this.billing.listBills(req.context!.clinicId, {
       branchId,
       patientId,
@@ -129,6 +135,7 @@ export class BillingController {
       kind,
       date,
       limit,
+      onlyAppointmentFees: scope === 'fees',
     });
   }
 
@@ -146,9 +153,13 @@ export class BillingController {
   }
 
   @Get('bills/:id')
-  @RequirePermissions(Permission.BillingRead)
+  @RequirePermissions()
   async getBill(@Req() req: AppRequest, @Param('id') id: string) {
-    return await this.billing.getBill(req.context!.clinicId, id);
+    const scope = await this.billing.billReadScope(
+      req.context!.clinicId,
+      req.context!.actorUserId,
+    );
+    return await this.billing.getBillScoped(req.context!.clinicId, id, scope);
   }
 
   @Get('bills/context/find')
@@ -165,18 +176,25 @@ export class BillingController {
   }
 
   @Post('bills/:id/payments')
-  @RequirePermissions(Permission.BillingWrite)
+  // billing:write, or appointment:write when the clinic lets doctors collect
+  // the fee — an either/or the guard cannot express, so the service checks.
+  @RequirePermissions()
   async addPayment(
     @Req() req: AppRequest,
     @Param('id') billId: string,
     @Body() dto: CreatePaymentDto,
     @Res({ passthrough: true }) res: Response,
   ) {
+    await this.billing.assertCanCollectPayment(
+      req.context!.clinicId,
+      req.context!.actorUserId,
+    );
     const result = await this.billing.addPayment(
       req.context!.clinicId,
       req.context!.actorUserId,
       billId,
       dto,
+      req.context!.deviceId,
     );
     if (result.replayed) {
       res.setHeader('X-Idempotent-Replay', 'true');
@@ -185,8 +203,13 @@ export class BillingController {
   }
 
   @Get('bills/:id/payments')
-  @RequirePermissions(Permission.BillingRead)
+  @RequirePermissions()
   async listPayments(@Req() req: AppRequest, @Param('id') billId: string) {
+    const scope = await this.billing.billReadScope(
+      req.context!.clinicId,
+      req.context!.actorUserId,
+    );
+    await this.billing.getBillScoped(req.context!.clinicId, billId, scope);
     return await this.billing.listPayments(req.context!.clinicId, billId);
   }
 

@@ -38,6 +38,14 @@ export class UsersController {
     return await this.users.list(req.context!.clinicId, query);
   }
 
+  // Doctor picker for booking. Gated on appointment:read (not user:read) so
+  // doctors and other booking roles can load it without seeing all staff.
+  @Get('doctors')
+  @RequirePermissions(Permission.AppointmentRead)
+  async listDoctors(@Req() req: AppRequest) {
+    return await this.users.listDoctors(req.context!.clinicId);
+  }
+
   @Post()
   @RequirePermissions(Permission.UserWrite)
   async create(@Req() req: AppRequest, @Body() dto: CreateUserDto) {

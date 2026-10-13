@@ -61,7 +61,7 @@ export class PermissionsGuard implements CanActivate {
     req.actorPermissions = have;
 
     for (const p of required) {
-      if (!have.has(p)) throw new ForbiddenException('Missing permission');
+      if (!have.has(p)) throw new ForbiddenException(`Missing permission: ${p}`);
     }
     return true;
   }

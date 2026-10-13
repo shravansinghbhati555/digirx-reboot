@@ -98,7 +98,40 @@ describe('BillingService.addPayment idempotency', () => {
     expect(out.payment).toBe(inserted);
     expect(out.replayed).toBe(false);
     expect(paymentModel.create).toHaveBeenCalledTimes(1);
-    expect(paymentModel.findOne).not.toHaveBeenCalled();
+    // Only the up-front replay lookup, which found nothing.
+    expect(paymentModel.findOne).toHaveBeenCalledTimes(1);
+  });
+
+  it('replays a payment that already settled the bill instead of rejecting it', async () => {
+    // The first attempt landed and flipped the bill to PAID, but the response
+    // was lost offline. The retry must be recognised, not answered with
+    // "only issued bills" — that wedged the sync queue.
+    const bill = makeIssuedBill({ status: BillStatus.Paid });
+    billModel.findOne.mockResolvedValue(bill);
+    const original = { _id: new Types.ObjectId(), billId: bill._id, idempotencyKey: 'k-12345678', amount: 1000 };
+    paymentModel.findOne.mockResolvedValue(original);
+
+    const out = await service.addPayment(bill.clinicId, undefined, bill._id.toHexString(), {
+      method: PaymentMethod.Cash,
+      amount: 1000,
+      idempotencyKey: 'k-12345678',
+    });
+
+    expect(out).toEqual({ payment: original, replayed: true });
+    expect(paymentModel.create).not.toHaveBeenCalled();
+  });
+
+  it('still rejects a new payment on a bill that is already paid', async () => {
+    billModel.findOne.mockResolvedValue(makeIssuedBill({ status: BillStatus.Paid }));
+    paymentModel.findOne.mockResolvedValue(null);
+
+    await expect(
+      service.addPayment(new Types.ObjectId(), undefined, new Types.ObjectId().toHexString(), {
+        method: PaymentMethod.Cash,
+        amount: 100,
+        idempotencyKey: 'k-different',
+      }),
+    ).rejects.toThrow('already fully paid');
   });
 
   it('returns the original payment with replayed=true on duplicate-key error', async () => {

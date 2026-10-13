@@ -24,6 +24,10 @@ export class PatchAppointmentsDto {
   @Min(5)
   @Max(180)
   slotMinutesDefault?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  doctorsCanCollectPayment?: boolean;
 }
 
 export class PatchInventoryDto {

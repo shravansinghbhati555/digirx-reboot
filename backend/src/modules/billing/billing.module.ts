@@ -34,12 +34,16 @@ import { InventoryItem, InventoryItemSchema } from '../inventory/schemas/invento
 // import billing) so no forwardRef needed.
 import { InventoryModule } from '../inventory/inventory.module';
 import { OfflineModule } from '../offline/offline.module';
+import { AuthzModule } from '../authz/authz.module';
 
 @Module({
   imports: [
     // Lets a bill issued offline keep the number its device drew from a
     // lease — cash may already have been receipted against it.
     OfflineModule,
+    // Payment collection is allowed by billing:write OR, when the clinic
+    // setting is on, appointment:write — decided per request in the service.
+    AuthzModule,
     MongooseModule.forFeature([
       { name: Bill.name, schema: BillSchema },
       { name: BillCounter.name, schema: BillCounterSchema },

@@ -13,6 +13,18 @@ describe('CreatePaymentDto', () => {
     await expectValid(CreatePaymentDto, base);
   });
 
+  it('accepts the offline tag set by the sync queue', async () => {
+    await expectValid(CreatePaymentDto, { ...base, collectedOffline: true });
+  });
+
+  it('rejects a non-boolean offline tag', async () => {
+    await expectInvalid(
+      CreatePaymentDto,
+      { ...base, collectedOffline: 'yes' },
+      'collectedOffline',
+    );
+  });
+
   it('rejects missing idempotencyKey', async () => {
     const { idempotencyKey: _, ...rest } = base;
     await expectInvalid(CreatePaymentDto, rest, 'idempotencyKey');

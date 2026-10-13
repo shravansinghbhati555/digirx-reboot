@@ -86,6 +86,31 @@ export class UsersService {
     return items;
   }
 
+  /**
+   * Active users holding the clinic's `Doctor` role. Backs the booking
+   * sheet's doctor picker, so it is gated on appointment access rather than
+   * user:read — the default Doctor role has no user:read, and without this
+   * a doctor booking their own patient saw an empty picker and no slots.
+   */
+  async listDoctors(clinicId: Types.ObjectId): Promise<UserListItem[]> {
+    const doctorRoles = await this.roleModel
+      .find({ clinicId, name: { $regex: '^doctor$', $options: 'i' } })
+      .lean();
+    if (!doctorRoles.length) return [];
+    const roleMap = new Map(
+      doctorRoles.map((r) => [String(r._id), { _id: String(r._id), name: r.name }]),
+    );
+    const users = await this.userModel
+      .find({
+        clinicId,
+        status: UserStatus.Active,
+        roleIds: { $in: doctorRoles.map((r) => r._id) },
+      })
+      .sort({ name: 1 })
+      .lean();
+    return users.map((u) => this.toListItem(u, roleMap));
+  }
+
   async create(
     clinicId: Types.ObjectId,
     dto: CreateUserDto,

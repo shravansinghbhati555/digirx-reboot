@@ -72,6 +72,13 @@ export type ClinicSettingsV1 = {
   appointments: {
     mode: AppointmentMode;
     slotMinutesDefault: number;
+    /**
+     * Lets anyone who can book appointments (appointment:write — the Doctor
+     * role by default) take the consultation fee, online or offline, without
+     * full billing:write. On by default: offline a doctor often works alone
+     * on one device and is the only one there to collect.
+     */
+    doctorsCanCollectPayment: boolean;
   };
   patients: PatientSettings;
   billing: BillingSettings;
@@ -90,7 +97,7 @@ export type ClinicSettingsV1 = {
 };
 
 export const DEFAULT_CLINIC_SETTINGS: ClinicSettingsV1 = {
-  appointments: { mode: 'BOTH', slotMinutesDefault: 15 },
+  appointments: { mode: 'BOTH', slotMinutesDefault: 15, doctorsCanCollectPayment: true },
   patients: { mrnFormat: 'MRN-{seq:06}' },
   billing: {
     billNoFormat: '{branchCode}/{fiscalYear}/{seq:06}',
@@ -267,6 +274,10 @@ export function mergeClinicSettings(raw: unknown): ClinicSettingsV1 {
         slot <= 180
           ? Math.round(slot)
           : DEFAULT_CLINIC_SETTINGS.appointments.slotMinutesDefault,
+      doctorsCanCollectPayment:
+        typeof appts.doctorsCanCollectPayment === 'boolean'
+          ? appts.doctorsCanCollectPayment
+          : DEFAULT_CLINIC_SETTINGS.appointments.doctorsCanCollectPayment,
     },
     patients: {
       mrnFormat: mrnFormat ?? DEFAULT_CLINIC_SETTINGS.patients.mrnFormat,

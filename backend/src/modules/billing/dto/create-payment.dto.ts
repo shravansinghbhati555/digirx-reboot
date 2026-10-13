@@ -1,4 +1,5 @@
 import {
+  IsBoolean,
   IsEnum,
   IsISO8601,
   IsNumber,
@@ -31,4 +32,9 @@ export class CreatePaymentDto {
   @MinLength(8)
   @MaxLength(64)
   idempotencyKey!: string;
+
+  /** Set by the offline queue on payments taken without a connection. */
+  @IsOptional()
+  @IsBoolean()
+  collectedOffline?: boolean;
 }

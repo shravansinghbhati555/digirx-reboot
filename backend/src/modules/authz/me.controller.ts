@@ -72,6 +72,8 @@ export class MeController {
           // 'TIME' | 'QUEUE' | 'BOTH' — drives whether the BookSheet
           // shows the kind toggle and which option is default.
           appointmentMode: settings.appointments.mode,
+          // Lets appointment:write roles take the fee (see billing).
+          doctorsCanCollectPayment: settings.appointments.doctorsCanCollectPayment,
         }
       : null;
 
