@@ -33,7 +33,32 @@ export type WorkingSetEntry = {
   maxAgeMs: number;
   /** Where the array of documents lives in the response body. */
   itemsAt?: string;
+  /** Permission the endpoint requires. Skipped for roles without it, so a
+   *  Doctor's device does not 403 on billing data every sync. */
+  permission?: string;
+  /** Alternative access rule, for endpoints opened by something other than
+   *  a single permission. Wins over `permission` when present. */
+  allowed?: (ctx: DevContext) => boolean;
 };
+
+/**
+ * True only when the role's permissions are known and lack `perm`. Unknown
+ * permissions (older stored context) keep the previous fetch-everything
+ * behaviour rather than silently caching nothing.
+ */
+export function lacksPermission(ctx: DevContext, perm: string): boolean {
+  return Array.isArray(ctx.permissions) && !ctx.permissions.includes(perm);
+}
+
+/**
+ * Can this user read consultation bills? billing:read, or appointment:write
+ * when the clinic lets doctors collect the fee — the server then serves just
+ * appointment-linked bills, which is all the offline fee check needs.
+ */
+export function canReadFeeBills(ctx: DevContext): boolean {
+  if (!lacksPermission(ctx, 'billing:read')) return true;
+  return !lacksPermission(ctx, 'appointment:write') && ctx.doctorsCanCollectPayment !== false;
+}
 
 const HOUR = 60 * 60 * 1000;
 
@@ -62,17 +87,19 @@ export const WORKING_SET: WorkingSetEntry[] = [
   { collection: 'patients', path: '/patients?limit=200', maxAgeMs: HOUR },
   // Doctors. Without this the booking sheet has no names, so a booking
   // cannot even be composed offline.
-  { collection: 'users', path: '/users', maxAgeMs: 6 * HOUR },
+  { collection: 'users', path: '/users', maxAgeMs: 6 * HOUR, permission: 'user:read' },
+  // Doctor-only list the booking sheet uses; readable without user:read.
+  { collection: 'users', path: '/users/doctors', maxAgeMs: 6 * HOUR, permission: 'appointment:read' },
   // Reference data. Changes rarely; cheap to hold.
   { collection: 'visit-types', path: '/visit-types', maxAgeMs: 12 * HOUR },
-  { collection: 'services', path: '/billing/services', maxAgeMs: 12 * HOUR },
+  { collection: 'services', path: '/billing/services', maxAgeMs: 12 * HOUR, permission: 'billing:read' },
   { collection: 'medicines', path: '/medicines', maxAgeMs: 12 * HOUR },
   // Bills. Check-in is refused until the consultation fee is paid, so offline
   // the device has to know each appointment's bill: today's, plus anything
   // still unpaid from earlier days (a patient booked last week and arriving
   // today).
-  { collection: 'bills', path: '/bills?date={today}&limit=200', maxAgeMs: 5 * 60_000 },
-  { collection: 'bills', path: '/bills?status=issued&limit=200', maxAgeMs: HOUR },
+  { collection: 'bills', path: '/bills?date={today}&limit=200', maxAgeMs: 5 * 60_000, allowed: canReadFeeBills },
+  { collection: 'bills', path: '/bills?status=issued&limit=200', maxAgeMs: HOUR, allowed: canReadFeeBills },
 ];
 
 const SYNCED_AT = (collection: string, path: string) => `ws.syncedAt:${collection}:${path}`;
@@ -128,6 +155,7 @@ export async function syncWorkingSet(
   if (!ctx.clinicId) return reports;
 
   for (const entry of WORKING_SET) {
+    if (entry.allowed ? !entry.allowed(ctx) : entry.permission && lacksPermission(ctx, entry.permission)) continue;
     const resolved = resolvePath(entry.path, ctx);
     const key = SYNCED_AT(entry.collection, entry.path);
     try {
@@ -484,7 +512,7 @@ export async function nextLocalQueueNumber(
  */
 const RESPONSE_CACHEABLE: RegExp[] = [
   // Doctor list — without it the booking sheet has no names to show.
-  /^\/users(?:\?|$)/,
+  /^\/users(?:\/doctors)?(?:\?|$)/,
   // Computed availability. Query-dependent (doctor + date), so a
   // path-keyed cache is the only thing that can answer it correctly.
   /^\/appointments\/slots(?:\?|$)/,

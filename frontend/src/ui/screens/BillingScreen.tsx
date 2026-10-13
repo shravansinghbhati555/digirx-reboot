@@ -72,6 +72,8 @@ type Payment = {
   amount: number;
   paidAt: string;
   reference?: string;
+  /** Taken while offline and synced later (server tag). */
+  collectedOffline?: boolean;
 };
 
 type Service = {
@@ -832,7 +834,14 @@ function BillDetail({
                     </div>
                     <div style={{ flex: 1, minWidth: 0 }}>
                       <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)', fontVariantNumeric: 'tabular-nums' }}>{formatMoney(p.amount, bill.currency)}</div>
-                      <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>{p.method} · {new Date(p.paidAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}</div>
+                      <div style={{ fontSize: 11, color: 'var(--text-subtle)', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        {p.method} · {new Date(p.paidAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })}
+                        {p.collectedOffline && (
+                          <span title="Collected while offline and synced later" style={{ fontSize: 10, fontWeight: 600, padding: '1px 6px', borderRadius: 6, background: 'var(--surface-muted)', border: '1px solid var(--border)', color: 'var(--text-muted)' }}>
+                            Offline
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                 );
@@ -998,7 +1007,7 @@ function PaymentSheet({ bill, balance, onClose, onSuccess }: { bill: Bill; balan
           // Without this the server stamps the payment when it *replays*, so
           // cash taken on Monday and synced on Wednesday lands in Wednesday's
           // drawer and both days' cash counts come out wrong.
-          enrichOnQueue: async () => ({ paidAt }),
+          enrichOnQueue: async () => ({ paidAt, collectedOffline: true }),
           // Cache-only: a local id so the payment shows on the bill offline,
           // and counts toward the check-in fee gate (`billSettlement`).
           localRecord: { _id: newObjectId(), billId: bill._id, paidAt },

@@ -48,6 +48,8 @@ export type Features = {
   // Drives the BookSheet kind selector. 'BOTH' keeps the existing
   // TIME/QUEUE toggle; the others lock the wizard to that one mode.
   appointmentMode: 'TIME' | 'QUEUE' | 'BOTH';
+  // Lets appointment:write roles (doctors) take the consultation fee.
+  doctorsCanCollectPayment: boolean;
 };
 
 type AppState = {
@@ -261,6 +263,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         email: data.user?.email,
         fullName: data.user?.fullName ?? data.user?.name,
         permissions: data.permissions,
+        doctorsCanCollectPayment:
+          data.features?.doctorsCanCollectPayment ?? ctx.doctorsCanCollectPayment,
         // `/me` is the only response that proves the cached permission
         // snapshot is current; an ordinary successful request proves only
         // that the session is alive. Stamped inline rather than via
@@ -387,8 +391,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
       faceRecognition: meData?.features?.faceRecognition ?? false,
       inventory: meData?.features?.inventory ?? false,
       appointmentMode: meData?.features?.appointmentMode ?? 'BOTH',
+      // Falls back to the copy saved from the last /me so it holds offline;
+      // `true` matches the server default.
+      doctorsCanCollectPayment:
+        meData?.features?.doctorsCanCollectPayment ?? ctx.doctorsCanCollectPayment ?? true,
     }),
-    [meData],
+    [meData, ctx.doctorsCanCollectPayment],
   );
 
   // Defaults to false until /me resolves, so the queue never flashes for

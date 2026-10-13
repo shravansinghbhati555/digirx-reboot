@@ -26,6 +26,7 @@
 import { isOnline, isNetworkFailure } from './connectivity';
 import { getMeta, setMeta } from './db';
 import {
+  listFailed,
   listPending,
   markDone,
   markFailed,
@@ -93,10 +94,21 @@ export function classifyResponse(status: number, body: unknown): Classification 
   // 401 is its own thing: the session died while we were queued. Retrying
   // will not help until the user signs in again, but the work is not wrong —
   // so it is retryable rather than permanently failed.
-  if (status === 401 || status === 403) {
+  if (status === 401) {
     return {
       kind: 'retry',
       reason: 'Sign-in required before this can sync.',
+      status,
+    };
+  }
+
+  // 403 is not a session problem: the signed-in role lacks the permission
+  // (e.g. a Doctor recording a payment without billing:write). Signing in
+  // again changes nothing, so retrying only delays telling a human.
+  if (status === 403) {
+    return {
+      kind: 'permanent',
+      reason: `Your role is not allowed to do this${parsed?.message ? ` (${parsed.message})` : ''}. Ask someone with the right access to do it, then discard this item.`,
       status,
     };
   }
@@ -225,7 +237,20 @@ async function drain(ctx: DevContext, outcome: ReplayOutcome): Promise<ReplayOut
   draining = true;
   try {
     await recoverInflight();
-    const pending = await listPending(ctx.clinicId);
+    // A failed entry keeps blocking everything queued after it until a human
+    // retries or discards it. `listPending` leaves failed entries out, so
+    // without this cut the next drain walked straight past the failure — e.g.
+    // a check-in replayed after its rejected fee payment, and failed too.
+    const [firstFailed] = await listFailed(ctx.clinicId);
+    const pending = (await listPending(ctx.clinicId)).filter(
+      (e) => !firstFailed || e.seq < firstFailed.seq,
+    );
+    if (firstFailed) {
+      outcome.haltedAt = {
+        seq: firstFailed.seq,
+        reason: firstFailed.lastError ?? 'Blocked by an earlier failed change',
+      };
+    }
 
     for (const entry of pending) {
       if (!isOnline()) {

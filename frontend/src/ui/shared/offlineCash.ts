@@ -43,7 +43,9 @@ export async function recordCashPayment(
       mintId: false,
       // Stamp the time it was taken, not the time it syncs — the day-end
       // cash count depends on it.
-      enrichOnQueue: async () => ({ paidAt }),
+      // `collectedOffline` tags it on the server, so Billing can show it was
+      // taken without a connection and synced later.
+      enrichOnQueue: async () => ({ paidAt, collectedOffline: true }),
       // Cache-only: a local id so the payment shows on the bill offline.
       localRecord: { _id: newObjectId(), billId: input.billId, paidAt },
     },

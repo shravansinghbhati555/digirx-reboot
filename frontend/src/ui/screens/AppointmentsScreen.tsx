@@ -9,7 +9,7 @@ import { recordCashPayment } from '../shared/offlineCash';
 import { isOnline, subscribeConnectivity } from '../../offline/connectivity';
 import { useIsMobile } from '../../app/useIsMobile';
 import { AVAILABILITY_CHANGED_EVENT } from '../../app/events';
-import { Perm, usePerm } from '../../app/permissions';
+import { Perm, useCanCollectPayment, usePerm } from '../../app/permissions';
 import { Avatar, EmptyState, Spinner, StatusPill, labelStyle, useToast } from '../shared/primitives';
 import { Icon } from '../shared/Icon';
 import { DatePickerChip } from '../shared/DatePickerChip';
@@ -649,7 +649,10 @@ export function AppointmentsScreen() {
   }, [date, ctx.branchId, ctx.clinicId]);
 
   useEffect(() => {
+    // Roles without user:read (e.g. Doctor) get 403 on /users; the
+    // doctor-only list still gives the names and filter they need.
     apiGet<UserListItem[]>(ctx, '/users')
+      .catch(() => apiGet<UserListItem[]>(ctx, '/users/doctors'))
       .then((list) => {
         const next = new Map<string, string>();
         for (const u of list) next.set(u._id, u.name);
@@ -1254,6 +1257,9 @@ function TriageModal({
       ? appt.patientId
       : appt.patientId?._id ?? null;
   const canUploadDocs = has(Perm.DocumentWrite);
+  // billing:write, or appointment:write when the clinic lets doctors collect.
+  // Offering it to anyone else would queue a payment the server 403s on sync.
+  const canCollectFee = useCanCollectPayment();
 
   /**
    * Offline only: is the consultation fee settled? Online the server answers
@@ -1520,7 +1526,10 @@ function TriageModal({
 
         {feeDue && (
           <div style={{ marginTop: 16, padding: 12, borderRadius: 10, background: 'var(--warning-bg)', color: 'var(--warning-text)', fontSize: 13, lineHeight: 1.5 }}>
-            <strong>Consultation fee not paid.</strong> {feeDue.currency} {feeDue.outstanding.toLocaleString('en-IN')} is outstanding. Collect it before checking the patient in — only cash can be taken offline.
+            <strong>Consultation fee not paid.</strong> {feeDue.currency} {feeDue.outstanding.toLocaleString('en-IN')} is outstanding.{' '}
+            {canCollectFee
+              ? 'Collect it before checking the patient in — only cash can be taken offline.'
+              : 'Your role cannot take payments — ask the front desk to collect it, or ask an admin to turn on “Doctors can collect payments” in Settings.'}
           </div>
         )}
         {feeBlocked && (
@@ -1530,13 +1539,13 @@ function TriageModal({
         )}
 
         <div style={{ display: 'flex', gap: 10, marginTop: 16, paddingTop: 16, borderTop: '1px solid var(--border)', flexShrink: 0 }}>
-          {feeDue && (
+          {feeDue && canCollectFee && (
             <button onClick={() => void collectFeeAndSave()} disabled={busy} style={{ flex: 1.4, height: 44, background: 'var(--brand-500)', color: 'white', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
               {busy ? <Spinner size={16} /> : <><Icon name="banknote" size={16} /> Collect {feeDue.currency} {feeDue.outstanding.toLocaleString('en-IN')} cash &amp; check in</>}
             </button>
           )}
-          {!feeDue && (
-          <button onClick={save} disabled={busy || !!feeBlocked} style={{ flex: 1, height: 44, background: 'var(--brand-500)', color: 'white', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
+          {(!feeDue || !canCollectFee) && (
+          <button onClick={save} disabled={busy || !!feeBlocked || !!feeDue} style={{ flex: 1, height: 44, background: 'var(--brand-500)', color: 'white', border: 'none', borderRadius: 10, fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}>
             {busy ? <Spinner size={16} /> : <><Icon name="check" size={16} /> Check In & Save</>}
           </button>
           )}
@@ -1658,6 +1667,11 @@ function BookSheet({
   // half-created appointment in the DB. Step 3 is skipped when the doctor
   // has no visit-type catalog (no bill would be issued anyway).
   const [step, setStep] = useState<1 | 2 | 3 | 4>(defaultPatientId ? 2 : 1);
+  // Who may take the fee: billing:write, or appointment:write when the clinic
+  // setting lets doctors collect. Anyone else skips the Payment step and the
+  // fee is left for the front desk — queuing a payment the server would 403
+  // used to stall the offline sync queue.
+  const canCollectPayment = useCanCollectPayment();
   const [checkoutGateway, setCheckoutGateway] = useState<'NONE' | 'RAZORPAY' | 'STRIPE'>('NONE');
   // Payment fields — mirror the PaymentSheet inside BillingScreen so the
   // front desk recognizes the layout. Idempotency key is generated once
@@ -1788,20 +1802,17 @@ function BookSheet({
       .catch(() => undefined);
   }, [defaultPatientId, ctx]);
 
-  // Pull the clinic's user list so the doctor picker has names instead of
-  // raw ObjectIds. Falls back gracefully if the caller lacks user:read —
-  // in that case the picker degrades to a one-option list (the signed-in
-  // user), which preserves the previous behavior.
+  // Pull the clinic's doctors so the picker has names instead of raw
+  // ObjectIds. `/users/doctors` is gated on appointment:read, not
+  // user:read — the default Doctor role lacks user:read, and the old
+  // `/users` call 403'd for doctors, leaving no doctor and no slots.
   useEffect(() => {
     setDoctorsLoading(true);
-    apiGet<UserListItem[]>(ctx, '/users')
+    apiGet<UserListItem[]>(ctx, '/users/doctors')
       .then((list) => {
-        // Only show users who have the exact 'Doctor' role.
-        const branchDoctors = list.filter((u) => {
-          const hasBranch = !ctx.branchId || (u.branchIds && u.branchIds.includes(ctx.branchId));
-          const isDoctor = u.roles.some((r) => r.name.toLowerCase() === 'doctor');
-          return hasBranch && isDoctor;
-        });
+        const branchDoctors = list.filter((u) =>
+          !ctx.branchId || (u.branchIds ?? []).includes(ctx.branchId),
+        );
         setDoctors(branchDoctors);
 
         // Pick a default doctor: either defaultDoctorId (if provided),
@@ -2052,7 +2063,7 @@ function BookSheet({
     const vt = visitTypes.find((v) => v._id === visitTypeId);
     if (vt) setPayAmount(String(vt.price));
     setError(null);
-    setStep(3);
+    setStep(canCollectPayment ? 3 : 4);
   }
 
   function continueFromStep3() {
@@ -2077,8 +2088,10 @@ function BookSheet({
     if (!selectedPatient) { setError('Patient is required.'); return; }
     if (!doctorId.trim()) { setError('Doctor is required.'); return; }
     if (visitTypes.length > 0 && !visitTypeId) { setError('Pick a visit type so a bill can be issued.'); return; }
-    const amountNum = Number(payAmount);
-    if (!payAmount || !Number.isFinite(amountNum) || amountNum <= 0) {
+    // Without billing:write no payment is taken here; with no visit type the
+    // amount is then simply absent and no manual bill is raised.
+    const amountNum = canCollectPayment || visitTypeId ? Number(payAmount) || 0 : 0;
+    if (canCollectPayment && (!payAmount || !Number.isFinite(amountNum) || amountNum <= 0)) {
       setError('Payment amount is required.');
       return;
     }
@@ -2100,8 +2113,8 @@ function BookSheet({
           visitTypeId: visitTypeId || undefined,
           // Only send manual bill fields when there's no visit type;
           // visit-type wins on the BE.
-          manualBillAmount: visitTypeId ? undefined : amountNum,
-          manualBillLabel: visitTypeId ? undefined : billLabel,
+          manualBillAmount: visitTypeId || amountNum <= 0 ? undefined : amountNum,
+          manualBillLabel: visitTypeId || amountNum <= 0 ? undefined : billLabel,
         };
       } else {
         if (!slotStart) { setError('Time slot is required.'); setSaving(false); return; }
@@ -2128,8 +2141,8 @@ function BookSheet({
           endAt: end.toISOString(),
           notes: composedNotes,
           visitTypeId: visitTypeId || undefined,
-          manualBillAmount: visitTypeId ? undefined : amountNum,
-          manualBillLabel: visitTypeId ? undefined : billLabel,
+          manualBillAmount: visitTypeId || amountNum <= 0 ? undefined : amountNum,
+          manualBillLabel: visitTypeId || amountNum <= 0 ? undefined : billLabel,
         };
       }
       // Offline the auto-issued bill does not exist yet — the server creates
@@ -2203,6 +2216,11 @@ function BookSheet({
           createdAt: now,
         }]).catch(() => undefined);
 
+        if (!canCollectPayment) {
+          toast('Appointment saved on this device. The front desk needs to collect the fee before check-in.', 'success');
+          onCreated();
+          return;
+        }
         if (payMethod !== 'CASH') {
           toast('Appointment saved on this device. Only cash can be taken offline — collect the fee before check-in.', 'success');
           onCreated();
@@ -2231,7 +2249,9 @@ function BookSheet({
       // 2) Record the payment against the auto-issued bill. The BE will
       //    automatically transition the bill to paid if the amount covers
       //    the total. A payment failure does NOT roll back the appointment.
-      if (created.billId) {
+      if (created.billId && !canCollectPayment) {
+        toast('Appointment booked. The front desk needs to collect the fee before check-in.', 'success');
+      } else if (created.billId) {
         try {
           await apiPost(ctx, `/bills/${created.billId}/payments`, {
             method: payMethod,
@@ -2257,6 +2277,10 @@ function BookSheet({
   }
 
   async function submit() {
+    if (!canCollectPayment) {
+      await completeSubmit('');
+      return;
+    }
     const amountNum = Number(payAmount);
     if (!payAmount || !Number.isFinite(amountNum) || amountNum <= 0) {
       setError('Payment amount is required.');
@@ -2364,7 +2388,7 @@ function BookSheet({
               date={date} time={slotStart} duration={duration}
               apptType={apptType} doctorName={doctorName} room={room}
               visitType={pickedVisitType}
-              paid={Number(payAmount) > 0 ? { method: payMethod, amount: Number(payAmount), reference: payRef.trim() || undefined, currency: pickedVisitType?.currency ?? ctx.currency ?? 'INR' } : null}
+              paid={canCollectPayment && Number(payAmount) > 0 ? { method: payMethod, amount: Number(payAmount), reference: payRef.trim() || undefined, currency: pickedVisitType?.currency ?? ctx.currency ?? 'INR' } : null}
             />
           )}
 
@@ -2387,7 +2411,7 @@ function BookSheet({
           ) : (
             <>
               <button onClick={() => {
-                if (step === 4) setStep(3);
+                if (step === 4) setStep(canCollectPayment ? 3 : 2);
                 else if (step === 3) setStep(2);
                 else setStep(1);
                 setError(null);

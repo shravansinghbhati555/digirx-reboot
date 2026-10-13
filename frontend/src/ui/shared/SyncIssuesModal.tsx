@@ -55,6 +55,51 @@ function describeEntry(e: QueueEntry): string {
   return 'Saved change';
 }
 
+/**
+ * The next step for a blocked entry, in plain words. The raw server error
+ * says what went wrong; this says what the person at the desk should do
+ * about it — the screen used to offer Retry and Discard with no hint which.
+ *
+ * `discard` marks entries where discarding is the right answer, so the
+ * button can say so instead of looking like the dangerous option.
+ */
+function nextStep(e: QueueEntry): { text: string; discard?: boolean } | null {
+  const err = e.lastError ?? '';
+  const isPayment = /\/payments$/.test(e.path);
+  if (e.lastStatus === 403) {
+    return isPayment
+      ? {
+        text: 'Your role is not allowed to take payments. Ask an admin to turn on “Doctors can collect payments” in Settings, then press Try again. Otherwise discard it — the bill stays open and the front desk collects the fee from Billing → Pending.',
+      }
+      : {
+        text: 'Your role is not allowed to make this change, so retrying will not help. Discard it and ask someone with access to redo it.',
+        discard: true,
+      };
+  }
+  if (isPayment && /already fully paid|only to issued bills/i.test(err)) {
+    return {
+      text: 'This bill is already paid on the server — the fee was collected another way while this one waited to sync. Discard this copy; the changes behind it will then sync.',
+      discard: true,
+    };
+  }
+  if (e.lastStatus === 401) {
+    return { text: 'Your session expired. Sign in again, then press Try again.' };
+  }
+  if (/\/checkin$/.test(e.path) && /fee not settled|outstanding/i.test(err)) {
+    return { text: 'The consultation fee is still unpaid. Once it is collected (Billing → Pending), press Try again — the check-in and anything after it will then sync.' };
+  }
+  if (e.lastStatus === 409) {
+    return { text: 'Someone changed this record while you were offline. Check it on screen; discard this change if it is no longer needed.' };
+  }
+  if (e.lastStatus !== undefined && e.lastStatus >= 500) {
+    return { text: 'The server had a problem. Press Try again in a minute.' };
+  }
+  if (e.lastStatus === 400 || e.lastStatus === 404 || e.lastStatus === 422) {
+    return { text: 'The server rejected this change. If it was caused by an earlier item, fix that first and press Try again; otherwise discard it and redo it on screen.' };
+  }
+  return null;
+}
+
 export function SyncIssuesModal({ onClose }: { onClose: () => void }) {
   const { ctx } = useApp();
   const [entries, setEntries] = useState<QueueEntry[]>([]);
@@ -212,6 +257,18 @@ export function SyncIssuesModal({ onClose }: { onClose: () => void }) {
                 <div style={{ fontSize: 12, color: 'var(--danger-text)' }}>{e.lastError}</div>
               )}
 
+              {e.status === 'failed' && nextStep(e) && (
+                <div style={{ fontSize: 12, color: 'var(--text)', background: 'var(--surface-muted)', borderRadius: 8, padding: '8px 10px', lineHeight: 1.5 }}>
+                  <strong>What to do:</strong> {nextStep(e)!.text}
+                </div>
+              )}
+
+              {e.status !== 'failed' && failed.length > 0 && failed[0].seq < e.seq && (
+                <div style={{ fontSize: 11, color: 'var(--text-subtle)' }}>
+                  Waiting for the blocked change above to be resolved.
+                </div>
+              )}
+
               {e.status === 'failed' && (
                 <div style={{ display: 'flex', gap: 8, marginTop: 4 }}>
                   <button onClick={() => void onRetry(e.seq)} disabled={busy}
@@ -231,8 +288,8 @@ export function SyncIssuesModal({ onClose }: { onClose: () => void }) {
                     </>
                   ) : (
                     <button onClick={() => setConfirmSeq(e.seq)}
-                      style={{ padding: '5px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'none', fontSize: 12, cursor: 'pointer', color: 'var(--danger-500)' }}>
-                      Discard
+                      style={{ padding: '5px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'none', fontSize: 12, cursor: 'pointer', color: 'var(--danger-500)', fontWeight: nextStep(e)?.discard ? 700 : 400 }}>
+                      {nextStep(e)?.discard ? 'Discard (recommended)' : 'Discard'}
                     </button>
                   )}
                 </div>
@@ -240,8 +297,9 @@ export function SyncIssuesModal({ onClose }: { onClose: () => void }) {
 
               {confirmSeq === e.seq && (
                 <div style={{ fontSize: 11, color: 'var(--danger-text)' }}>
-                  This permanently deletes the change. It exists nowhere else —
-                  export first if you may still need it.
+                  {nextStep(e)?.discard
+                    ? 'This deletes the change from this device. It can never sync from this login, so nothing is lost that the server would have kept.'
+                    : 'This permanently deletes the change. It exists nowhere else — export first if you may still need it.'}
                 </div>
               )}
             </div>

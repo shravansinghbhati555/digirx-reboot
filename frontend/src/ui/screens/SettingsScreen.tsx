@@ -27,7 +27,7 @@ type QuietHoursSettings = {
 };
 
 type ClinicSettings = {
-  appointments: { mode: 'TIME' | 'QUEUE' | 'BOTH'; slotMinutesDefault: number };
+  appointments: { mode: 'TIME' | 'QUEUE' | 'BOTH'; slotMinutesDefault: number; doctorsCanCollectPayment?: boolean };
   modules: {
     inventory: { enabled: boolean };
     notifications?: {
@@ -571,6 +571,7 @@ function ClinicTab() {
 
   // Modules
   const [faceRecognitionEnabled, setFaceRecognitionEnabled] = useState(false);
+  const [doctorsCanCollectPayment, setDoctorsCanCollectPayment] = useState(true);
 
   // Logo upload state. `logoTick` is bumped after each upload/remove so
   // the <img> preview's `?v=` query forces the browser to refetch
@@ -600,6 +601,7 @@ function ClinicTab() {
     setUpiId(res.settings.branding?.upiId ?? '');
     setUpiQrUrl(res.settings.branding?.upiQrUrl ?? '');
     setFaceRecognitionEnabled(res.settings.modules?.faceRecognition?.enabled ?? false);
+    setDoctorsCanCollectPayment(res.settings.appointments?.doctorsCanCollectPayment ?? true);
   }
 
   async function load() {
@@ -630,9 +632,10 @@ function ClinicTab() {
       primaryColor.trim() !== (data.settings.branding?.primaryColor ?? '') ||
       upiId.trim() !== (data.settings.branding?.upiId ?? '') ||
       upiQrUrl.trim() !== (data.settings.branding?.upiQrUrl ?? '') ||
-      faceRecognitionEnabled !== (data.settings.modules?.faceRecognition?.enabled ?? false)
+      faceRecognitionEnabled !== (data.settings.modules?.faceRecognition?.enabled ?? false) ||
+      doctorsCanCollectPayment !== (data.settings.appointments?.doctorsCanCollectPayment ?? true)
     );
-  }, [data, name, timezone, currency, apptMode, slotMinutes, displayName, logoUrl, primaryColor, upiId, upiQrUrl, faceRecognitionEnabled]);
+  }, [data, name, timezone, currency, apptMode, slotMinutes, displayName, logoUrl, primaryColor, upiId, upiQrUrl, faceRecognitionEnabled, doctorsCanCollectPayment]);
 
   // Logo upload is the only field that commits immediately (multipart
   // uploads don't queue cleanly), but we DELIBERATELY do not call full
@@ -744,7 +747,7 @@ function ClinicTab() {
       let updated: ClinicSettingsResp;
       if (canWrite) {
         const body: Record<string, unknown> = {
-          appointments: { mode: apptMode, slotMinutesDefault: Number(slotMinutes) || 15 },
+          appointments: { mode: apptMode, slotMinutesDefault: Number(slotMinutes) || 15, doctorsCanCollectPayment },
           // displayName is handled by the role-gated identity endpoint above.
           branding: {
             primaryColor: primaryColor.trim() || null,
@@ -945,6 +948,18 @@ function ClinicTab() {
                 ))}
               </div>
             </div>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginTop: 14, padding: '12px 14px', background: 'var(--surface-muted)', border: '1.5px solid var(--border)', borderRadius: 10, cursor: canWrite ? 'pointer' : 'not-allowed', opacity: canWrite ? 1 : 0.7 }}>
+              <input type="checkbox" checked={doctorsCanCollectPayment}
+                onChange={(e) => setDoctorsCanCollectPayment(e.target.checked)}
+                disabled={!canWrite}
+                style={{ marginTop: 2, accentColor: 'var(--brand-500)' }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>Doctors can collect payments</div>
+                <div style={{ fontSize: 11, color: 'var(--text-subtle)', marginTop: 2, lineHeight: 1.45 }}>
+                  Lets doctors take the consultation fee when booking or checking a patient in — online, or offline when the doctor is working alone on one device. Offline payments sync with everything else and are marked “Offline” in Billing. Turn off to leave fee collection to the front desk.
+                </div>
+              </div>
+            </label>
           </div>
 
           <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, padding: 20 }}>

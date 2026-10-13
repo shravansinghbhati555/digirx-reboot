@@ -27,6 +27,11 @@ export type DevContext = {
   profileImageUrl?: string;
   permissions?: string[];
   /**
+   * Clinic setting `appointments.doctorsCanCollectPayment`, mirrored from /me
+   * so it still applies offline, when /me cannot be fetched.
+   */
+  doctorsCanCollectPayment?: boolean;
+  /**
    * Epoch ms of the last request the server accepted. Anchors the offline
    * grace window — see `src/offline/session.ts`. Absent means we have no
    * record of the server ever confirming this session, which is treated as

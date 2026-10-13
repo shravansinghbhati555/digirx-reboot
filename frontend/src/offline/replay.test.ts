@@ -43,15 +43,27 @@ describe('classifyResponse', () => {
       expect(classifyResponse(status, null).kind).toBe('retry');
     });
 
-    it('retries auth failures rather than discarding the work', () => {
+    it('retries an expired session rather than discarding the work', () => {
       // The session died while the write sat in the queue. The work itself
       // is still valid, so it waits for a sign-in instead of being binned.
-      for (const status of [401, 403]) {
-        const out = classifyResponse(status, null);
-        expect(out.kind).toBe('retry');
-        if (out.kind === 'retry') {
-          expect(out.reason).toMatch(/sign-in/i);
-        }
+      const out = classifyResponse(401, null);
+      expect(out.kind).toBe('retry');
+      if (out.kind === 'retry') {
+        expect(out.reason).toMatch(/sign-in/i);
+      }
+    });
+  });
+
+  describe('forbidden is a role problem, not a session one', () => {
+    it('fails 403 at once and says the role is not allowed', () => {
+      // e.g. a Doctor's queued fee payment without billing:write. Signing in
+      // again changes nothing, so five retries only hid the real reason.
+      const out = classifyResponse(403, { message: 'Missing permission: billing:write' });
+      expect(out.kind).toBe('permanent');
+      if (out.kind === 'permanent') {
+        expect(out.reason).toMatch(/not allowed/i);
+        expect(out.reason).toContain('billing:write');
+        expect(out.reason).not.toMatch(/sign-in/i);
       }
     });
   });

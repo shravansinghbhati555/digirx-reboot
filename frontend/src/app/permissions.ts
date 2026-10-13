@@ -155,6 +155,20 @@ export function isScreenAllowedForRoles(
  *   const { has, canAccess } = usePerm();
  *   if (!has(Perm.PatientWrite)) ...
  */
+/**
+ * May this user take a payment? billing:write always; appointment:write too
+ * when the clinic lets doctors collect the fee. Mirrors the server's
+ * `BillingService.assertCanCollectPayment`, so the UI never offers a payment
+ * the server would refuse — offline that 403 used to stall the sync queue.
+ */
+export function useCanCollectPayment(): boolean {
+  const { permissions, features } = useApp();
+  return (
+    permissions.has(Perm.BillingWrite) ||
+    (permissions.has(Perm.AppointmentWrite) && features.doctorsCanCollectPayment)
+  );
+}
+
 export function usePerm() {
   const { permissions } = useApp();
   return {

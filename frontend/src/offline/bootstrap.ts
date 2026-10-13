@@ -11,7 +11,7 @@ import { subscribeConnectivity, isOnline } from './connectivity';
 import { recoverInflight } from './queue';
 import { requestPersistentStorage } from './db';
 import { replayQueue } from './replay';
-import { prefetchSlots, syncWorkingSet } from './working-set';
+import { lacksPermission, prefetchSlots, syncWorkingSet } from './working-set';
 import { ensureAllLeases, reportLeaseUsage } from './leases';
 import { VAULT_CHANGED_EVENT, isVaultOpen } from './vault';
 import { localDate } from './cash';
@@ -84,7 +84,7 @@ export function startOfflineSync(
       await prefetchSlots(ctx, (p) => fetchJson(ctx, p));
       // Today's server-side cash figure (C6), so the day-end count still has
       // a baseline if the connection drops later in the day.
-      if (ctx.branchId) {
+      if (ctx.branchId && !lacksPermission(ctx, 'billing:read')) {
         const today = localDate(Date.now(), ctx.clinicTimezone ?? ctx.timezone);
         await fetchJson(ctx, `/cash-days?date=${today}`).catch(() => undefined);
       }

@@ -20,6 +20,7 @@
  */
 import { getMeta, setMeta } from './db';
 import { isOnline } from './connectivity';
+import { lacksPermission } from './working-set';
 import type { DevContext } from '../app/context';
 
 export type LeaseCounterName = 'MRN' | 'PRESCRIPTION' | 'BILL';
@@ -201,6 +202,8 @@ export async function ensureAllLeases(ctx: DevContext, api: LeaseApi): Promise<v
   for (const counter of OFFLINE_COUNTERS) {
     // BILL leases are per branch; without one the server would reject it.
     if (counter === 'BILL' && !ctx.branchId) continue;
+    // Bill numbers need billing:write server-side; asking anyway just 403s.
+    if (counter === 'BILL' && lacksPermission(ctx, 'billing:write')) continue;
     await ensureLease(ctx, counter, api);
   }
 }
