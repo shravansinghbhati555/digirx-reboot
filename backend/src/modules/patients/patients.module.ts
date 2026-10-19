@@ -57,5 +57,7 @@ import { OfflineModule } from '../offline/offline.module';
   ],
   controllers: [PatientsController],
   providers: [PatientsService],
+  // Reused by the patient portal (history, self-registration at a clinic).
+  exports: [PatientsService],
 })
 export class PatientsModule {}

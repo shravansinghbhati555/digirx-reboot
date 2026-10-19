@@ -34,6 +34,7 @@ import { StorageModule } from '../storage/storage.module';
   ],
   providers: [AuthzService, RolesService, UsersService],
   controllers: [MeController, RolesController, UsersController],
-  exports: [AuthzService],
+  // UsersService is reused by the patient portal for the doctor list.
+  exports: [AuthzService, UsersService],
 })
 export class AuthzModule {}

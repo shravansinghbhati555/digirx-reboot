@@ -68,6 +68,30 @@ export type BillingSettings = {
   creditNoteNoFormat: string;
 };
 
+/**
+ * Patient portal (patient.digirx.com) controls. Everything is OFF by default:
+ * a clinic only appears in the portal, shares a patient's own records with
+ * them, or accepts self-service bookings after it opts in. Existing clinics
+ * are therefore unaffected until they change these.
+ */
+export type PortalSettings = {
+  /** Clinic is visible in portal discovery and its records reach linked patients. */
+  enabled: boolean;
+  /** Patients may book, reschedule and cancel TIME appointments themselves. */
+  bookingEnabled: boolean;
+  /**
+   * Doctors (user ids) patients may book. Empty = every active doctor of the
+   * clinic who has weekly availability rules.
+   */
+  bookableDoctorIds: string[];
+  /** How far ahead a patient may book, in days. */
+  maxAdvanceDays: number;
+  /** Minimum notice for a patient to cancel or reschedule, in hours. */
+  cancellationLeadTimeHours: number;
+  /** Cap on a single patient's upcoming portal-visible appointments at this clinic. */
+  maxActiveFutureAppointments: number;
+};
+
 export type ClinicSettingsV1 = {
   appointments: {
     mode: AppointmentMode;
@@ -94,6 +118,7 @@ export type ClinicSettingsV1 = {
     faceRecognition: { enabled: boolean };
   };
   branding: ClinicBranding;
+  portal: PortalSettings;
 };
 
 export const DEFAULT_CLINIC_SETTINGS: ClinicSettingsV1 = {
@@ -117,7 +142,52 @@ export const DEFAULT_CLINIC_SETTINGS: ClinicSettingsV1 = {
     faceRecognition: { enabled: true },
   },
   branding: { displayName: null, logoUrl: null, primaryColor: null, upiId: null, upiQrUrl: null },
+  portal: {
+    enabled: false,
+    bookingEnabled: false,
+    bookableDoctorIds: [],
+    maxAdvanceDays: 30,
+    cancellationLeadTimeHours: 2,
+    maxActiveFutureAppointments: 3,
+  },
 };
+
+function coerceIntInRange(v: unknown, min: number, max: number, fallback: number): number {
+  return typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max ? v : fallback;
+}
+
+function mergePortalSettings(raw: unknown): PortalSettings {
+  const p = (raw && typeof raw === 'object' ? raw : {}) as Record<string, any>;
+  const d = DEFAULT_CLINIC_SETTINGS.portal;
+  const ids = Array.isArray(p.bookableDoctorIds)
+    ? Array.from(
+        new Set(
+          p.bookableDoctorIds
+            .map((x: unknown) => String(x))
+            .filter((x: string) => /^[0-9a-fA-F]{24}$/.test(x)),
+        ),
+      )
+    : d.bookableDoctorIds;
+  return {
+    enabled: typeof p.enabled === 'boolean' ? p.enabled : d.enabled,
+    bookingEnabled:
+      typeof p.bookingEnabled === 'boolean' ? p.bookingEnabled : d.bookingEnabled,
+    bookableDoctorIds: ids as string[],
+    maxAdvanceDays: coerceIntInRange(p.maxAdvanceDays, 1, 365, d.maxAdvanceDays),
+    cancellationLeadTimeHours: coerceIntInRange(
+      p.cancellationLeadTimeHours,
+      0,
+      168,
+      d.cancellationLeadTimeHours,
+    ),
+    maxActiveFutureAppointments: coerceIntInRange(
+      p.maxActiveFutureAppointments,
+      1,
+      20,
+      d.maxActiveFutureAppointments,
+    ),
+  };
+}
 
 const HEX_RE = /^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})$/;
 
@@ -327,5 +397,6 @@ export function mergeClinicSettings(raw: unknown): ClinicSettingsV1 {
       upiId: coerceString(branding.upiId, 120),
       upiQrUrl: coerceUpiQrRef(branding.upiQrUrl),
     },
+    portal: mergePortalSettings(obj.portal),
   };
 }

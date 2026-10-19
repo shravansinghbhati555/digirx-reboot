@@ -45,5 +45,7 @@ import { OfflineModule } from '../offline/offline.module';
   ],
   controllers: [PrescriptionsController],
   providers: [PrescriptionsService, PrescriptionNumberingService],
+  // Reused by the patient portal (prescription detail + PDF).
+  exports: [PrescriptionsService],
 })
 export class PrescriptionsModule {}

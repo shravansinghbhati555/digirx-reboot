@@ -107,6 +107,14 @@ export class Appointment {
 
   @Prop({ type: Types.ObjectId })
   cancelledBy?: Types.ObjectId;
+
+  /**
+   * Which surface cancelled the appointment. Only the patient portal sets
+   * it (PATIENT_PORTAL); staff cancellations leave it unset, as before, and
+   * carry the staff member in `cancelledBy`.
+   */
+  @Prop({ type: String, enum: AppointmentSource })
+  cancelledVia?: AppointmentSource;
 }
 
 export const AppointmentSchema = SchemaFactory.createForClass(Appointment);

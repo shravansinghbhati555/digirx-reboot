@@ -5,8 +5,13 @@ import { getModelToken } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import cookieParser from 'cookie-parser';
 
-import { startMemoryMongo, stopMemoryMongo } from './setup';
-import { AppModule } from '../src/app.module';
+import {
+  assertLocalTestDatabase,
+  startMemoryMongo,
+  stopMemoryMongo,
+} from './setup';
+// AppModule is imported inside beforeAll, after MONGODB_URI points at the
+// in-memory server (see test/e2e-env.ts for why).
 import { BillingService } from '../src/modules/billing/billing.service';
 import { Bill, BillStatus } from '../src/modules/billing/schemas/bill.schema';
 import { Clinic } from '../src/modules/tenancy/schemas/clinic.schema';
@@ -27,8 +32,9 @@ describe('Bill numbering (e2e)', () => {
     process.env.JWT_REFRESH_SECRET = 'test_refresh_secret';
     process.env.NOTIFICATIONS_QUEUE_ENABLED = 'false';
     process.env.THROTTLE_DISABLED = 'true';
-    delete process.env.REDIS_URL;
+    process.env.REDIS_URL = '';
 
+    const { AppModule } = await import('../src/app.module');
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -43,6 +49,7 @@ describe('Bill numbering (e2e)', () => {
       }),
     );
     await app.init();
+    assertLocalTestDatabase(app);
 
     billing = app.get(BillingService);
     billModel = app.get<Model<Bill>>(getModelToken(Bill.name));
@@ -68,6 +75,8 @@ describe('Bill numbering (e2e)', () => {
   }, 90_000);
 
   afterAll(async () => {
+    // Let fire-and-forget audit/access-log writes finish before closing.
+    await new Promise((r) => setTimeout(r, 500));
     if (app) await app.close();
     await stopMemoryMongo();
   });

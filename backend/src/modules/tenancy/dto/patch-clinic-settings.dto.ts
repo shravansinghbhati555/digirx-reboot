@@ -1,5 +1,8 @@
 import {
+  ArrayMaxSize,
+  IsArray,
   IsBoolean,
+  IsMongoId,
   IsHexColor,
   IsIn,
   IsInt,
@@ -132,7 +135,46 @@ export class PatchBrandingDto {
   upiQrUrl?: string | null;
 }
 
+export class PatchPortalDto {
+  @IsOptional()
+  @IsBoolean()
+  enabled?: boolean;
+
+  @IsOptional()
+  @IsBoolean()
+  bookingEnabled?: boolean;
+
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @IsMongoId({ each: true })
+  bookableDoctorIds?: string[];
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(365)
+  maxAdvanceDays?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  @Max(168)
+  cancellationLeadTimeHours?: number;
+
+  @IsOptional()
+  @IsInt()
+  @Min(1)
+  @Max(20)
+  maxActiveFutureAppointments?: number;
+}
+
 export class PatchClinicSettingsDto {
+  @IsOptional()
+  @ValidateNested()
+  @Type(() => PatchPortalDto)
+  portal?: PatchPortalDto;
+
   @IsOptional()
   @ValidateNested()
   @Type(() => PatchAppointmentsDto)

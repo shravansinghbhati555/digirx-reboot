@@ -43,6 +43,8 @@ import { PdfModule } from './modules/pdf/pdf.module';
 import { StorageModule } from './modules/storage/storage.module';
 import { FaceModule } from './modules/face/face.module';
 import { FxModule } from './modules/fx/fx.module';
+import { PatientPortalModule } from './modules/patient-portal/patient-portal.module';
+import { RecordAccessModule } from './modules/record-access/record-access.module';
 
 @Module({
   imports: [
@@ -115,6 +117,11 @@ import { FxModule } from './modules/fx/fx.module';
     AccessLogsModule,
     FaceModule,
     FxModule,
+    // Patient portal (patient.digirx.com). Inert unless
+    // PATIENT_PORTAL_ENABLED=true; adds routes only under /portal/* plus the
+    // staff read GET /patients/:id/shared-records.
+    RecordAccessModule,
+    PatientPortalModule,
     HealthModule,
     OfflineModule,
   ],
@@ -152,6 +159,9 @@ export class AppModule implements NestModule {
         // matching GET/PATCH inbox at /platform/leads still runs through the
         // middleware and the platform-admin guard.
         { path: 'leads', method: RequestMethod.POST },
+        // Patient portal: authenticated by its own token and guards, never
+        // by the staff tenant context.
+        { path: 'portal/*path', method: RequestMethod.ALL },
       )
       // In Nest 11 / Express 5, `forRoutes('*')` walks the registered
       // controllers and applies the middleware to each — but

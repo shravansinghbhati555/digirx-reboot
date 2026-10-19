@@ -6,8 +6,13 @@ import { Model, Types } from 'mongoose';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 
-import { startMemoryMongo, stopMemoryMongo } from './setup';
-import { AppModule } from '../src/app.module';
+import {
+  assertLocalTestDatabase,
+  startMemoryMongo,
+  stopMemoryMongo,
+} from './setup';
+// AppModule is imported inside beforeAll, after MONGODB_URI points at the
+// in-memory server (see test/e2e-env.ts for why).
 import { Permission } from '../src/modules/authz/permissions';
 import { BillingService } from '../src/modules/billing/billing.service';
 import { Bill, BillStatus } from '../src/modules/billing/schemas/bill.schema';
@@ -32,8 +37,9 @@ describe('Credit notes (e2e)', () => {
     process.env.JWT_REFRESH_SECRET = 'test_refresh_secret';
     process.env.NOTIFICATIONS_QUEUE_ENABLED = 'false';
     process.env.THROTTLE_DISABLED = 'true';
-    delete process.env.REDIS_URL;
+    process.env.REDIS_URL = '';
 
+    const { AppModule } = await import('../src/app.module');
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -48,6 +54,7 @@ describe('Credit notes (e2e)', () => {
       }),
     );
     await app.init();
+    assertLocalTestDatabase(app);
 
     billing = app.get(BillingService);
     billModel = app.get<Model<Bill>>(getModelToken(Bill.name));
@@ -90,6 +97,8 @@ describe('Credit notes (e2e)', () => {
   }, 90_000);
 
   afterAll(async () => {
+    // Let fire-and-forget audit/access-log writes finish before closing.
+    await new Promise((r) => setTimeout(r, 500));
     if (app) await app.close();
     await stopMemoryMongo();
   });
@@ -135,13 +144,11 @@ describe('Credit notes (e2e)', () => {
     const bill = await makeIssuedBill(1000);
     const http = authedRequest();
 
-    const create = await http
-      .post(`/bills/${bill._id}/credit-notes`)
-      .send({
-        items: [{ customName: 'Visit', quantity: 1, unitPrice: 400 }],
-        amount: 400,
-        reason: 'Patient overcharged',
-      });
+    const create = await http.post(`/bills/${bill._id}/credit-notes`).send({
+      items: [{ customName: 'Visit', quantity: 1, unitPrice: 400 }],
+      amount: 400,
+      reason: 'Patient overcharged',
+    });
     expect(create.status).toBe(201);
     expect(create.body.creditNoteNo).toMatch(/^CN\/\d{4}-\d{2}\/\d{6}$/);
     expect(create.body.status).toBe('ISSUED');

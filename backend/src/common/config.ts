@@ -1,3 +1,5 @@
+import { portalEnvErrors } from '../modules/patient-identities/portal-config';
+
 const DEFAULT_JWT_ACCESS = 'dev_access_secret_change_me';
 const DEFAULT_JWT_REFRESH = 'dev_refresh_secret_change_me';
 
@@ -57,6 +59,9 @@ export function validateEnv(env: NodeJS.ProcessEnv = process.env): void {
       }
     }
   }
+
+  // Only checked when the patient portal is switched on.
+  errors.push(...portalEnvErrors(env));
 
   if (errors.length > 0) {
     throw new EnvValidationError(errors);

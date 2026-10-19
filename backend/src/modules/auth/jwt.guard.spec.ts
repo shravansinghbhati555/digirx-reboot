@@ -1,6 +1,8 @@
 import { JwtService } from '@nestjs/jwt';
 import { UnauthorizedException } from '@nestjs/common';
+import { Reflector } from '@nestjs/core';
 import { JwtContextGuard } from './jwt.guard';
+import { IS_PORTAL_ROUTE_KEY } from '../../common/portal-route.decorator';
 
 const SECRET = 'test_secret';
 const CLAIMS = {
@@ -55,5 +57,40 @@ describe('JwtContextGuard', () => {
     const { req, exec } = ctxFor({});
     await expect(guard.canActivate(exec)).resolves.toBe(true);
     expect(req.context).toBeUndefined();
+  });
+
+  describe('patient-portal routes', () => {
+    function routeCtx(headers: Record<string, string>, portal: boolean) {
+      const req: any = { header: (name: string) => headers[name.toLowerCase()] };
+      const handler = () => undefined;
+      class Ctrl {}
+      if (portal) Reflect.defineMetadata(IS_PORTAL_ROUTE_KEY, true, handler);
+      return {
+        req,
+        exec: {
+          switchToHttp: () => ({ getRequest: () => req }),
+          getHandler: () => handler,
+          getClass: () => Ctrl,
+        } as any,
+      };
+    }
+    const withReflector = new JwtContextGuard(jwt, new Reflector());
+
+    it('skips a portal route, leaving its token to the portal guard', async () => {
+      const { req, exec } = routeCtx({ authorization: 'Bearer portal-token-not-staff' }, true);
+      await expect(withReflector.canActivate(exec)).resolves.toBe(true);
+      expect(req.context).toBeUndefined();
+    });
+
+    it('still rejects a non-staff token on a staff route', async () => {
+      const { exec } = routeCtx({ authorization: 'Bearer portal-token-not-staff' }, false);
+      await expect(withReflector.canActivate(exec)).rejects.toBeInstanceOf(UnauthorizedException);
+    });
+
+    it('still builds the staff context on a staff route', async () => {
+      const { req, exec } = routeCtx({ authorization: `Bearer ${token}` }, false);
+      await expect(withReflector.canActivate(exec)).resolves.toBe(true);
+      expect(req.context.clinicId.toHexString()).toBe(CLAIMS.clinicId);
+    });
   });
 });

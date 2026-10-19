@@ -283,6 +283,18 @@ export class TenancyService {
             ? (patch.branding.upiQrUrl ?? null)
             : current.branding.upiQrUrl,
       },
+      // Patient portal opt-in. Absent keys carry the current value forward,
+      // so the clinic app's existing settings PATCHes never touch it.
+      portal: {
+        enabled: patch.portal?.enabled ?? current.portal.enabled,
+        bookingEnabled: patch.portal?.bookingEnabled ?? current.portal.bookingEnabled,
+        bookableDoctorIds: patch.portal?.bookableDoctorIds ?? current.portal.bookableDoctorIds,
+        maxAdvanceDays: patch.portal?.maxAdvanceDays ?? current.portal.maxAdvanceDays,
+        cancellationLeadTimeHours:
+          patch.portal?.cancellationLeadTimeHours ?? current.portal.cancellationLeadTimeHours,
+        maxActiveFutureAppointments:
+          patch.portal?.maxActiveFutureAppointments ?? current.portal.maxActiveFutureAppointments,
+      },
     };
 
     clinic.settings = mergeClinicSettings(nextRaw) as any;
@@ -338,8 +350,11 @@ export class TenancyService {
   }
 
   async searchClinics(query: string) {
-    const filter = query
-      ? { name: { $regex: query, $options: 'i' } }
+    // Escape the user's text so it matches literally: this route is public
+    // and an unescaped pattern lets anyone send an expensive regex.
+    const escaped = query ? query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '';
+    const filter = escaped
+      ? { name: { $regex: escaped, $options: 'i' } }
       : {};
     const clinics = await this.clinicModel.find(filter).limit(10).exec();
     return clinics.map((c) => ({

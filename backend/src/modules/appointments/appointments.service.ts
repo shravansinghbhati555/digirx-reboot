@@ -812,6 +812,8 @@ export class AppointmentsService {
     id: string,
     actorUserId: Types.ObjectId | undefined,
     reason: string,
+    // Set only by the patient portal; staff calls leave it out.
+    via?: AppointmentSource,
   ) {
     const appt = await this.apptModel.findOne({ _id: id, clinicId });
     if (!appt) throw new NotFoundException('Appointment not found');
@@ -827,8 +829,114 @@ export class AppointmentsService {
     appt.cancellationReason = reason.trim();
     appt.cancelledAt = new Date();
     appt.cancelledBy = actorUserId;
+    if (via) appt.cancelledVia = via;
     await appt.save();
     return appt;
+  }
+
+  /**
+   * Move a TIME appointment with the same checks a new booking gets:
+   * not in the past, inside the doctor's availability (weekly rules +
+   * overrides), and no overlap — transactional where Mongo supports it.
+   *
+   * Used by the patient portal. The staff `update()` path is deliberately
+   * left unchanged so front-desk staff keep their existing flexibility.
+   */
+  async rescheduleWithinAvailability(
+    clinicId: Types.ObjectId,
+    id: string,
+    startAt: Date,
+    endAt: Date,
+  ) {
+    if (!Types.ObjectId.isValid(id)) {
+      throw new NotFoundException('Appointment not found');
+    }
+    const appt = await this.apptModel.findOne({ _id: id, clinicId });
+    if (!appt) throw new NotFoundException('Appointment not found');
+    if (appt.type !== AppointmentType.Time) {
+      throw new BadRequestException('Only TIME appointments can be rescheduled');
+    }
+    if (appt.status !== AppointmentStatus.Booked) {
+      throw new BadRequestException(
+        `Cannot reschedule appointment in status ${appt.status}`,
+      );
+    }
+    if (isNaN(startAt.getTime()) || isNaN(endAt.getTime())) {
+      throw new BadRequestException('Invalid startAt/endAt');
+    }
+    if (endAt <= startAt) {
+      throw new BadRequestException('endAt must be after startAt');
+    }
+    if (startAt.getTime() < Date.now()) {
+      throw new BadRequestException('Cannot book an appointment in the past');
+    }
+
+    await this.availability.assertTimeSlotAllowed({
+      clinicId,
+      branchId: appt.branchId,
+      doctorUserId: appt.doctorId,
+      startAt,
+      endAt,
+    });
+
+    const overlapFilter = {
+      _id: { $ne: appt._id },
+      clinicId,
+      branchId: appt.branchId,
+      doctorId: appt.doctorId,
+      type: AppointmentType.Time,
+      status: { $in: ACTIVE_TIME_STATUSES },
+      startAt: { $lt: endAt },
+      endAt: { $gt: startAt },
+    };
+    const conflict = () =>
+      this.buildOverlapConflict({
+        clinicId,
+        branchId: appt.branchId,
+        doctorId: appt.doctorId,
+        requestedStartAt: startAt,
+      });
+    const apply = { $set: { startAt, endAt } };
+
+    try {
+      const session = await this.connection.startSession().catch(() => null as any);
+      if (session) {
+        try {
+          let updated: Appointment | null = null;
+          await session.withTransaction(async () => {
+            const overlap = await this.apptModel.findOne(overlapFilter).session(session);
+            if (overlap) throw await conflict();
+            updated = await this.apptModel.findOneAndUpdate(
+              { _id: appt._id, clinicId, status: AppointmentStatus.Booked },
+              apply,
+              { new: true, session },
+            );
+          });
+          if (!updated) throw new NotFoundException('Appointment not found');
+          return updated;
+        } catch (e: any) {
+          const msg = String(e?.message ?? '');
+          if (!msg.includes('Transaction numbers are only allowed')) throw e;
+        } finally {
+          await session.endSession();
+        }
+      }
+
+      // Standalone Mongo (dev): non-transactional check. The unique
+      // appt_time_no_dup_idx still fences exact-start collisions.
+      const overlap = await this.apptModel.findOne(overlapFilter);
+      if (overlap) throw await conflict();
+      const updated = await this.apptModel.findOneAndUpdate(
+        { _id: appt._id, clinicId, status: AppointmentStatus.Booked },
+        apply,
+        { new: true },
+      );
+      if (!updated) throw new NotFoundException('Appointment not found');
+      return updated;
+    } catch (e: any) {
+      if (e?.code === 11000) throw await conflict();
+      throw e;
+    }
   }
 
   // --- internals ----------------------------------------------------------

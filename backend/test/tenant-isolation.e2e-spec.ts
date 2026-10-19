@@ -6,14 +6,22 @@ import { Model, Types } from 'mongoose';
 import cookieParser from 'cookie-parser';
 import request from 'supertest';
 
-import { startMemoryMongo, stopMemoryMongo } from './setup';
-import { AppModule } from '../src/app.module';
+import {
+  assertLocalTestDatabase,
+  startMemoryMongo,
+  stopMemoryMongo,
+} from './setup';
+// AppModule is imported inside beforeAll, after MONGODB_URI points at the
+// in-memory server (see test/e2e-env.ts for why).
 import { Permission } from '../src/modules/authz/permissions';
 import { Clinic } from '../src/modules/tenancy/schemas/clinic.schema';
 import { Branch } from '../src/modules/tenancy/schemas/branch.schema';
 import { Role } from '../src/modules/authz/schemas/role.schema';
 import { User, UserStatus } from '../src/modules/authz/schemas/user.schema';
-import { Patient, PatientGender } from '../src/modules/patients/schemas/patient.schema';
+import {
+  Patient,
+  PatientGender,
+} from '../src/modules/patients/schemas/patient.schema';
 import {
   Appointment,
   AppointmentStatus,
@@ -54,8 +62,9 @@ describe('Tenant isolation (e2e)', () => {
     // Belt-and-braces: the queue gate already short-circuits, but blanking
     // REDIS_URL keeps any stray ioredis client (or a future change to the
     // gate) from trying to dial a Redis we don't have.
-    delete process.env.REDIS_URL;
+    process.env.REDIS_URL = '';
 
+    const { AppModule } = await import('../src/app.module');
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -70,12 +79,15 @@ describe('Tenant isolation (e2e)', () => {
       }),
     );
     await app.init();
+    assertLocalTestDatabase(app);
 
     tenant1 = await seedTenant(app, 'Clinic One');
     tenant2 = await seedTenant(app, 'Clinic Two');
   }, 90_000);
 
   afterAll(async () => {
+    // Let fire-and-forget audit/access-log writes finish before closing.
+    await new Promise((r) => setTimeout(r, 500));
     if (app) await app.close();
     await stopMemoryMongo();
   });
@@ -142,7 +154,7 @@ describe('Tenant isolation (e2e)', () => {
   });
 
   describe('Bill listings respect the tenant boundary', () => {
-    it('GET /bills returns only the requesting clinic\'s rows', async () => {
+    it("GET /bills returns only the requesting clinic's rows", async () => {
       const res = await get(app, tenant1, `/bills?limit=100`);
       expect(res.status).toBe(200);
       const ids: string[] = res.body.rows.map((b: any) => b._id);
@@ -154,11 +166,7 @@ describe('Tenant isolation (e2e)', () => {
 
 // --- helpers --------------------------------------------------------------
 
-function get(
-  app: INestApplication,
-  t: Tenant,
-  path: string,
-): request.Test {
+function get(app: INestApplication, t: Tenant, path: string): request.Test {
   return request(app.getHttpServer())
     .get(path)
     .set('x-clinic-id', t.clinicId.toHexString())
@@ -209,7 +217,7 @@ async function seedTenant(
     primaryBranchId: branch._id,
     fullName: `${clinicName} Patient`,
     normalizedName: `${clinicName.toLowerCase()} patient`,
-    gender: PatientGender.Unknown,
+    gender: PatientGender.Female,
     phones: [`+91${Math.floor(Math.random() * 9_000_000_000) + 1_000_000_000}`],
     normalizedPhones: [],
   });
