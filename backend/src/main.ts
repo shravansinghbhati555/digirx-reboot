@@ -47,21 +47,29 @@ async function bootstrap() {
   const allowedOrigins = new Set<string>([
     'http://localhost:5173',
     'http://127.0.0.1:5173',
+    'http://localhost:5174',
+    'http://127.0.0.1:5174',
     'http://localhost:3000',
     'http://127.0.0.1:3000',
     'http://digirx.coderly.in',
     'https://digirx.coderly.in',
-    'https://testingdigirx.netlify.app'
+    'https://testingdigirx.netlify.app',
   ]);
-  if (process.env.FRONTEND_ORIGIN) allowedOrigins.add(process.env.FRONTEND_ORIGIN);
+  if (process.env.FRONTEND_ORIGIN)
+    allowedOrigins.add(process.env.FRONTEND_ORIGIN);
   if (process.env.CORS_ORIGINS) {
-    for (const o of process.env.CORS_ORIGINS.split(',').map((s) => s.trim()).filter(Boolean)) {
+    for (const o of process.env.CORS_ORIGINS.split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)) {
       allowedOrigins.add(o);
     }
   }
 
   app.enableCors({
-    origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
+    origin: (
+      origin: string | undefined,
+      callback: (err: Error | null, allow?: boolean) => void,
+    ) => {
       if (!origin) return callback(null, true);
       if (allowedOrigins.has(origin)) return callback(null, true);
       // Refuse by withholding the header rather than throwing. Throwing here

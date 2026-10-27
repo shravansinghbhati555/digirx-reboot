@@ -50,7 +50,7 @@ export class PortalOtpService {
     phone: string;
     dialCode: string;
     ip?: string;
-  }): Promise<{ ttlSeconds: number }> {
+  }): Promise<{ ttlSeconds: number; otp?: string }> {
     const now = Date.now();
     const hourAgo = new Date(now - 60 * 60 * 1000);
 
@@ -121,6 +121,13 @@ export class PortalOtpService {
       this.logger.error(
         `OTP delivery failed: ${e instanceof Error ? e.message : String(e)}`,
       );
+    }
+
+    if (process.env.NODE_ENV !== 'production') {
+      return {
+        ttlSeconds: OTP_TTL_SECONDS,
+        otp: code,
+      };
     }
     return { ttlSeconds: OTP_TTL_SECONDS };
   }

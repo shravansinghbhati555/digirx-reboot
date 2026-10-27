@@ -58,13 +58,29 @@ export class PortalAuthController {
   async requestOtp(@Body() body: RequestOtpDto, @Req() req: Request) {
     const dialCode = defaultDialCode();
     const phone = normalizePortalPhone(body.phone, dialCode);
-    if (!phone) throw new UnauthorizedException('Enter a valid mobile number');
-    const { ttlSeconds } = await this.otp.request({
+
+    if (!phone) {
+      throw new UnauthorizedException('Enter a valid mobile number');
+    }
+
+    const result = await this.otp.request({
       phone,
       dialCode,
       ip: req.ip,
     });
-    return { ok: true, ttlSeconds };
+
+    if (process.env.NODE_ENV !== 'production') {
+      return {
+        ok: true,
+        ttlSeconds: result.ttlSeconds,
+        ...(result.otp ? { otp: result.otp } : {}),
+      };
+    }
+
+    return {
+      ok: true,
+      ttlSeconds: result.ttlSeconds,
+    };
   }
 
   @Post('verify-otp')
