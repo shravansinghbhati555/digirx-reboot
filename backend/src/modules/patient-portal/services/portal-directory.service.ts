@@ -35,7 +35,6 @@ const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const NEXT_HORIZON_DAYS = 14;
 const NEXT_CACHE_MS = 60_000;
 
-/** A clinic branch as the portal sees it, with the clinic's portal rules. */
 export type BranchInfo = {
   branchId: Types.ObjectId;
   clinicId: Types.ObjectId;
@@ -43,7 +42,6 @@ export type BranchInfo = {
   timezone: string;
   currency: string;
   portal: PortalSettings;
-  /** Clinic is approved and has the portal on. */
   visible: boolean;
   branch: any;
   branchCount: number;
@@ -52,7 +50,6 @@ export type BranchInfo = {
 type DoctorInfo = {
   view: PortalDoctorView;
   clinicId: Types.ObjectId;
-  /** branchId → slot length + bookability */
   branchIds: string[];
   minFee: number;
   firstVisitTypeId?: string;
@@ -71,16 +68,19 @@ function slug(s: string) {
   );
 }
 
-/** [1,2,3,4,5,6] → "Mon–Sat"; [1,3,5] → "Mon, Wed, Fri". */
 export function daysLabel(days: number[]): string {
   const sorted = [...new Set(days)].sort((a, b) => a - b);
   if (!sorted.length) return '';
+
   const runs: number[][] = [];
+
   for (const d of sorted) {
     const last = runs[runs.length - 1];
+
     if (last && d === last[last.length - 1] + 1) last.push(d);
     else runs.push([d]);
   }
+
   return runs
     .map((r) =>
       r.length >= 3
@@ -93,6 +93,7 @@ export function daysLabel(days: number[]): string {
 function minutesLabel(m: number): string {
   const h = Math.floor(m / 60);
   const mm = m % 60;
+
   return hhmmToLabel(
     `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`,
   );
@@ -108,11 +109,6 @@ function windowsLabel(
     .join(', ');
 }
 
-/**
- * Clinic + doctor discovery and slot lookup for the portal. Availability
- * always comes from the clinic's own AvailabilityService/AppointmentsService
- * — the portal has no scheduling logic of its own.
- */
 @Injectable()
 export class PortalDirectoryService {
   private nextCache = new Map<
@@ -121,8 +117,10 @@ export class PortalDirectoryService {
   >();
 
   constructor(
-    @InjectModel(Clinic.name) private readonly clinicModel: Model<Clinic>,
-    @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
+    @InjectModel(Clinic.name)
+    private readonly clinicModel: Model<Clinic>,
+    @InjectModel(Branch.name)
+    private readonly branchModel: Model<Branch>,
     @InjectModel(DoctorProfile.name)
     private readonly profileModel: Model<DoctorProfile>,
     @InjectModel(DoctorAvailabilityRule.name)
@@ -133,58 +131,87 @@ export class PortalDirectoryService {
     private readonly users: UsersService,
   ) {}
 
-  // --- Branches / clinics --------------------------------------------------
-
   private toInfo(clinic: any, branch: any, branchCount: number): BranchInfo {
-    const portal = mergeClinicSettings(clinic.settings).portal;
+    const settings = mergeClinicSettings(clinic.settings);
     const active =
       (clinic.status ?? ClinicStatus.Active) === ClinicStatus.Active;
+
     return {
       branchId: branch._id,
       clinicId: clinic._id,
-      clinicName:
-        mergeClinicSettings(clinic.settings).branding.displayName ||
-        clinic.name,
+      clinicName: settings.branding.displayName || clinic.name,
       timezone: clinic.timezone || 'UTC',
       currency: clinic.currency || 'INR',
-      portal,
-      visible: active && portal.enabled && branch.active !== false,
+      portal: settings.portal,
+
+      // Discovery visibility is independent of portal.enabled.
+      // Booking remains separately guarded by bookingEnabled.
+      visible: active && branch.active !== false,
+
       branch,
       branchCount,
     };
   }
 
-  /** Branches by id, with their clinic. Unknown ids are dropped. */
   async branches(branchIds: Types.ObjectId[]): Promise<BranchInfo[]> {
     if (!branchIds.length) return [];
+
     const branches = await this.branchModel
       .find({ _id: { $in: branchIds } })
       .lean();
+
     return this.withClinics(branches);
   }
 
-  /** Every branch of the given clinics. */
   async branchesOfClinics(clinicIds: Types.ObjectId[]): Promise<BranchInfo[]> {
     if (!clinicIds.length) return [];
+
     const branches = await this.branchModel
-      .find({ clinicId: { $in: clinicIds }, active: { $ne: false } })
+      .find({
+        clinicId: { $in: clinicIds },
+        active: { $ne: false },
+      })
       .lean();
+
     return this.withClinics(branches);
   }
 
   private async withClinics(branches: any[]): Promise<BranchInfo[]> {
+    if (!branches.length) return [];
+
     const clinicIds = [...new Set(branches.map((b) => String(b.clinicId)))].map(
-      (s) => new Types.ObjectId(s),
+      (id) => new Types.ObjectId(id),
     );
+
     const [clinics, counts] = await Promise.all([
-      this.clinicModel.find({ _id: { $in: clinicIds } }).lean(),
+      this.clinicModel
+        .find({
+          _id: { $in: clinicIds },
+          $and: [
+            {
+              $or: [{ status: ClinicStatus.Active }, { status: null }],
+            },
+            {
+              $or: [{ isPlatformClinic: false }, { isPlatformClinic: null }],
+            },
+          ],
+        })
+        .lean(),
+
       this.branchModel.aggregate<{ _id: Types.ObjectId; n: number }>([
-        { $match: { clinicId: { $in: clinicIds }, active: { $ne: false } } },
+        {
+          $match: {
+            clinicId: { $in: clinicIds },
+            active: { $ne: false },
+          },
+        },
         { $group: { _id: '$clinicId', n: { $sum: 1 } } },
       ]),
     ]);
+
     const byId = new Map(clinics.map((c) => [String(c._id), c]));
     const countBy = new Map(counts.map((c) => [String(c._id), c.n]));
+
     return branches
       .filter((b) => byId.has(String(b.clinicId)))
       .map((b) =>
@@ -193,132 +220,250 @@ export class PortalDirectoryService {
           b,
           countBy.get(String(b.clinicId)) ?? 1,
         ),
-      );
+      )
+      .filter((info) => info.visible);
   }
 
-  /** One branch the patient may book at, or 404. */
   async bookableBranch(branchId: string): Promise<BranchInfo> {
-    if (!Types.ObjectId.isValid(branchId))
+    if (!Types.ObjectId.isValid(branchId)) {
       throw new NotFoundException('Clinic not found');
+    }
+
     const [info] = await this.branches([new Types.ObjectId(branchId)]);
-    if (!info || !info.visible) throw new NotFoundException('Clinic not found');
-    if (!info.portal.bookingEnabled) {
+
+    if (!info || !info.visible) {
+      throw new NotFoundException('Clinic not found');
+    }
+
+    if (!info.portal.enabled || !info.portal.bookingEnabled) {
       throw new BadRequestException(
         'This clinic does not take online bookings yet. Please call the clinic.',
       );
     }
+
     return info;
   }
 
-  /** Clinics discoverable in the portal: approved and opted in. */
+  /** Lists active, approved clinics regardless of portal.enabled. */
   async discover(q?: string, limit = 30): Promise<BranchInfo[]> {
     const filter: Record<string, unknown> = {
-      'settings.portal.enabled': true,
       $or: [{ status: ClinicStatus.Active }, { status: null }],
+      isPlatformClinic: { $ne: true },
     };
+
     const text = (q ?? '').trim().slice(0, 80);
+
     const clinics = await this.clinicModel
       .find(
         text
-          ? { ...filter, name: { $regex: escapeRegex(text), $options: 'i' } }
+          ? {
+              ...filter,
+              name: {
+                $regex: escapeRegex(text),
+                $options: 'i',
+              },
+            }
           : filter,
       )
-      .limit(Math.min(50, limit))
+      .limit(Math.min(50, Math.max(1, limit)))
       .lean();
-    const infos = await this.branchesOfClinics(clinics.map((c) => c._id));
-    return infos.filter((i) => i.visible);
+
+    return this.branchesOfClinics(clinics.map((clinic) => clinic._id));
   }
 
-  // --- Doctors -------------------------------------------------------------
-
-  /** Doctors of the given branches, with schedules, fees and bookability. */
   async doctorsFor(branches: BranchInfo[]): Promise<DoctorInfo[]> {
     const byClinic = new Map<string, BranchInfo[]>();
-    for (const b of branches)
-      byClinic.set(String(b.clinicId), [
-        ...(byClinic.get(String(b.clinicId)) ?? []),
-        b,
-      ]);
+
+    for (const branch of branches) {
+      const clinicId = String(branch.clinicId);
+      const existing = byClinic.get(clinicId) ?? [];
+
+      existing.push(branch);
+      byClinic.set(clinicId, existing);
+    }
 
     const out: DoctorInfo[] = [];
+
     for (const [cid, infos] of byClinic) {
       const clinicId = new Types.ObjectId(cid);
-      const branchSet = new Set(infos.map((i) => String(i.branchId)));
-      const portal = infos[0].portal;
-      const doctors = await this.users.listDoctors(clinicId);
-      if (!doctors.length) continue;
-      const ids = doctors.map(
-        (d) => new Types.ObjectId(String((d as any)._id)),
+
+      // Only branches belonging to this clinic and visible in the portal.
+      const visibleBranches = infos.filter((info) => info.visible);
+
+      const branchSet = new Set(
+        visibleBranches.map((info) => String(info.branchId)),
       );
+
+      if (!branchSet.size) {
+        console.log('[Portal Debug] No visible branches:', cid);
+        continue;
+      }
+
+      const portal = visibleBranches[0].portal;
+
+      // Fetch active doctors assigned the Doctor role in this clinic.
+      const doctors = await this.users.listDoctors(clinicId);
+
+      console.log('[Portal Debug] Clinic ID:', cid);
+      console.log('[Portal Debug] Doctors found:', doctors.length);
+      console.log(
+        '[Portal Debug] Doctor details:',
+        doctors.map((doctor) => ({
+          id: String(doctor._id),
+          name: doctor.name,
+          status: doctor.status,
+          branchIds: doctor.branchIds,
+        })),
+      );
+
+      if (!doctors.length) continue;
+
+      const doctorIds = doctors.map(
+        (doctor) => new Types.ObjectId(String(doctor._id)),
+      );
+
       const [profiles, rules, visitTypes] = await Promise.all([
-        this.profileModel.find({ clinicId, userId: { $in: ids } }).lean(),
-        this.ruleModel
-          .find({ clinicId, doctorUserId: { $in: ids }, active: true })
+        this.profileModel
+          .find({
+            clinicId,
+            userId: { $in: doctorIds },
+          })
           .lean(),
+
+        this.ruleModel
+          .find({
+            clinicId,
+            doctorUserId: { $in: doctorIds },
+            branchId: {
+              $in: [...branchSet].map((id) => new Types.ObjectId(id)),
+            },
+            active: true,
+          })
+          .lean(),
+
         this.visitTypeModel
-          .find({ clinicId, doctorUserId: { $in: ids }, active: true })
+          .find({
+            clinicId,
+            doctorUserId: { $in: doctorIds },
+            active: true,
+          })
           .sort({ price: 1 })
           .lean(),
       ]);
-      const profileBy = new Map(profiles.map((p) => [String(p.userId), p]));
 
-      for (const d of doctors as any[]) {
-        const did = String(d._id);
+      console.log('[Portal Debug] Profiles:', profiles.length);
+      console.log('[Portal Debug] Active availability rules:', rules.length);
+      console.log('[Portal Debug] Active visit types:', visitTypes.length);
+
+      const profileBy = new Map(
+        profiles.map((profile) => [String(profile.userId), profile]),
+      );
+
+      for (const doctor of doctors) {
+        const doctorId = String(doctor._id);
+
         const myRules = rules.filter(
-          (r) =>
-            String(r.doctorUserId) === did && branchSet.has(String(r.branchId)),
+          (rule) => String(rule.doctorUserId) === doctorId,
         );
-        const myTypes = visitTypes.filter(
-          (v) => String(v.doctorUserId) === did,
-        );
-        const profile = profileBy.get(did);
-        const ruleBranches = [
-          ...new Set(myRules.map((r) => String(r.branchId))),
-        ];
-        const branchIds = ruleBranches.length
-          ? ruleBranches
-          : (d.branchIds ?? [])
-              .map(String)
-              .filter((b: string) => branchSet.has(b));
-        if (!branchIds.length) continue;
 
-        const allowList = portal.bookableDoctorIds;
-        const bookable =
-          portal.bookingEnabled &&
-          myRules.length > 0 &&
-          (allowList.length === 0 || allowList.includes(did));
-        const clinics = branchIds.map((bid: string) => {
-          const br = myRules.filter(
-            (r) => String(r.branchId) === bid && (r.windows ?? []).length,
+        const myTypes = visitTypes.filter(
+          (visitType) => String(visitType.doctorUserId) === doctorId,
+        );
+
+        const profile = profileBy.get(doctorId);
+
+        // Prefer assigned branches that have availability rules.
+        // Otherwise use the doctor's explicitly assigned branches.
+        const ruleBranches = [
+          ...new Set(myRules.map((rule) => String(rule.branchId))),
+        ];
+
+        const assignedBranches = (doctor.branchIds ?? [])
+          .map(String)
+          .filter((branchId) => branchSet.has(branchId));
+
+        const branchIds = [
+          ...new Set(
+            [...ruleBranches, ...assignedBranches].filter((branchId) =>
+              branchSet.has(branchId),
+            ),
+          ),
+        ];
+
+        console.log('[Portal Debug] Doctor:', doctor.name);
+        console.log('[Portal Debug] Rule branches:', ruleBranches);
+        console.log('[Portal Debug] Assigned branches:', assignedBranches);
+        console.log('[Portal Debug] Final branchIds:', branchIds);
+
+        // Never display a doctor under a branch they are not assigned to.
+        if (!branchIds.length) {
+          console.log(
+            '[Portal Debug] Doctor skipped: no matching branch assignment',
+            doctorId,
           );
-          const days = br.map((r) => r.weekday);
-          const sample = br[0];
-          const sched = [
+          continue;
+        }
+
+        const allowList = portal.bookableDoctorIds ?? [];
+
+        const bookable =
+          portal.enabled &&
+          portal.bookingEnabled &&
+          myRules.some(
+            (rule) =>
+              branchIds.includes(String(rule.branchId)) &&
+              (rule.windows ?? []).length > 0,
+          ) &&
+          (allowList.length === 0 || allowList.includes(doctorId));
+
+        const clinics = branchIds.map((branchId) => {
+          const branchRules = myRules.filter(
+            (rule) =>
+              String(rule.branchId) === branchId &&
+              (rule.windows ?? []).length > 0,
+          );
+
+          const days = branchRules.map((rule) => rule.weekday);
+          const sample = branchRules[0];
+
+          const schedule = [
             daysLabel(days),
             sample ? windowsLabel(sample.windows) : '',
           ]
             .filter(Boolean)
             .join(' · ');
-          return { clinicId: bid, schedule: sched, days };
+
+          return {
+            clinicId: branchId,
+            schedule,
+            days,
+          };
         });
-        const allDays = clinics.flatMap((c: { days: number[] }) => c.days);
+
+        const allDays = clinics.flatMap(
+          (clinic: { days: number[] }) => clinic.days,
+        );
+
         const speciality = profile?.specialties?.[0] || 'General physician';
+
         const fee = myTypes[0]?.price ?? 0;
-        const name: string = d.name;
+        const name = doctor.name;
+
         out.push({
           clinicId,
           branchIds,
           minFee: fee,
           firstVisitTypeId: myTypes[0] ? String(myTypes[0]._id) : undefined,
+
           view: {
-            id: did,
+            id: doctorId,
             name,
             initials: initialsOf(name),
-            color: colorFor(did),
+            color: colorFor(doctorId),
             speciality,
             specialityId: slug(speciality),
-            qualifications: d.qualifications ?? '',
-            regNo: d.registrationNumber,
+            qualifications: doctor.qualifications ?? '',
+            regNo: doctor.registrationNumber,
             years: 0,
             fee,
             durationMin:
@@ -334,27 +479,33 @@ export class PortalDirectoryService {
         });
       }
     }
+
+    console.log('[Portal Debug] Total doctors returned:', out.length);
+
     return out;
   }
 
-  /** A doctor the patient may book at this branch, or 404. */
   async bookableDoctor(
     info: BranchInfo,
     doctorId: string,
   ): Promise<DoctorInfo> {
-    if (!Types.ObjectId.isValid(doctorId))
+    if (!Types.ObjectId.isValid(doctorId)) {
       throw new NotFoundException('Doctor not found');
-    const [doc] = (await this.doctorsFor([info])).filter(
-      (d) => d.view.id === doctorId,
+    }
+
+    const [doctor] = (await this.doctorsFor([info])).filter(
+      (item) => item.view.id === doctorId,
     );
+
     if (
-      !doc ||
-      !doc.view.bookable ||
-      !doc.branchIds.includes(String(info.branchId))
+      !doctor ||
+      !doctor.view.bookable ||
+      !doctor.branchIds.includes(String(info.branchId))
     ) {
       throw new NotFoundException('Doctor not found');
     }
-    return doc;
+
+    return doctor;
   }
 
   clinicView(
@@ -362,19 +513,29 @@ export class PortalDirectoryService {
     doctors: DoctorInfo[],
     visited: boolean,
   ): PortalClinicView {
-    const b = info.branch;
+    const branch = info.branch;
     const id = String(info.branchId);
-    const here = doctors.filter((d) => d.branchIds.includes(id));
-    const fees = here.map((d) => d.minFee).filter((f) => f > 0);
+
+    const here = doctors.filter((doctor) => doctor.branchIds.includes(id));
+
+    const fees = here.map((doctor) => doctor.minFee).filter((fee) => fee > 0);
+
     const name =
-      info.branchCount > 1 ? `${info.clinicName} – ${b.name}` : info.clinicName;
-    const address = b.addressLine || legacyAddressLine(b.address) || '';
+      info.branchCount > 1
+        ? `${info.clinicName} – ${branch.name}`
+        : info.clinicName;
+
+    const address =
+      branch.addressLine || legacyAddressLine(branch.address) || '';
+
     const area =
       info.branchCount > 1
-        ? b.name
-        : String((b.address as any)?.city ?? '') || b.name || '';
-    const open = hhmmToLabel(b.workingHours?.open);
-    const close = hhmmToLabel(b.workingHours?.close);
+        ? branch.name
+        : String((branch.address as any)?.city ?? '') || branch.name || '';
+
+    const open = hhmmToLabel(branch.workingHours?.open);
+    const close = hhmmToLabel(branch.workingHours?.close);
+
     return {
       id,
       tenantId: String(info.clinicId),
@@ -383,7 +544,7 @@ export class PortalDirectoryService {
       initials: initialsOf(info.clinicName),
       area,
       address,
-      phone: b.phone ?? '',
+      phone: branch.phone ?? '',
       distanceKm: -1,
       doctorCount: here.length,
       hours: open && close ? `${open} – ${close}` : '',
@@ -393,41 +554,49 @@ export class PortalDirectoryService {
       gradient: gradientFor(String(info.clinicId)),
       services: [],
       tags: visited ? ["You've visited"] : [],
-      bookingEnabled: info.visible && info.portal.bookingEnabled,
+      bookingEnabled:
+        info.visible && info.portal.enabled && info.portal.bookingEnabled,
       cancellationLeadTimeHours: info.portal.cancellationLeadTimeHours,
       maxAdvanceDays: info.portal.maxAdvanceDays,
     };
   }
 
   specialities(doctors: PortalDoctorView[]): PortalSpecialityView[] {
-    const m = new Map<string, PortalSpecialityView>();
-    for (const d of doctors) {
-      const s = m.get(d.specialityId) ?? {
-        id: d.specialityId,
-        label: d.speciality,
+    const map = new Map<string, PortalSpecialityView>();
+
+    for (const doctor of doctors) {
+      const speciality = map.get(doctor.specialityId) ?? {
+        id: doctor.specialityId,
+        label: doctor.speciality,
         doctorCount: 0,
       };
-      s.doctorCount += 1;
-      m.set(d.specialityId, s);
+
+      speciality.doctorCount += 1;
+      map.set(doctor.specialityId, speciality);
     }
-    return [...m.values()].sort((a, b) => b.doctorCount - a.doctorCount);
+
+    return [...map.values()].sort((a, b) => b.doctorCount - a.doctorCount);
   }
 
-  // --- Slots ---------------------------------------------------------------
-
-  todayIn(tz: string): string {
-    return DateTime.now().setZone(tz).toISODate()!;
+  todayIn(timezone: string): string {
+    return DateTime.now().setZone(timezone).toISODate()!;
   }
 
   assertBookableDate(info: BranchInfo, date: string) {
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       throw new BadRequestException('date must be YYYY-MM-DD');
+    }
+
     const today = this.todayIn(info.timezone);
-    if (date < today)
+
+    if (date < today) {
       throw new BadRequestException('Pick a date from today onwards');
+    }
+
     const last = DateTime.fromISO(today)
       .plus({ days: info.portal.maxAdvanceDays })
       .toISODate()!;
+
     if (date > last) {
       throw new BadRequestException(
         `This clinic takes bookings up to ${info.portal.maxAdvanceDays} days ahead`,
@@ -435,62 +604,99 @@ export class PortalDirectoryService {
     }
   }
 
-  /** Slot groups for one day. Never reveals who holds a booked slot. */
   async slots(
     info: BranchInfo,
     doctorId: string,
     date: string,
     ignoreAppointmentId?: string,
   ) {
+    if (!info.portal.enabled || !info.portal.bookingEnabled) {
+      throw new BadRequestException(
+        'This clinic does not take online bookings yet.',
+      );
+    }
+
     this.assertBookableDate(info, date);
+
     const day = await this.appointments.availableSlots({
       clinicId: info.clinicId,
       branchId: String(info.branchId),
       doctorId,
       date,
     });
-    const slots = day.slots.map((s: any) =>
-      // The appointment being rescheduled shouldn't block its own slot.
-      s.status === 'booked' &&
+
+    const slots = day.slots.map((slot: any) =>
+      slot.status === 'booked' &&
       ignoreAppointmentId &&
-      s.bookedBy?.apptId === ignoreAppointmentId
-        ? { startAt: s.startAt, endAt: s.endAt, status: 'available' }
-        : { startAt: s.startAt, endAt: s.endAt, status: s.status },
+      slot.bookedBy?.apptId === ignoreAppointmentId
+        ? {
+            startAt: slot.startAt,
+            endAt: slot.endAt,
+            status: 'available',
+          }
+        : {
+            startAt: slot.startAt,
+            endAt: slot.endAt,
+            status: slot.status,
+          },
     );
+
     return {
       raw: slots,
       groups: toSlotGroups(slots, info.timezone) as PortalSlotGroupView[],
     };
   }
 
-  /** First day (within two weeks) with an open slot, cached for a minute. */
   async nextAvailable(
     info: BranchInfo,
     doctorId: string,
   ): Promise<{ date: string; times: string[] } | null> {
+    if (!info.portal.enabled || !info.portal.bookingEnabled) {
+      return null;
+    }
+
     const today = this.todayIn(info.timezone);
     const key = `${info.branchId}|${doctorId}|${today}`;
+
     const hit = this.nextCache.get(key);
-    if (hit && Date.now() - hit.at < NEXT_CACHE_MS) return hit.value;
+
+    if (hit && Date.now() - hit.at < NEXT_CACHE_MS) {
+      return hit.value;
+    }
 
     let value: { date: string; times: string[] } | null = null;
+
     const horizon = Math.min(NEXT_HORIZON_DAYS, info.portal.maxAdvanceDays + 1);
+
     for (let i = 0; i < horizon && !value; i++) {
       const date = DateTime.fromISO(today).plus({ days: i }).toISODate()!;
+
       const { groups } = await this.slots(info, doctorId, date);
-      const times = groups.flatMap((g) =>
-        g.slots.filter((s) => !s.booked).map((s) => s.time),
+
+      const times = groups.flatMap((group) =>
+        group.slots.filter((slot) => !slot.booked).map((slot) => slot.time),
       );
+
       if (times.length) value = { date, times };
     }
+
     if (this.nextCache.size > 5000) this.nextCache.clear();
-    this.nextCache.set(key, { at: Date.now(), value });
+
+    this.nextCache.set(key, {
+      at: Date.now(),
+      value,
+    });
+
     return value;
   }
 
   invalidateNext(branchId: Types.ObjectId, doctorId: Types.ObjectId | string) {
     const prefix = `${branchId}|${doctorId}|`;
-    for (const k of this.nextCache.keys())
-      if (k.startsWith(prefix)) this.nextCache.delete(k);
+
+    for (const key of this.nextCache.keys()) {
+      if (key.startsWith(prefix)) {
+        this.nextCache.delete(key);
+      }
+    }
   }
 }

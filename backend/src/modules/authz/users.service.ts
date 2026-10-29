@@ -37,7 +37,6 @@ export type UserListItem = {
   profileImageUrl?: string;
 };
 
-
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -46,28 +45,27 @@ export class UsersService {
     @InjectModel(User.name) private readonly userModel: Model<User>,
     @InjectModel(Role.name) private readonly roleModel: Model<Role>,
     @InjectModel(Branch.name) private readonly branchModel: Model<Branch>,
-    @InjectModel(DoctorAvailabilityRule.name) private readonly ruleModel: Model<DoctorAvailabilityRule>,
+    @InjectModel(DoctorAvailabilityRule.name)
+    private readonly ruleModel: Model<DoctorAvailabilityRule>,
     private readonly storage: StorageService,
   ) {}
 
-  async list(clinicId: Types.ObjectId, query?: string): Promise<UserListItem[]> {
+  async list(
+    clinicId: Types.ObjectId,
+    query?: string,
+  ): Promise<UserListItem[]> {
     const filter: any = { clinicId };
     if (query?.trim()) {
       filter.name = { $regex: query.trim(), $options: 'i' };
     }
 
-    const users = await this.userModel
-      .find(filter)
-      .sort({ name: 1 })
-      .lean();
+    const users = await this.userModel.find(filter).sort({ name: 1 }).lean();
 
     const allRoleIds = Array.from(
       new Set(users.flatMap((u) => (u.roleIds ?? []).map(String))),
     );
     const roles = allRoleIds.length
-      ? await this.roleModel
-          .find({ clinicId, _id: { $in: allRoleIds } })
-          .lean()
+      ? await this.roleModel.find({ clinicId, _id: { $in: allRoleIds } }).lean()
       : [];
     const roleMap = new Map(
       roles.map((r) => [String(r._id), { _id: String(r._id), name: r.name }]),
@@ -80,7 +78,9 @@ export class UsersService {
       items.map(async (item, i) => {
         const key = (users[i] as { profileImageKey?: string }).profileImageKey;
         if (!key) return;
-        item.profileImageUrl = await this.storage.presignGet({ key }).catch(() => undefined);
+        item.profileImageUrl = await this.storage
+          .presignGet({ key })
+          .catch(() => undefined);
       }),
     );
     return items;
@@ -98,7 +98,10 @@ export class UsersService {
       .lean();
     if (!doctorRoles.length) return [];
     const roleMap = new Map(
-      doctorRoles.map((r) => [String(r._id), { _id: String(r._id), name: r.name }]),
+      doctorRoles.map((r) => [
+        String(r._id),
+        { _id: String(r._id), name: r.name },
+      ]),
     );
     const users = await this.userModel
       .find({
@@ -126,7 +129,7 @@ export class UsersService {
       clinicId,
       dto.branchIds ?? [],
     );
-    
+
     const defaultBranchObjId = dto.defaultBranchId
       ? new Types.ObjectId(dto.defaultBranchId)
       : undefined;
@@ -136,12 +139,12 @@ export class UsersService {
       );
       if (!inAccessList) {
         throw new BadRequestException(
-          'defaultBranchId must be one of the user\'s branchIds',
+          "defaultBranchId must be one of the user's branchIds",
         );
       }
     }
 
-    const passwordHash = dto.password 
+    const passwordHash = dto.password
       ? await bcrypt.hash(dto.password, BCRYPT_COST)
       : undefined;
 
@@ -219,12 +222,10 @@ export class UsersService {
         ? new Types.ObjectId(dto.defaultBranchId)
         : undefined;
       if (next) {
-        const inAccessList = (user.branchIds ?? []).some((b) =>
-          b.equals(next),
-        );
+        const inAccessList = (user.branchIds ?? []).some((b) => b.equals(next));
         if (!inAccessList) {
           throw new BadRequestException(
-            'defaultBranchId must be one of the user\'s branchIds',
+            "defaultBranchId must be one of the user's branchIds",
           );
         }
       }
@@ -341,16 +342,12 @@ export class UsersService {
     clinicId: Types.ObjectId,
     userId: string,
   ): Promise<UserListItem> {
-    const user = await this.userModel
-      .findOne({ _id: userId, clinicId })
-      .lean();
+    const user = await this.userModel.findOne({ _id: userId, clinicId }).lean();
     if (!user) throw new NotFoundException('User not found');
 
     const roleIds = (user.roleIds ?? []).map(String);
     const roles = roleIds.length
-      ? await this.roleModel
-          .find({ clinicId, _id: { $in: roleIds } })
-          .lean()
+      ? await this.roleModel.find({ clinicId, _id: { $in: roleIds } }).lean()
       : [];
     const roleMap = new Map(
       roles.map((r) => [String(r._id), { _id: String(r._id), name: r.name }]),
@@ -370,7 +367,9 @@ export class UsersService {
       status: u.status,
       roleIds: (u.roleIds ?? []).map(String),
       branchIds: (u.branchIds ?? []).map(String),
-      defaultBranchId: u.defaultBranchId ? String(u.defaultBranchId) : undefined,
+      defaultBranchId: u.defaultBranchId
+        ? String(u.defaultBranchId)
+        : undefined,
       roles: (u.roleIds ?? [])
         .map((rid: any) => roleMap.get(String(rid)))
         .filter((r: unknown): r is { _id: string; name: string } => !!r),
