@@ -6,6 +6,7 @@ import {
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, Types } from 'mongoose';
 import { DateTime } from 'luxon';
+
 import { Clinic, ClinicStatus } from '../../tenancy/schemas/clinic.schema';
 import { Branch, legacyAddressLine } from '../../tenancy/schemas/branch.schema';
 import {
@@ -17,12 +18,14 @@ import { DoctorAvailabilityRule } from '../../availability/schemas/doctor-availa
 import { VisitType } from '../../visit-types/schemas/visit-type.schema';
 import { AppointmentsService } from '../../appointments/appointments.service';
 import { UsersService } from '../../authz/users.service';
+
 import type {
   PortalClinicView,
   PortalDoctorView,
   PortalSlotGroupView,
   PortalSpecialityView,
 } from '../views/portal-view.types';
+
 import {
   colorFor,
   gradientFor,
@@ -34,6 +37,11 @@ import {
 const DOW = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const NEXT_HORIZON_DAYS = 14;
 const NEXT_CACHE_MS = 60_000;
+
+type NextAvailableValue = {
+  date: string;
+  times: string[];
+} | null;
 
 export type BranchInfo = {
   branchId: Types.ObjectId;
@@ -55,11 +63,11 @@ type DoctorInfo = {
   firstVisitTypeId?: string;
 };
 
-function escapeRegex(s: string) {
+function escapeRegex(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function slug(s: string) {
+function slug(s: string): string {
   return (
     s
       .toLowerCase()
@@ -70,32 +78,36 @@ function slug(s: string) {
 
 export function daysLabel(days: number[]): string {
   const sorted = [...new Set(days)].sort((a, b) => a - b);
+
   if (!sorted.length) return '';
 
   const runs: number[][] = [];
 
-  for (const d of sorted) {
+  for (const day of sorted) {
     const last = runs[runs.length - 1];
 
-    if (last && d === last[last.length - 1] + 1) last.push(d);
-    else runs.push([d]);
+    if (last && day === last[last.length - 1] + 1) {
+      last.push(day);
+    } else {
+      runs.push([day]);
+    }
   }
 
   return runs
-    .map((r) =>
-      r.length >= 3
-        ? `${DOW[r[0]]}–${DOW[r[r.length - 1]]}`
-        : r.map((d) => DOW[d]).join(', '),
+    .map((run) =>
+      run.length >= 3
+        ? `${DOW[run[0]]}–${DOW[run[run.length - 1]]}`
+        : run.map((day) => DOW[day]).join(', '),
     )
     .join(', ');
 }
 
-function minutesLabel(m: number): string {
-  const h = Math.floor(m / 60);
-  const mm = m % 60;
+function minutesLabel(minutes: number): string {
+  const hours = Math.floor(minutes / 60);
+  const remainingMinutes = minutes % 60;
 
   return hhmmToLabel(
-    `${String(h).padStart(2, '0')}:${String(mm).padStart(2, '0')}`,
+    `${String(hours).padStart(2, '0')}:${String(remainingMinutes).padStart(2, '0')}`,
   );
 }
 
@@ -104,35 +116,42 @@ function windowsLabel(
 ): string {
   return windows
     .map(
-      (w) => `${minutesLabel(w.startMinutes)} – ${minutesLabel(w.endMinutes)}`,
+      (window) =>
+        `${minutesLabel(window.startMinutes)} – ${minutesLabel(window.endMinutes)}`,
     )
     .join(', ');
 }
 
 @Injectable()
 export class PortalDirectoryService {
-  private nextCache = new Map<
+  private readonly nextCache = new Map<
     string,
-    { at: number; value: { date: string; times: string[] } | null }
+    { at: number; value: NextAvailableValue }
   >();
 
   constructor(
     @InjectModel(Clinic.name)
     private readonly clinicModel: Model<Clinic>,
+
     @InjectModel(Branch.name)
     private readonly branchModel: Model<Branch>,
+
     @InjectModel(DoctorProfile.name)
     private readonly profileModel: Model<DoctorProfile>,
+
     @InjectModel(DoctorAvailabilityRule.name)
     private readonly ruleModel: Model<DoctorAvailabilityRule>,
+
     @InjectModel(VisitType.name)
     private readonly visitTypeModel: Model<VisitType>,
+
     private readonly appointments: AppointmentsService,
     private readonly users: UsersService,
   ) {}
 
   private toInfo(clinic: any, branch: any, branchCount: number): BranchInfo {
     const settings = mergeClinicSettings(clinic.settings);
+
     const active =
       (clinic.status ?? ClinicStatus.Active) === ClinicStatus.Active;
 
@@ -144,8 +163,7 @@ export class PortalDirectoryService {
       currency: clinic.currency || 'INR',
       portal: settings.portal,
 
-      // Discovery visibility is independent of portal.enabled.
-      // Booking remains separately guarded by bookingEnabled.
+      // Discovery visibility and online booking are separate settings.
       visible: active && branch.active !== false,
 
       branch,
@@ -179,9 +197,9 @@ export class PortalDirectoryService {
   private async withClinics(branches: any[]): Promise<BranchInfo[]> {
     if (!branches.length) return [];
 
-    const clinicIds = [...new Set(branches.map((b) => String(b.clinicId)))].map(
-      (id) => new Types.ObjectId(id),
-    );
+    const clinicIds = [
+      ...new Set(branches.map((branch) => String(branch.clinicId))),
+    ].map((id) => new Types.ObjectId(id));
 
     const [clinics, counts] = await Promise.all([
       this.clinicModel
@@ -198,27 +216,40 @@ export class PortalDirectoryService {
         })
         .lean(),
 
-      this.branchModel.aggregate<{ _id: Types.ObjectId; n: number }>([
+      this.branchModel.aggregate<{
+        _id: Types.ObjectId;
+        n: number;
+      }>([
         {
           $match: {
             clinicId: { $in: clinicIds },
             active: { $ne: false },
           },
         },
-        { $group: { _id: '$clinicId', n: { $sum: 1 } } },
+        {
+          $group: {
+            _id: '$clinicId',
+            n: { $sum: 1 },
+          },
+        },
       ]),
     ]);
 
-    const byId = new Map(clinics.map((c) => [String(c._id), c]));
-    const countBy = new Map(counts.map((c) => [String(c._id), c.n]));
+    const clinicById = new Map(
+      clinics.map((clinic) => [String(clinic._id), clinic]),
+    );
+
+    const countByClinic = new Map(
+      counts.map((item) => [String(item._id), item.n]),
+    );
 
     return branches
-      .filter((b) => byId.has(String(b.clinicId)))
-      .map((b) =>
+      .filter((branch) => clinicById.has(String(branch.clinicId)))
+      .map((branch) =>
         this.toInfo(
-          byId.get(String(b.clinicId)),
-          b,
-          countBy.get(String(b.clinicId)) ?? 1,
+          clinicById.get(String(branch.clinicId)),
+          branch,
+          countByClinic.get(String(branch.clinicId)) ?? 1,
         ),
       )
       .filter((info) => info.visible);
@@ -244,22 +275,22 @@ export class PortalDirectoryService {
     return info;
   }
 
-  /** Lists active, approved clinics regardless of portal.enabled. */
+  /** Lists active clinics independently of portal booking settings. */
   async discover(q?: string, limit = 30): Promise<BranchInfo[]> {
     const filter: Record<string, unknown> = {
       $or: [{ status: ClinicStatus.Active }, { status: null }],
       isPlatformClinic: { $ne: true },
     };
 
-    const text = (q ?? '').trim().slice(0, 80);
+    const searchText = (q ?? '').trim().slice(0, 80);
 
     const clinics = await this.clinicModel
       .find(
-        text
+        searchText
           ? {
               ...filter,
               name: {
-                $regex: escapeRegex(text),
+                $regex: escapeRegex(searchText),
                 $options: 'i',
               },
             }
@@ -282,39 +313,21 @@ export class PortalDirectoryService {
       byClinic.set(clinicId, existing);
     }
 
-    const out: DoctorInfo[] = [];
+    const output: DoctorInfo[] = [];
 
-    for (const [cid, infos] of byClinic) {
-      const clinicId = new Types.ObjectId(cid);
+    for (const [clinicIdString, clinicBranches] of byClinic) {
+      const clinicId = new Types.ObjectId(clinicIdString);
 
-      // Only branches belonging to this clinic and visible in the portal.
-      const visibleBranches = infos.filter((info) => info.visible);
+      const visibleBranches = clinicBranches.filter((branch) => branch.visible);
 
       const branchSet = new Set(
-        visibleBranches.map((info) => String(info.branchId)),
+        visibleBranches.map((branch) => String(branch.branchId)),
       );
 
-      if (!branchSet.size) {
-        console.log('[Portal Debug] No visible branches:', cid);
-        continue;
-      }
+      if (!branchSet.size) continue;
 
       const portal = visibleBranches[0].portal;
-
-      // Fetch active doctors assigned the Doctor role in this clinic.
       const doctors = await this.users.listDoctors(clinicId);
-
-      console.log('[Portal Debug] Clinic ID:', cid);
-      console.log('[Portal Debug] Doctors found:', doctors.length);
-      console.log(
-        '[Portal Debug] Doctor details:',
-        doctors.map((doctor) => ({
-          id: String(doctor._id),
-          name: doctor.name,
-          status: doctor.status,
-          branchIds: doctor.branchIds,
-        })),
-      );
 
       if (!doctors.length) continue;
 
@@ -351,73 +364,58 @@ export class PortalDirectoryService {
           .lean(),
       ]);
 
-      console.log('[Portal Debug] Profiles:', profiles.length);
-      console.log('[Portal Debug] Active availability rules:', rules.length);
-      console.log('[Portal Debug] Active visit types:', visitTypes.length);
-
-      const profileBy = new Map(
+      const profileById = new Map(
         profiles.map((profile) => [String(profile.userId), profile]),
       );
 
       for (const doctor of doctors) {
         const doctorId = String(doctor._id);
 
-        const myRules = rules.filter(
+        const doctorRules = rules.filter(
           (rule) => String(rule.doctorUserId) === doctorId,
         );
 
-        const myTypes = visitTypes.filter(
+        const doctorVisitTypes = visitTypes.filter(
           (visitType) => String(visitType.doctorUserId) === doctorId,
         );
 
-        const profile = profileBy.get(doctorId);
+        const profile = profileById.get(doctorId);
 
-        // Prefer assigned branches that have availability rules.
-        // Otherwise use the doctor's explicitly assigned branches.
         const ruleBranches = [
-          ...new Set(myRules.map((rule) => String(rule.branchId))),
+          ...new Set(doctorRules.map((rule) => String(rule.branchId))),
         ];
 
         const assignedBranches = (doctor.branchIds ?? [])
           .map(String)
-          .filter((branchId) => branchSet.has(branchId));
+          .filter((id) => branchSet.has(id));
 
         const branchIds = [
           ...new Set(
-            [...ruleBranches, ...assignedBranches].filter((branchId) =>
-              branchSet.has(branchId),
+            [...ruleBranches, ...assignedBranches].filter((id) =>
+              branchSet.has(id),
             ),
           ),
         ];
 
-        console.log('[Portal Debug] Doctor:', doctor.name);
-        console.log('[Portal Debug] Rule branches:', ruleBranches);
-        console.log('[Portal Debug] Assigned branches:', assignedBranches);
-        console.log('[Portal Debug] Final branchIds:', branchIds);
-
-        // Never display a doctor under a branch they are not assigned to.
-        if (!branchIds.length) {
-          console.log(
-            '[Portal Debug] Doctor skipped: no matching branch assignment',
-            doctorId,
-          );
-          continue;
-        }
+        // Do not show doctors under unrelated branches.
+        if (!branchIds.length) continue;
 
         const allowList = portal.bookableDoctorIds ?? [];
+
+        const hasAvailabilityRule = doctorRules.some(
+          (rule) =>
+            branchIds.includes(String(rule.branchId)) &&
+            (rule.windows ?? []).length > 0,
+        );
 
         const bookable =
           portal.enabled &&
           portal.bookingEnabled &&
-          myRules.some(
-            (rule) =>
-              branchIds.includes(String(rule.branchId)) &&
-              (rule.windows ?? []).length > 0,
-          ) &&
+          hasAvailabilityRule &&
           (allowList.length === 0 || allowList.includes(doctorId));
 
-        const clinics = branchIds.map((branchId) => {
-          const branchRules = myRules.filter(
+        const doctorClinics = branchIds.map((branchId) => {
+          const branchRules = doctorRules.filter(
             (rule) =>
               String(rule.branchId) === branchId &&
               (rule.windows ?? []).length > 0,
@@ -440,20 +438,22 @@ export class PortalDirectoryService {
           };
         });
 
-        const allDays = clinics.flatMap(
+        const allDays = doctorClinics.flatMap(
           (clinic: { days: number[] }) => clinic.days,
         );
 
         const speciality = profile?.specialties?.[0] || 'General physician';
 
-        const fee = myTypes[0]?.price ?? 0;
+        const fee = doctorVisitTypes[0]?.price ?? 0;
         const name = doctor.name;
 
-        out.push({
+        output.push({
           clinicId,
           branchIds,
           minFee: fee,
-          firstVisitTypeId: myTypes[0] ? String(myTypes[0]._id) : undefined,
+          firstVisitTypeId: doctorVisitTypes[0]
+            ? String(doctorVisitTypes[0]._id)
+            : undefined,
 
           view: {
             id: doctorId,
@@ -467,10 +467,10 @@ export class PortalDirectoryService {
             years: 0,
             fee,
             durationMin:
-              myRules[0]?.slotMinutes || profile?.defaultSlotMinutes || 15,
+              doctorRules[0]?.slotMinutes || profile?.defaultSlotMinutes || 15,
             languages: [],
             about: '',
-            clinics,
+            clinics: doctorClinics,
             availabilityNote: daysLabel(allDays),
             seenBefore: false,
             pronoun: 'them',
@@ -480,9 +480,7 @@ export class PortalDirectoryService {
       }
     }
 
-    console.log('[Portal Debug] Total doctors returned:', out.length);
-
-    return out;
+    return output;
   }
 
   async bookableDoctor(
@@ -516,9 +514,13 @@ export class PortalDirectoryService {
     const branch = info.branch;
     const id = String(info.branchId);
 
-    const here = doctors.filter((doctor) => doctor.branchIds.includes(id));
+    const doctorsHere = doctors.filter((doctor) =>
+      doctor.branchIds.includes(id),
+    );
 
-    const fees = here.map((doctor) => doctor.minFee).filter((fee) => fee > 0);
+    const fees = doctorsHere
+      .map((doctor) => doctor.minFee)
+      .filter((fee) => fee > 0);
 
     const name =
       info.branchCount > 1
@@ -546,7 +548,7 @@ export class PortalDirectoryService {
       address,
       phone: branch.phone ?? '',
       distanceKm: -1,
-      doctorCount: here.length,
+      doctorCount: doctorsHere.length,
       hours: open && close ? `${open} – ${close}` : '',
       openUntil: close,
       feesFrom: fees.length ? Math.min(...fees) : 0,
@@ -582,9 +584,15 @@ export class PortalDirectoryService {
     return DateTime.now().setZone(timezone).toISODate()!;
   }
 
-  assertBookableDate(info: BranchInfo, date: string) {
+  assertBookableDate(info: BranchInfo, date: string): void {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
       throw new BadRequestException('date must be YYYY-MM-DD');
+    }
+
+    const parsed = DateTime.fromISO(date, { zone: info.timezone });
+
+    if (!parsed.isValid || parsed.toISODate() !== date) {
+      throw new BadRequestException('Invalid booking date');
     }
 
     const today = this.todayIn(info.timezone);
@@ -593,7 +601,9 @@ export class PortalDirectoryService {
       throw new BadRequestException('Pick a date from today onwards');
     }
 
-    const last = DateTime.fromISO(today)
+    const last = DateTime.fromISO(today, {
+      zone: info.timezone,
+    })
       .plus({ days: info.portal.maxAdvanceDays })
       .toISODate()!;
 
@@ -616,6 +626,10 @@ export class PortalDirectoryService {
       );
     }
 
+    if (!Types.ObjectId.isValid(doctorId)) {
+      throw new NotFoundException('Doctor not found');
+    }
+
     this.assertBookableDate(info, date);
 
     const day = await this.appointments.availableSlots({
@@ -625,7 +639,7 @@ export class PortalDirectoryService {
       date,
     });
 
-    const slots = day.slots.map((slot: any) =>
+    const rawSlots = day.slots.map((slot: any) =>
       slot.status === 'booked' &&
       ignoreAppointmentId &&
       slot.bookedBy?.apptId === ignoreAppointmentId
@@ -642,55 +656,89 @@ export class PortalDirectoryService {
     );
 
     return {
-      raw: slots,
-      groups: toSlotGroups(slots, info.timezone) as PortalSlotGroupView[],
+      raw: rawSlots,
+      groups: toSlotGroups(rawSlots, info.timezone) as PortalSlotGroupView[],
     };
   }
 
   async nextAvailable(
     info: BranchInfo,
     doctorId: string,
-  ): Promise<{ date: string; times: string[] } | null> {
+  ): Promise<NextAvailableValue> {
+    if (!Types.ObjectId.isValid(doctorId)) {
+      return null;
+    }
+
+    // Preserve clinic booking restrictions.
     if (!info.portal.enabled || !info.portal.bookingEnabled) {
       return null;
     }
 
     const today = this.todayIn(info.timezone);
-    const key = `${info.branchId}|${doctorId}|${today}`;
+    const cacheKey = `${info.branchId}|${doctorId}|${today}`;
 
-    const hit = this.nextCache.get(key);
+    const cached = this.nextCache.get(cacheKey);
 
-    if (hit && Date.now() - hit.at < NEXT_CACHE_MS) {
-      return hit.value;
+    if (cached && Date.now() - cached.at < NEXT_CACHE_MS) {
+      return cached.value;
     }
-
-    let value: { date: string; times: string[] } | null = null;
 
     const horizon = Math.min(NEXT_HORIZON_DAYS, info.portal.maxAdvanceDays + 1);
 
-    for (let i = 0; i < horizon && !value; i++) {
-      const date = DateTime.fromISO(today).plus({ days: i }).toISODate()!;
+    let next: NextAvailableValue = null;
 
-      const { groups } = await this.slots(info, doctorId, date);
+    for (let offset = 0; offset < horizon; offset++) {
+      const date = DateTime.fromISO(today, {
+        zone: info.timezone,
+      })
+        .plus({ days: offset })
+        .toISODate();
 
-      const times = groups.flatMap((group) =>
-        group.slots.filter((slot) => !slot.booked).map((slot) => slot.time),
-      );
+      if (!date) continue;
 
-      if (times.length) value = { date, times };
+      try {
+        const { groups } = await this.slots(info, doctorId, date);
+
+        const times = groups
+          .flatMap((group) => group.slots)
+          .filter((slot) => !slot.booked)
+          .map((slot) => slot.time)
+          .filter(Boolean);
+
+        if (times.length > 0) {
+          next = {
+            date,
+            times: [...new Set(times)].sort(),
+          };
+          break;
+        }
+      } catch (error) {
+        // Do not silently treat configuration errors as available slots.
+        // Log the error so backend logs reveal the cause.
+        console.error(
+          `[Portal Availability] Failed for branch=${info.branchId}, doctor=${doctorId}, date=${date}`,
+          error,
+        );
+        throw error;
+      }
     }
 
-    if (this.nextCache.size > 5000) this.nextCache.clear();
+    if (this.nextCache.size > 5000) {
+      this.nextCache.clear();
+    }
 
-    this.nextCache.set(key, {
+    this.nextCache.set(cacheKey, {
       at: Date.now(),
-      value,
+      value: next,
     });
 
-    return value;
+    return next;
   }
 
-  invalidateNext(branchId: Types.ObjectId, doctorId: Types.ObjectId | string) {
+  invalidateNext(
+    branchId: Types.ObjectId,
+    doctorId: Types.ObjectId | string,
+  ): void {
     const prefix = `${branchId}|${doctorId}|`;
 
     for (const key of this.nextCache.keys()) {
