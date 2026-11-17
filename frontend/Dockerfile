@@ -6,7 +6,7 @@
 # `VITE_API_BASE_URL` is baked at build time.
 
 # ---- stage 1: build ---------------------------------------------------------
-FROM node:20-alpine AS build
+FROM node:26-alpine AS build
 
 ENV PNPM_VERSION=10.33.2
 RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
