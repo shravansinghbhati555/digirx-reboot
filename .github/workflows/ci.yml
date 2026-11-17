@@ -107,7 +107,7 @@ jobs:
       # Build but don't push — this just verifies the Dockerfiles still
       # build cleanly. A separate workflow handles tagged-release pushes.
       - name: Build backend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./backend
           file: ./backend/Dockerfile
@@ -115,7 +115,7 @@ jobs:
           tags: digirx/backend:ci
 
       - name: Build frontend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: ./frontend
           file: ./frontend/Dockerfile
