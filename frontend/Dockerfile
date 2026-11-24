@@ -28,7 +28,7 @@ RUN pnpm build
 
 
 # ---- stage 2: nginx ---------------------------------------------------------
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.29-alpine AS runtime
 
 # Drop the stock default config; ours sets up SPA fallback, gzip, and
 # security headers including HSTS.
